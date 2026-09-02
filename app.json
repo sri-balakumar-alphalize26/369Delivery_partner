@@ -1,0 +1,86 @@
+{
+  "expo": {
+    "name": "369 Delivery Partner",
+    "slug": "369-delivery-partner",
+    "scheme": "delivery369",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/images/icon.png",
+    "userInterfaceStyle": "light",
+    "newArchEnabled": true,
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "splash": {
+      "image": "./assets/images/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#F3F7FE"
+    },
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.alphalize.deliverypartner",
+      "infoPlist": {
+        "UIBackgroundModes": [
+          "location",
+          "remote-notification"
+        ],
+        "NSLocationWhenInUseUsageDescription": "369 Delivery Partner uses your location to send you nearby orders and to show the customer where you are.",
+        "NSLocationAlwaysAndWhenInUseUsageDescription": "369 Delivery Partner needs background location so you keep receiving orders and customers can track their delivery while the app is closed.",
+        "NSLocationAlwaysUsageDescription": "369 Delivery Partner needs background location so you keep receiving orders while the app is closed."
+      }
+    },
+    "android": {
+      "package": "com.alphalize.deliverypartner",
+      "edgeToEdgeEnabled": true,
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/images/android-icon-foreground.png",
+        "backgroundColor": "#FFFFFF"
+      },
+      "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION",
+        "FOREGROUND_SERVICE",
+        "FOREGROUND_SERVICE_LOCATION",
+        "POST_NOTIFICATIONS",
+        "WAKE_LOCK",
+        "VIBRATE"
+      ]
+    },
+    "web": {
+      "output": "static",
+      "favicon": "./assets/images/favicon.png"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-secure-store",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/images/splash-icon.png",
+          "imageWidth": 260,
+          "resizeMode": "contain",
+          "backgroundColor": "#F3F7FE"
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationAlwaysAndWhenInUsePermission": "369 Delivery Partner needs background location so you keep receiving orders and customers can track their delivery.",
+          "locationWhenInUsePermission": "369 Delivery Partner uses your location to send you nearby orders.",
+          "isAndroidBackgroundLocationEnabled": true,
+          "isAndroidForegroundServiceEnabled": true
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "color": "#0042B3"
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}
