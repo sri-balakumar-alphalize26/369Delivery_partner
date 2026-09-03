@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { TextInput, TextInputProps, View } from 'react-native';
-import { color, font, space } from '../theme/tokens';
-import { Text } from './Text';
+import { glass, gspace, poppins } from '../theme/glass';
+import { GlassText } from './glass/GlassText';
 
 /**
  * Underlined input, not a boxed one — boxes read as cards, and this design has
@@ -15,13 +15,13 @@ export function Field({
   const [focused, setFocused] = useState(false);
 
   return (
-    <View style={{ marginBottom: space.xl }}>
-      <Text variant="label" tone="soft" upper style={{ marginBottom: space.sm }}>
+    <View style={{ marginBottom: gspace.xl }}>
+      <GlassText variant="label" tone="soft" upper style={{ marginBottom: gspace.sm }}>
         {label}
-      </Text>
+      </GlassText>
       <TextInput
         allowFontScaling={false}
-        placeholderTextColor={color.hairline}
+        placeholderTextColor={glass.divider}
         {...rest}
         onFocus={(e) => {
           setFocused(true);
@@ -33,12 +33,12 @@ export function Field({
         }}
         style={[
           {
-            fontFamily: font.medium,
+            fontFamily: poppins.medium,
             fontSize: 20,
-            color: color.ink,
-            paddingVertical: space.md,
+            color: glass.ink,
+            paddingVertical: gspace.md,
             borderBottomWidth: focused ? 2 : 1,
-            borderBottomColor: focused ? color.brand : color.hairline,
+            borderBottomColor: focused ? glass.indigo : glass.divider,
           },
           style,
         ]}

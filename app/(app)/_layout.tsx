@@ -1,7 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Tabs } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { cardColor, cardRadius, fontOutfit } from '../../src/theme/tokens';
+import { glass, gradius, poppins } from '../../src/theme/glass';
 
 /**
  * The Bold Cards tab bar: icon over label, brand blue when active.
@@ -25,23 +25,24 @@ export default function AppLayout() {
     <Tabs
       screenOptions={{
         headerShown: false,
-        tabBarActiveTintColor: cardColor.brand,
-        tabBarInactiveTintColor: cardColor.textFaint,
+        tabBarActiveTintColor: glass.indigo,
+        tabBarInactiveTintColor: glass.inkFaint,
         tabBarStyle: {
-          backgroundColor: cardColor.card,
+          // Translucent over the mesh, as the template's floating glass pill.
+          backgroundColor: glass.fillStrong,
           borderTopWidth: 1,
-          borderTopColor: cardColor.divider,
+          borderTopColor: glass.border,
           elevation: 0,
           height: 68 + insets.bottom,
           paddingTop: 6,
           paddingBottom: 8 + insets.bottom,
         },
         tabBarLabelStyle: {
-          fontFamily: fontOutfit.bold,
+          fontFamily: poppins.semibold,
           fontSize: 12,
           letterSpacing: 0.2,
         },
-        tabBarItemStyle: { borderRadius: cardRadius.chip },
+        tabBarItemStyle: { borderRadius: gradius.chip },
       }}
     >
       <Tabs.Screen

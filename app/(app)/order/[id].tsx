@@ -1,5 +1,4 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useState } from 'react';
 import { Linking, Platform, Pressable, ScrollView, View, useWindowDimensions } from 'react-native';
@@ -16,16 +15,19 @@ import {
 import { money, promisedAt } from '../../../src/lib/format';
 import { startTracking, stopTracking } from '../../../src/location/tracking';
 import { useSession } from '../../../src/store/session';
-import { cardColor, cardRadius, shadow, space } from '../../../src/theme/tokens';
-import { Card } from '../../../src/ui/Card';
+import { glass, gradius, gshadow, gspace } from '../../../src/theme/glass';
 import { LoadingArt } from '../../../src/ui/LoadingArt';
 import { OtpBoxes } from '../../../src/ui/OtpBoxes';
 import { OtpInput } from '../../../src/ui/OtpInput';
 import { StaticMap } from '../../../src/ui/StaticMap';
-import { Text } from '../../../src/ui/Text';
+import { GlassButton } from '../../../src/ui/glass/GlassButton';
+import { GlassCard } from '../../../src/ui/glass/GlassCard';
+import { GlassIcon, GlassIconName } from '../../../src/ui/glass/GlassIcon';
+import { GlassScreen } from '../../../src/ui/glass/GlassScreen';
+import { GlassText } from '../../../src/ui/glass/GlassText';
 
 /**
- * The job screen, in the Bold Cards style.
+ * The job screen, in the Glass Light style.
  *
  * Every button on it still comes from `allowed_actions`. There is no local
  * state machine and no "what comes next" logic — the contract's first rule is
@@ -33,12 +35,12 @@ import { Text } from '../../../src/ui/Text';
  * changes in Odoo this screen follows with no new release.
  *
  * Three layouts, chosen by which action Odoo is offering rather than by any
- * state we keep: the orange offer screen while the job is only offered, the
- * green handover screen when the delivery code is due, and the en-route
- * sheet-over-map for everything between.
+ * state we keep: the offer screen while the job is only offered, the handover
+ * screen when the delivery code is due, and the sheet-over-map for everything
+ * between.
  *
- * The reference also shows a per-order fee ("You earn"), a distance and an ETA.
- * None of the three exist in the contract, so none is drawn — a number here
+ * The template also shows a per-order fee ("You earn"), a distance and an ETA.
+ * None of the three exists in the contract, so none is drawn — a number here
  * would be trusted and wrong.
  */
 
@@ -102,9 +104,9 @@ export default function Job() {
 
   if (isLoading) {
     return (
-      <View style={{ flex: 1, backgroundColor: cardColor.canvas }}>
+      <GlassScreen>
         <LoadingArt />
-      </View>
+      </GlassScreen>
     );
   }
 
@@ -112,21 +114,18 @@ export default function Job() {
   // loading loop.
   if (!order) {
     return (
-      <View
-        style={{
-          flex: 1,
-          backgroundColor: cardColor.canvas,
-          paddingTop: insets.top + space.huge,
-          paddingHorizontal: space.xl,
-        }}
-      >
-        <Card>
-          <Text variant="cardTitle" style={{ color: cardColor.textPrimary }}>
-            That job is gone
-          </Text>
-          <SheetButton label="Back" onPress={() => router.replace('/')} />
-        </Card>
-      </View>
+      <GlassScreen>
+        <View style={{ paddingTop: insets.top + gspace.xxxl, paddingHorizontal: gspace.xl }}>
+          <GlassCard>
+            <GlassText variant="title">That job is gone</GlassText>
+            <GlassButton
+              title="Back"
+              onPress={() => router.replace('/')}
+              style={{ marginTop: gspace.lg }}
+            />
+          </GlassCard>
+        </View>
+      </GlassScreen>
     );
   }
 
@@ -221,142 +220,106 @@ export default function Job() {
     }
   }
 
-  const call = () =>
-    Linking.openURL(`tel:${order.customer_mobile}`).catch(() => {});
+  const call = () => Linking.openURL(`tel:${order.customer_mobile}`).catch(() => {});
 
   /* ----------------------------------------------------------------- *
    * Offer — not accepted yet.
    *
-   * There is deliberately no Decline button: the contract gives `offered`
-   * only `accept`, so a rider cannot refuse a job, and there is no expiry to
-   * count down either. The reference's timer pill, "You earn", distance and
-   * estimated time are all dropped for the same reason — no field exists
-   * behind any of them.
+   * No Decline button: the contract gives `offered` only `accept`, so a rider
+   * cannot refuse a job, and there is no expiry to count down. The template's
+   * timer pill, "You earn", distance and estimated time are all dropped for
+   * the same reason — no field exists behind any of them.
    * ----------------------------------------------------------------- */
   if (primary === 'accept') {
     return (
-      <View style={{ flex: 1, backgroundColor: cardColor.canvas }}>
-        <View
-          style={{
-            backgroundColor: cardColor.orange,
-            paddingTop: insets.top + space.md,
-            paddingHorizontal: space.xl,
-            paddingBottom: space.xxl,
-            borderBottomLeftRadius: cardRadius.header,
-            borderBottomRightRadius: cardRadius.header,
+      <GlassScreen>
+        <ScrollView
+          contentContainerStyle={{
+            paddingTop: insets.top + gspace.md,
+            paddingHorizontal: gspace.xl,
+            paddingBottom: gspace.xxxl + insets.bottom,
           }}
         >
           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-            <RoundButton icon="chevron-back" onPress={() => router.back()} translucent />
-            <Text
-              variant="cardLabel"
-              upper
-              style={{ color: cardColor.card, marginLeft: space.md }}
-            >
+            <RoundButton icon="chev" mirrored onPress={() => router.back()} />
+            <GlassText variant="label" tone="orange" upper style={{ marginLeft: gspace.md }}>
               New job offer
-            </Text>
+            </GlassText>
           </View>
-          <Text
-            variant="cardTitle"
-            style={{ color: cardColor.card, marginTop: space.lg }}
-            numberOfLines={2}
-          >
-            {order.shop} → {order.customer_name}
-          </Text>
-        </View>
 
-        <ScrollView
-          contentContainerStyle={{
-            padding: space.xl,
-            paddingBottom: space.huge + insets.bottom,
-          }}
-        >
-          <Card>
-            <Text variant="cardLabel" upper style={{ color: cardColor.textSecondary }}>
+          <GlassText variant="hero" style={{ marginTop: gspace.lg }} numberOfLines={2}>
+            {order.shop} → {order.customer_name}
+          </GlassText>
+
+          <GlassCard style={{ marginTop: gspace.xl }}>
+            <GlassText variant="label" tone="soft" upper>
               Pick up from
-            </Text>
-            <Text
-              variant="cardBody"
-              style={{ color: cardColor.textPrimary, marginTop: space.xs }}
-            >
+            </GlassText>
+            <GlassText variant="bodyStrong" style={{ marginTop: gspace.xs }}>
               {order.shop}
-            </Text>
+            </GlassText>
 
             <View
               style={{
                 borderBottomWidth: 1,
-                borderColor: cardColor.divider,
-                marginVertical: space.lg,
+                borderColor: glass.divider,
+                marginVertical: gspace.lg,
               }}
             />
 
-            <Text variant="cardLabel" upper style={{ color: cardColor.textSecondary }}>
+            <GlassText variant="label" tone="soft" upper>
               Deliver to
-            </Text>
-            <Text
-              variant="cardBody"
-              style={{ color: cardColor.textPrimary, marginTop: space.xs }}
-            >
+            </GlassText>
+            <GlassText variant="bodyStrong" style={{ marginTop: gspace.xs }}>
               {order.customer_name}
-            </Text>
-            <Text
-              variant="cardCaption"
-              style={{ color: cardColor.textSecondary, marginTop: 2 }}
-            >
+            </GlassText>
+            <GlassText variant="caption" tone="soft" style={{ marginTop: 2 }}>
               {order.delivery_address}
-            </Text>
+            </GlassText>
             {order.promised_by ? (
-              <Text
-                variant="cardCaption"
-                nums
-                style={{ color: cardColor.textSecondary, marginTop: space.sm }}
-              >
+              <GlassText variant="caption" tone="soft" nums style={{ marginTop: gspace.sm }}>
                 Promised {promisedAt(order.promised_by, timezone)}
-              </Text>
+              </GlassText>
             ) : null}
-          </Card>
+          </GlassCard>
 
-          {cod ? (
-            <View style={{ alignItems: 'center', marginTop: space.xxl }}>
-              <Text variant="cardBody" style={{ color: cardColor.textSecondary }}>
-                Cash to collect from customer
-              </Text>
-              <Text
-                variant="cardAmount"
-                nums
-                style={{ color: cardColor.textPrimary, marginTop: space.xs }}
-              >
-                {money(order.amount_to_collect, order.currency)}
-              </Text>
-            </View>
-          ) : (
-            <View style={{ alignItems: 'center', marginTop: space.xxl }}>
-              <Text variant="cardTitle" style={{ color: cardColor.green }}>
+          <View style={{ alignItems: 'center', marginTop: gspace.xxl }}>
+            {cod ? (
+              <>
+                <GlassText variant="body" tone="soft">
+                  Cash to collect from customer
+                </GlassText>
+                <GlassText variant="amount" nums style={{ marginTop: gspace.xs }}>
+                  {money(order.amount_to_collect, order.currency)}
+                </GlassText>
+              </>
+            ) : (
+              <GlassText variant="subtitle" tone="green">
                 Already paid — collect nothing
-              </Text>
-            </View>
-          )}
+              </GlassText>
+            )}
+          </View>
 
           {error ? (
-            <Text variant="cardBody" style={{ color: cardColor.red, marginTop: space.lg }}>
+            <GlassText variant="bodyStrong" tone="red" style={{ marginTop: gspace.lg }}>
               {error}
-            </Text>
+            </GlassText>
           ) : null}
 
-          <SheetButton
-            label={ACTION_LABEL[primary]}
-            icon="checkmark"
-            tone="orange"
+          <GlassButton
+            title={ACTION_LABEL[primary]}
+            kind="orange"
+            icon="check"
             onPress={() => run(primary)}
-            disabled={busy}
-            style={{ marginTop: space.xxl }}
+            loading={busy}
+            style={{ marginTop: gspace.xxl }}
           />
 
           {secondary.map((a) => (
             <GhostLink key={a} label={ACTION_LABEL[a]} onPress={() => run(a)} disabled={busy} />
           ))}
         </ScrollView>
-      </View>
+      </GlassScreen>
     );
   }
 
@@ -365,126 +328,120 @@ export default function Job() {
    * ----------------------------------------------------------------- */
   if (primary === 'verify_delivery_otp') {
     return (
-      <View style={{ flex: 1, backgroundColor: cardColor.canvas }}>
+      <GlassScreen>
         <View
           style={{
-            backgroundColor: cardColor.green,
-            paddingTop: insets.top + space.md,
-            paddingBottom: space.xxl,
-            paddingHorizontal: space.xl,
+            backgroundColor: glass.green,
+            paddingTop: insets.top + gspace.md,
+            paddingBottom: gspace.xl,
+            paddingHorizontal: gspace.xl,
             flexDirection: 'row',
             alignItems: 'center',
           }}
         >
-          <RoundButton icon="chevron-back" onPress={() => router.back()} translucent />
-          <Text
-            variant="cardTitle"
-            style={{ color: cardColor.card, flex: 1, textAlign: 'center', marginRight: 40 }}
+          <RoundButton icon="chev" mirrored translucent onPress={() => router.back()} />
+          <GlassText
+            variant="title"
+            tone="white"
+            style={{ flex: 1, textAlign: 'center', marginRight: 40 }}
           >
             Delivering
-          </Text>
+          </GlassText>
         </View>
 
         <ScrollView
           contentContainerStyle={{
-            padding: space.xl,
-            paddingBottom: space.huge + insets.bottom,
+            padding: gspace.xl,
+            paddingBottom: gspace.xxxl + insets.bottom,
           }}
           keyboardShouldPersistTaps="handled"
         >
-          <Card>
-            <Text variant="cardTitle" style={{ color: cardColor.textPrimary }}>
-              {order.customer_name}
-            </Text>
-            <Text
-              variant="cardBody"
-              style={{ color: cardColor.textSecondary, marginTop: 2 }}
-            >
+          <GlassCard>
+            <GlassText variant="title">{order.customer_name}</GlassText>
+            <GlassText variant="body" tone="soft" style={{ marginTop: 2 }}>
               {order.delivery_address}
-            </Text>
+            </GlassText>
 
-            <View style={{ flexDirection: 'row', gap: space.md, marginTop: space.lg }}>
-              <SheetButton
-                label="Navigate"
-                icon="navigate"
-                tone="dark"
+            <View style={{ flexDirection: 'row', gap: gspace.md, marginTop: gspace.lg }}>
+              <GlassButton
+                title="Navigate"
+                kind="dark"
+                icon="nav"
                 onPress={() => navigateTo(order)}
-                style={{ flex: 1, marginTop: 0 }}
+                style={{ flex: 1 }}
               />
-              <SheetButton
-                label="Call"
-                icon="call-outline"
-                tone="ghost"
+              <GlassButton
+                title="Call"
+                kind="ghost"
+                icon="phone"
                 onPress={call}
-                style={{ flex: 1, marginTop: 0 }}
+                style={{ flex: 1 }}
               />
             </View>
-          </Card>
+          </GlassCard>
 
-          {cod ? (
-            <View style={{ alignItems: 'center', marginTop: space.xxl }}>
-              <Text variant="cardBody" style={{ color: cardColor.textSecondary }}>
-                Collect this cash before handing over
-              </Text>
-              <Text
-                variant="cardAmount"
-                nums
-                style={{ color: cardColor.textPrimary, marginTop: space.xs }}
-              >
-                {money(order.amount_to_collect, order.currency)}
-              </Text>
-            </View>
-          ) : (
-            <View style={{ alignItems: 'center', marginTop: space.xxl }}>
-              <Text variant="cardTitle" style={{ color: cardColor.green }}>
+          <View style={{ alignItems: 'center', marginTop: gspace.xxl }}>
+            {cod ? (
+              <>
+                <GlassText variant="body" tone="soft">
+                  Collect this cash before handing over
+                </GlassText>
+                <GlassText variant="amountLg" nums style={{ marginTop: gspace.xs }}>
+                  {money(order.amount_to_collect, order.currency)}
+                </GlassText>
+              </>
+            ) : (
+              <GlassText variant="subtitle" tone="green">
                 Already paid — collect nothing
-              </Text>
-            </View>
-          )}
+              </GlassText>
+            )}
+          </View>
 
-          <Card style={{ marginTop: space.xxl }}>
-            <Text variant="cardLabel" upper style={{ color: cardColor.textSecondary }}>
+          <GlassCard style={{ marginTop: gspace.xxl }}>
+            <GlassText variant="label" tone="soft" upper>
               Delivery code
-            </Text>
-            <Text
-              variant="cardBody"
-              style={{ color: cardColor.textSecondary, marginTop: space.xs, marginBottom: space.lg }}
+            </GlassText>
+            <GlassText
+              variant="body"
+              tone="soft"
+              style={{ marginTop: gspace.xs, marginBottom: gspace.lg }}
             >
               Ask the customer for the 6-digit code from their app or SMS.
-            </Text>
+            </GlassText>
             <OtpBoxes value={otp} onChange={setOtp} error={otpError} />
-          </Card>
+          </GlassCard>
 
           {error ? (
-            <Text variant="cardBody" style={{ color: cardColor.red, marginTop: space.lg }}>
+            <GlassText variant="bodyStrong" tone="red" style={{ marginTop: gspace.lg }}>
               {error}
-            </Text>
+            </GlassText>
           ) : null}
 
-          <SheetButton
-            label={ACTION_LABEL[primary]}
-            icon="checkmark"
-            tone="green"
+          <GlassButton
+            title={ACTION_LABEL[primary]}
+            kind="green"
+            icon="check"
             onPress={() => run(primary)}
-            disabled={busy || !canSubmit}
-            style={{ marginTop: space.xxl }}
+            loading={busy}
+            disabled={!canSubmit}
+            style={{ marginTop: gspace.xxl }}
           />
 
           {secondary.map((a) => (
             <GhostLink key={a} label={ACTION_LABEL[a]} onPress={() => run(a)} disabled={busy} />
           ))}
         </ScrollView>
-      </View>
+      </GlassScreen>
     );
   }
 
   /* ----------------------------------------------------------------- *
-   * En route — sheet over the map.
+   * En route — glass sheet over the map.
    * ----------------------------------------------------------------- */
-  const mapH = Math.round(height * 0.42);
+  const mapH = Math.round(height * 0.4);
 
   return (
-    <View style={{ flex: 1, backgroundColor: cardColor.canvas }}>
+    <GlassScreen>
       <StaticMap
         latitude={order.latitude}
         longitude={order.longitude}
@@ -492,116 +449,105 @@ export default function Job() {
         height={mapH}
       />
 
-      <View style={{ position: 'absolute', top: insets.top + space.sm, left: space.xl }}>
-        <RoundButton icon="chevron-back" onPress={() => router.back()} />
+      <View style={{ position: 'absolute', top: insets.top + gspace.sm, left: gspace.xl }}>
+        <RoundButton icon="chev" mirrored onPress={() => router.back()} />
       </View>
 
       <ScrollView
-        style={{ marginTop: -space.xxl }}
-        contentContainerStyle={{ paddingBottom: space.huge + insets.bottom }}
+        style={{ marginTop: -gspace.xxl }}
+        contentContainerStyle={{ paddingBottom: gspace.xxxl + insets.bottom }}
         keyboardShouldPersistTaps="handled"
       >
         <View
           style={[
             {
-              backgroundColor: cardColor.card,
-              borderTopLeftRadius: cardRadius.card,
-              borderTopRightRadius: cardRadius.card,
-              padding: space.xl,
+              backgroundColor: glass.fillStrong,
+              borderTopLeftRadius: gradius.card,
+              borderTopRightRadius: gradius.card,
+              borderWidth: 1,
+              borderColor: glass.border,
+              padding: gspace.xl,
               minHeight: height - mapH,
             },
-            shadow.floating,
+            gshadow.glass,
           ]}
         >
           <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
-            <View style={{ flex: 1, paddingRight: space.md }}>
-              <Text variant="cardLabel" upper style={{ color: cardColor.textFaint }}>
+            <View style={{ flex: 1, paddingRight: gspace.md }}>
+              <GlassText variant="label" tone="faint" upper>
                 Order {order.delivery_order_name}
-              </Text>
-              <Text
-                variant="cardTitle"
-                style={{ color: cardColor.textPrimary, marginTop: 2 }}
-                numberOfLines={1}
-              >
+              </GlassText>
+              <GlassText variant="title" style={{ marginTop: 2 }} numberOfLines={1}>
                 {order.shop}
-              </Text>
+              </GlassText>
             </View>
-            <View style={{ flexDirection: 'row', gap: space.sm }}>
-              <RoundButton icon="call-outline" onPress={call} tone="tint" />
-              <RoundButton icon="navigate" onPress={() => navigateTo(order)} tone="brand" />
+            <View style={{ flexDirection: 'row', gap: gspace.sm }}>
+              <RoundButton icon="phone" onPress={call} />
+              <RoundButton icon="nav" filled onPress={() => navigateTo(order)} />
             </View>
           </View>
 
-          {/* Where the parcel is going, once the shop is done. */}
+          {/* Where the parcel goes once the shop is done. */}
           <View
             style={{
               flexDirection: 'row',
               alignItems: 'center',
-              backgroundColor: cardColor.chipBg,
-              borderRadius: cardRadius.chip,
-              padding: space.md,
-              marginTop: space.lg,
+              backgroundColor: glass.fill,
+              borderRadius: gradius.chip,
+              borderWidth: 1,
+              borderColor: glass.border,
+              padding: gspace.md,
+              marginTop: gspace.lg,
             }}
           >
-            <Ionicons name="location" size={18} color={cardColor.orange} />
-            <Text
-              variant="cardBody"
-              style={{ color: cardColor.textPrimary, flex: 1, marginLeft: space.sm }}
-              numberOfLines={2}
-            >
+            <GlassIcon name="pin" color={glass.orange} size={18} />
+            <GlassText variant="body" style={{ flex: 1, marginLeft: gspace.sm }} numberOfLines={2}>
               Then: {order.customer_name} · {order.delivery_address}
-            </Text>
+            </GlassText>
           </View>
 
           {order.promised_by ? (
-            <Text
-              variant="cardCaption"
-              nums
-              style={{ color: cardColor.textSecondary, marginTop: space.sm }}
-            >
+            <GlassText variant="caption" tone="soft" nums style={{ marginTop: gspace.sm }}>
               Promised {promisedAt(order.promised_by, timezone)}
-            </Text>
+            </GlassText>
           ) : null}
 
-          {/* Collect and Items only. The reference's "You earn" has no field
+          {/* Collect and Items only. The template's "You earn" has no field
               behind it, and there is no distance or ETA in the contract. */}
-          <View style={{ flexDirection: 'row', gap: space.md, marginTop: space.lg }}>
+          <View style={{ flexDirection: 'row', gap: gspace.md, marginTop: gspace.lg }}>
             <Tile
               label="Collect"
               value={cod ? money(order.amount_to_collect, order.currency) : 'Paid'}
-              tone={cod ? cardColor.red : cardColor.green}
+              tone={cod ? glass.red : glass.green}
             />
             <Tile label="Items" value={String(order.products?.length ?? 0)} />
           </View>
 
           {order.products?.length ? (
-            <View style={{ marginTop: space.lg }}>
+            <View style={{ marginTop: gspace.lg }}>
               {order.products.map((p, i) => (
                 <View
                   key={`${p.name}-${i}`}
                   style={{
                     flexDirection: 'row',
-                    paddingVertical: space.sm,
+                    paddingVertical: gspace.sm,
                     borderBottomWidth: 1,
-                    borderBottomColor: cardColor.divider,
+                    borderBottomColor: glass.divider,
                   }}
                 >
-                  <Text
-                    variant="cardBody"
-                    style={{ flex: 1, color: cardColor.textPrimary }}
-                  >
+                  <GlassText variant="body" style={{ flex: 1 }}>
                     {p.name}
-                  </Text>
-                  <Text variant="cardBody" nums style={{ color: cardColor.textSecondary }}>
+                  </GlassText>
+                  <GlassText variant="body" tone="soft" nums>
                     x{p.quantity}
-                  </Text>
+                  </GlassText>
                 </View>
               ))}
             </View>
           ) : null}
 
           {primary === 'verify_pickup_otp' ? (
-            <View style={{ marginTop: space.lg }}>
+            <View style={{ marginTop: gspace.lg }}>
               <OtpInput
                 label="Pickup code"
                 hint="The shop staff will read this out when they hand the parcel over."
@@ -618,27 +564,26 @@ export default function Job() {
           ) : null}
 
           {error ? (
-            <Text variant="cardBody" style={{ color: cardColor.red, marginTop: space.lg }}>
+            <GlassText variant="bodyStrong" tone="red" style={{ marginTop: gspace.lg }}>
               {error}
-            </Text>
+            </GlassText>
           ) : null}
 
           {/* Only what Odoo permits, in the order Odoo permits it. */}
           {primary ? (
-            <SheetButton
-              label={ACTION_LABEL[primary]}
-              icon="checkmark"
+            <GlassButton
+              title={ACTION_LABEL[primary]}
+              kind="indigo"
+              icon="check"
               onPress={() => run(primary)}
-              disabled={busy || !canSubmit}
-              style={{ marginTop: space.xl }}
+              loading={busy}
+              disabled={!canSubmit}
+              style={{ marginTop: gspace.xl }}
             />
           ) : (
-            <Text
-              variant="cardBody"
-              style={{ color: cardColor.textSecondary, marginTop: space.xl }}
-            >
+            <GlassText variant="body" tone="soft" style={{ marginTop: gspace.xl }}>
               This job is finished. Nothing left to do.
-            </Text>
+            </GlassText>
           )}
 
           {secondary.map((a) => (
@@ -646,7 +591,7 @@ export default function Job() {
           ))}
         </View>
       </ScrollView>
-    </View>
+    </GlassScreen>
   );
 }
 
@@ -656,85 +601,29 @@ function Tile({ label, value, tone }: { label: string; value: string; tone?: str
     <View
       style={{
         flex: 1,
-        backgroundColor: cardColor.chipBg,
-        borderRadius: cardRadius.chip,
-        padding: space.md,
+        backgroundColor: glass.fill,
+        borderRadius: gradius.chip,
+        borderWidth: 1,
+        borderColor: glass.border,
+        padding: gspace.md,
       }}
     >
-      <Text variant="cardCaption" style={{ color: cardColor.textSecondary }}>
+      <GlassText variant="caption" tone="soft">
         {label}
-      </Text>
-      <Text
-        variant="cardTitle"
+      </GlassText>
+      <GlassText
+        variant="subtitle"
         nums
-        style={{ color: tone ?? cardColor.textPrimary, marginTop: 2 }}
+        style={{ color: tone ?? glass.ink, marginTop: 2 }}
         numberOfLines={1}
       >
         {value}
-      </Text>
+      </GlassText>
     </View>
   );
 }
 
-/** The full-width action button. */
-function SheetButton({
-  label,
-  icon,
-  tone = 'brand',
-  onPress,
-  disabled,
-  style,
-}: {
-  label: string;
-  icon?: keyof typeof Ionicons.glyphMap;
-  tone?: 'brand' | 'green' | 'dark' | 'ghost' | 'orange';
-  onPress: () => void;
-  disabled?: boolean;
-  style?: object;
-}) {
-  const bg =
-    tone === 'green'
-      ? cardColor.green
-      : tone === 'orange'
-        ? cardColor.orange
-        : tone === 'dark'
-        ? cardColor.brandDark
-        : tone === 'ghost'
-          ? cardColor.chipBg
-          : cardColor.brand;
-  const fg = tone === 'ghost' ? cardColor.textPrimary : cardColor.card;
-
-  return (
-    <Pressable
-      onPress={onPress}
-      disabled={disabled}
-      accessibilityRole="button"
-      accessibilityLabel={label}
-      style={({ pressed }) => [
-        {
-          backgroundColor: bg,
-          borderRadius: cardRadius.button,
-          height: 54,
-          flexDirection: 'row',
-          alignItems: 'center',
-          justifyContent: 'center',
-          marginTop: space.lg,
-          opacity: disabled ? 0.5 : pressed ? 0.85 : 1,
-        },
-        style,
-      ]}
-    >
-      {icon ? (
-        <Ionicons name={icon} size={18} color={fg} style={{ marginRight: space.sm }} />
-      ) : null}
-      <Text variant="cardButton" style={{ color: fg }}>
-        {label}
-      </Text>
-    </Pressable>
-  );
-}
-
-/** A quiet secondary action, as the reference draws them. */
+/** A quiet secondary action, as the template draws them. */
 function GhostLink({
   label,
   onPress,
@@ -750,38 +639,39 @@ function GhostLink({
       disabled={disabled}
       accessibilityRole="button"
       style={({ pressed }) => ({
-        paddingVertical: space.md,
+        paddingVertical: gspace.md,
         alignItems: 'center',
         opacity: disabled ? 0.5 : pressed ? 0.6 : 1,
       })}
     >
-      <Text variant="cardBody" style={{ color: cardColor.textSecondary }}>
+      <GlassText variant="body" tone="soft">
         {label}
-      </Text>
+      </GlassText>
     </Pressable>
   );
 }
 
-/** Circular icon button — back, call, navigate. */
+/** Circular glass button — back, call, navigate. */
 function RoundButton({
   icon,
   onPress,
-  tone = 'plain',
+  filled,
   translucent,
+  mirrored,
 }: {
-  icon: keyof typeof Ionicons.glyphMap;
+  icon: GlassIconName;
   onPress: () => void;
-  tone?: 'plain' | 'tint' | 'brand';
+  filled?: boolean;
   translucent?: boolean;
+  /** The icon set has no back-facing chevron, so the forward one is flipped. */
+  mirrored?: boolean;
 }) {
   const bg = translucent
     ? 'rgba(255,255,255,0.22)'
-    : tone === 'brand'
-      ? cardColor.brand
-      : tone === 'tint'
-        ? cardColor.chipBg
-        : cardColor.card;
-  const fg = tone === 'brand' || translucent ? cardColor.card : cardColor.brand;
+    : filled
+      ? glass.indigo
+      : glass.fillLight;
+  const fg = filled || translucent ? glass.white : glass.indigo;
 
   return (
     <Pressable
@@ -790,18 +680,25 @@ function RoundButton({
       hitSlop={8}
       style={({ pressed }) => [
         {
-          width: 44,
-          height: 44,
-          borderRadius: 22,
+          width: 42,
+          height: 42,
+          borderRadius: 21,
           backgroundColor: bg,
+          borderWidth: 1,
+          borderColor: glass.border,
           alignItems: 'center',
           justifyContent: 'center',
           opacity: pressed ? 0.8 : 1,
         },
-        translucent ? null : shadow.card,
+        translucent ? null : gshadow.glass,
       ]}
     >
-      <Ionicons name={icon} size={20} color={fg} />
+      <GlassIcon
+        name={icon}
+        color={fg}
+        size={18}
+        style={mirrored ? { transform: [{ scaleX: -1 }] } : undefined}
+      />
     </Pressable>
   );
 }

@@ -1,6 +1,6 @@
 import { Image } from 'expo-image';
 import { View, ViewStyle } from 'react-native';
-import { cardColor } from '../theme/tokens';
+import { glass } from '../theme/glass';
 
 /**
  * A Google Static Maps image, used instead of an interactive map.
@@ -37,7 +37,7 @@ export function StaticMap({
   // Without a key Google returns an error image, which looks broken. A flat
   // panel is the honest stand-in, and the map appears the moment the key is set.
   if (!KEY || !havePoint) {
-    return <View style={[{ width, height, backgroundColor: cardColor.chipBg }, style]} />;
+    return <View style={[{ width, height, backgroundColor: glass.fill }, style]} />;
   }
 
   const point = `${latitude},${longitude}`;
@@ -46,11 +46,11 @@ export function StaticMap({
   const uri =
     'https://maps.googleapis.com/maps/api/staticmap' +
     `?center=${point}&zoom=${zoom}&size=${size}&scale=2&maptype=roadmap` +
-    `&markers=color:0x${cardColor.orange.slice(1)}%7C${point}` +
+    `&markers=color:0x${glass.orange.slice(1)}%7C${point}` +
     `&key=${KEY}`;
 
   return (
-    <View style={[{ width, height, backgroundColor: cardColor.chipBg }, style]}>
+    <View style={[{ width, height, backgroundColor: glass.fill }, style]}>
       <Image
         source={{ uri }}
         style={{ width, height }}

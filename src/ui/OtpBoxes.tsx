@@ -1,7 +1,7 @@
 import { useRef, useState } from 'react';
 import { Pressable, TextInput, View } from 'react-native';
-import { cardColor, cardRadius, space } from '../theme/tokens';
-import { Text } from './Text';
+import { glass, gradius, gspace } from '../theme/glass';
+import { GlassText } from './glass/GlassText';
 
 const LENGTH = 6;
 
@@ -39,7 +39,7 @@ export function OtpBoxes({
       <Pressable
         onPress={() => input.current?.focus()}
         accessibilityRole="none"
-        style={{ flexDirection: 'row', gap: space.sm }}
+        style={{ flexDirection: 'row', gap: gspace.sm }}
       >
         {Array.from({ length: LENGTH }).map((_, i) => {
           const active = focused && i === cursor;
@@ -49,21 +49,21 @@ export function OtpBoxes({
               style={{
                 flex: 1,
                 aspectRatio: 0.92,
-                borderRadius: cardRadius.chip,
-                backgroundColor: cardColor.chipBg,
+                borderRadius: gradius.chip,
+                backgroundColor: glass.fill,
                 borderWidth: 2,
                 borderColor: error
-                  ? cardColor.red
+                  ? glass.red
                   : active
-                    ? cardColor.brand
+                    ? glass.indigo
                     : 'transparent',
                 alignItems: 'center',
                 justifyContent: 'center',
               }}
             >
-              <Text variant="cardStat" nums style={{ color: cardColor.textPrimary }}>
+              <GlassText variant="subtitle" nums style={{ color: glass.ink }}>
                 {digits[i] ?? ''}
-              </Text>
+              </GlassText>
             </View>
           );
         })}
@@ -86,9 +86,9 @@ export function OtpBoxes({
       />
 
       {error ? (
-        <Text variant="cardCaption" style={{ color: cardColor.red, marginTop: space.sm }}>
+        <GlassText variant="caption" style={{ color: glass.red, marginTop: gspace.sm }}>
           {error}
-        </Text>
+        </GlassText>
       ) : null}
     </View>
   );

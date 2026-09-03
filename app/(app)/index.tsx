@@ -4,28 +4,26 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { sortForRider, useDuty, useOrders } from '../../src/hooks/useOrders';
 import { money } from '../../src/lib/format';
 import { useSession } from '../../src/store/session';
-import { cardColor, cardRadius, space } from '../../src/theme/tokens';
-import { Avatar } from '../../src/ui/Avatar';
-import { Card } from '../../src/ui/Card';
-import { GradientHeader } from '../../src/ui/GradientHeader';
-import { JobCard } from '../../src/ui/JobCard';
-import { PrimaryButton } from '../../src/ui/PrimaryButton';
-import { StatChip } from '../../src/ui/StatChip';
-import { Text } from '../../src/ui/Text';
+import { glass, gradius, gspace } from '../../src/theme/glass';
+import { GlassButton } from '../../src/ui/glass/GlassButton';
+import { GlassCard } from '../../src/ui/glass/GlassCard';
+import { GlassIcon } from '../../src/ui/glass/GlassIcon';
+import { GlassJobCard } from '../../src/ui/glass/GlassJobCard';
+import { GlassScreen } from '../../src/ui/glass/GlassScreen';
+import { GlassText } from '../../src/ui/glass/GlassText';
 
 /**
- * The rider's day, in the Bold Cards style.
+ * The rider's day, in the Glass Light style.
  *
  * Duty leads because it is the first thing that has to be true: the contract
  * offers nothing at all to an off-duty rider, so an app without this control
  * shows an empty list and no reason for it.
  *
- * The reference design puts today's earnings, a rating, a bonus and a
- * cash-to-deposit total on this screen. None of those exist in the contract —
- * there is no pay model in Odoo, `Rider` carries no score, and `/orders`
- * returns only active jobs so no daily total is derivable. The card keeps the
- * design's shape and fills it with the four counts Odoo does return. A number
- * here would be trusted, so it has to be real.
+ * The template puts today's earnings, a rating and a bonus chip on this screen.
+ * None exist in the contract — there is no pay model in Odoo, `Rider` carries no
+ * score, and `/orders` returns only active jobs so no daily total is derivable.
+ * The card keeps the template's shape and carries the four counts Odoo does
+ * return. A number here would be trusted, so it has to be real.
  */
 export default function Home() {
   const router = useRouter();
@@ -43,138 +41,100 @@ export default function Home() {
   const counts = data?.counts;
 
   // Genuinely derivable: what the rider is holding across the jobs in hand.
-  // Not the reference's "cash to deposit", which would need finished orders too.
   const toCollect = jobs
     .filter((j) => j.payment_status === 'cod')
     .reduce((sum, j) => sum + (j.amount_to_collect ?? 0), 0);
   const currency = jobs.find((j) => j.currency)?.currency;
 
   return (
-    <View style={{ flex: 1, backgroundColor: cardColor.canvas }}>
+    <GlassScreen>
       <ScrollView
-        contentContainerStyle={{ paddingBottom: space.huge + insets.bottom }}
+        contentContainerStyle={{
+          paddingTop: insets.top + gspace.lg,
+          paddingHorizontal: gspace.xl,
+          paddingBottom: gspace.xxxl + insets.bottom,
+        }}
         showsVerticalScrollIndicator={false}
       >
-        {/* Blue header. No notification bell: nothing registers for push yet
-            (useOrders polls instead), so it would be a control that does
-            nothing. */}
-        <GradientHeader
-          style={{
-            paddingTop: insets.top + space.lg,
-            paddingHorizontal: space.xl,
-            paddingBottom: space.huge + space.xxl,
-          }}
-        >
-          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-            <Avatar name={rider?.name} />
-            <View style={{ marginLeft: space.md, flex: 1 }}>
-              <Text variant="cardBody" style={{ color: 'rgba(255,255,255,0.72)' }}>
-                {greeting()}
-              </Text>
-              <Text variant="cardTitle" style={{ color: cardColor.card }} numberOfLines={1}>
-                {rider?.name ?? 'Rider'}
-              </Text>
-            </View>
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <View style={{ flex: 1, paddingRight: gspace.md }}>
+            <GlassText variant="caption" tone="soft">
+              {greeting()}
+            </GlassText>
+            <GlassText variant="hero" numberOfLines={1}>
+              {rider?.name ?? 'Rider'}
+            </GlassText>
           </View>
+          {/* No bell: nothing registers for push (useOrders polls instead), so
+              it would be a control that does nothing. */}
+        </View>
 
-          {/* The design's "You are online" row, wired to the real duty
-              mutation — this one maps onto the contract exactly. */}
+        <GlassCard padding={16} style={{ marginTop: gspace.lg }}>
           <View
             style={{
               flexDirection: 'row',
               alignItems: 'center',
-              backgroundColor: 'rgba(255,255,255,0.14)',
-              borderRadius: cardRadius.card,
-              paddingVertical: space.lg,
-              paddingHorizontal: space.xl,
-              marginTop: space.xl,
+              justifyContent: 'space-between',
             }}
           >
-            <View
-              style={{
-                width: 10,
-                height: 10,
-                borderRadius: 5,
-                backgroundColor: onDuty ? cardColor.onlineGreen : cardColor.textFaint,
-              }}
-            />
-            <Text
-              variant="cardTitle"
-              style={{ color: cardColor.card, marginLeft: space.md, flex: 1 }}
-            >
-              {onDuty ? 'You are online' : 'You are off duty'}
-            </Text>
+            <View style={{ flexDirection: 'row', alignItems: 'center', flex: 1 }}>
+              <View
+                style={{
+                  width: 10,
+                  height: 10,
+                  borderRadius: 5,
+                  backgroundColor: onDuty ? '#22C55E' : glass.inkFaint,
+                  marginRight: gspace.sm,
+                }}
+              />
+              <GlassText variant="bodyStrong">
+                {onDuty ? 'You are online' : 'You are off duty'}
+              </GlassText>
+            </View>
             <Switch
               value={onDuty}
               disabled={duty.isPending}
               onValueChange={(next) => duty.mutate(next)}
-              trackColor={{ true: cardColor.onlineGreen, false: 'rgba(255,255,255,0.3)' }}
-              thumbColor={cardColor.card}
+              trackColor={{ true: '#22C55E' }}
             />
           </View>
-        </GradientHeader>
+        </GlassCard>
 
-        {/* Pulled up to overlap the header, exactly as the reference does. */}
-        <View style={{ paddingHorizontal: space.xl, marginTop: -(space.huge + space.md) }}>
-          <Card>
-            <Text variant="cardBody" style={{ color: cardColor.textSecondary }}>
-              Delivered today
-            </Text>
-            <Text
-              variant="cardAmount"
-              nums
-              style={{ color: cardColor.textPrimary, marginTop: space.xs }}
-            >
-              {counts?.delivered ?? 0}
-            </Text>
+        <GlassCard style={{ marginTop: gspace.lg }}>
+          <GlassText variant="caption" tone="soft">
+            Delivered today
+          </GlassText>
+          <GlassText variant="amount" nums style={{ marginTop: 2 }}>
+            {counts?.delivered ?? 0}
+          </GlassText>
 
-            <View style={{ flexDirection: 'row', gap: space.md, marginTop: space.lg }}>
-              <StatChip value={counts?.assigned ?? 0} label="Assigned" style={{ flex: 1 }} />
-              <StatChip value={counts?.picked_up ?? 0} label="Collected" style={{ flex: 1 }} />
-              <StatChip
-                value={counts?.out_for_delivery ?? 0}
-                label="On road"
-                style={{ flex: 1 }}
-              />
-            </View>
-          </Card>
-        </View>
+          <View style={{ flexDirection: 'row', gap: gspace.sm, marginTop: gspace.lg }}>
+            <Stat label="Assigned" value={counts?.assigned ?? 0} />
+            <Stat label="Collected" value={counts?.picked_up ?? 0} />
+            <Stat label="On road" value={counts?.out_for_delivery ?? 0} />
+          </View>
+        </GlassCard>
 
         {/* Odoo writes this for the rider — "2 job(s) were waiting." */}
         {duty.data?.message ? (
-          <Text
-            variant="cardBody"
-            style={{
-              color: cardColor.brand,
-              paddingHorizontal: space.xl,
-              marginTop: space.lg,
-            }}
-          >
+          <GlassText variant="bodyStrong" tone="indigo" style={{ marginTop: gspace.lg }}>
             {duty.data.message}
-          </Text>
+          </GlassText>
         ) : null}
         {duty.isError ? (
-          <Text
-            variant="cardBody"
-            style={{ color: cardColor.red, paddingHorizontal: space.xl, marginTop: space.lg }}
-          >
+          <GlassText variant="bodyStrong" tone="red" style={{ marginTop: gspace.lg }}>
             {duty.error.message}
-          </Text>
+          </GlassText>
         ) : null}
 
-        <View style={{ paddingHorizontal: space.xl, marginTop: space.xxl }}>
-          <Text variant="cardTitle" style={{ color: cardColor.textPrimary }}>
-            {jobs.length > 1 ? `Active orders · ${jobs.length}` : 'Active order'}
-          </Text>
-        </View>
+        <GlassText variant="subtitle" style={{ marginTop: gspace.xxl }}>
+          {jobs.length > 1 ? `Active orders · ${jobs.length}` : 'Active order'}
+        </GlassText>
 
         {jobs.length ? (
           jobs.map((job) => (
-            <View
-              key={job.delivery_order_id}
-              style={{ paddingHorizontal: space.xl, marginTop: space.lg }}
-            >
-              <JobCard
+            <View key={job.delivery_order_id} style={{ marginTop: gspace.md }}>
+              <GlassJobCard
                 job={job}
                 timezone={timezone}
                 onPress={() => router.push(`/order/${job.delivery_order_id}`)}
@@ -182,51 +142,46 @@ export default function Home() {
             </View>
           ))
         ) : (
-          <View style={{ paddingHorizontal: space.xl, marginTop: space.lg }}>
-            <Card>
-              <Text variant="cardTitle" style={{ color: cardColor.textPrimary }}>
-                {isLoading ? 'Checking for jobs…' : onDuty ? 'Nothing to deliver' : 'Nothing yet'}
-              </Text>
-              <Text
-                variant="cardBody"
-                style={{ color: cardColor.textSecondary, marginTop: space.sm }}
-              >
-                {onDuty
-                  ? 'New jobs appear here automatically. Keep the app open.'
-                  : 'Go online to pick up whatever is waiting.'}
-              </Text>
-              {onDuty ? (
-                <PrimaryButton
-                  label="Check again"
-                  kind="ghost"
-                  onPress={() => refetch()}
-                  style={{
-                    marginTop: space.lg,
-                    height: 46,
-                    borderRadius: cardRadius.button,
-                    backgroundColor: cardColor.chipBg,
-                  }}
-                />
-              ) : null}
-            </Card>
-          </View>
+          <GlassCard style={{ marginTop: gspace.md }}>
+            <GlassText variant="subtitle">
+              {isLoading ? 'Checking for jobs…' : onDuty ? 'Nothing to deliver' : 'Nothing yet'}
+            </GlassText>
+            <GlassText variant="body" tone="soft" style={{ marginTop: gspace.sm }}>
+              {onDuty
+                ? 'New jobs appear here automatically. Keep the app open.'
+                : 'Go online to pick up whatever is waiting.'}
+            </GlassText>
+            {onDuty ? (
+              <GlassButton
+                title="Check again"
+                kind="ghost"
+                onPress={() => refetch()}
+                style={{ marginTop: gspace.lg }}
+              />
+            ) : null}
+          </GlassCard>
         )}
 
-        {/* Only shown when there is cash in hand — a zero tile is noise. */}
+        {/* Only when there is cash in hand — a zero tile is noise. The
+            template's "cash to deposit" would need finished orders, which
+            /orders does not return, so this is what the rider is carrying. */}
         {toCollect > 0 ? (
-          <View style={{ paddingHorizontal: space.xl, marginTop: space.lg }}>
-            <Card style={{ paddingVertical: space.lg }}>
-              <Text variant="cardCaption" style={{ color: cardColor.textSecondary }}>
-                Cash to collect
-              </Text>
-              <Text variant="cardTitle" nums style={{ color: cardColor.red, marginTop: 2 }}>
-                {money(toCollect, currency)}
-              </Text>
-            </Card>
-          </View>
+          <GlassCard padding={16} style={{ marginTop: gspace.lg }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+              <GlassIcon name="cash" color={glass.red} size={18} />
+              <View style={{ marginLeft: gspace.sm }}>
+                <GlassText variant="caption" tone="soft">
+                  Cash to collect
+                </GlassText>
+                <GlassText variant="subtitle" tone="red" nums>
+                  {money(toCollect, currency)}
+                </GlassText>
+              </View>
+            </View>
+          </GlassCard>
         ) : null}
       </ScrollView>
-    </View>
+    </GlassScreen>
   );
 }
 
@@ -236,4 +191,27 @@ function greeting(): string {
   if (h < 12) return 'Good morning';
   if (h < 17) return 'Good afternoon';
   return 'Good evening';
+}
+
+function Stat({ label, value }: { label: string; value: string | number }) {
+  return (
+    <View
+      style={{
+        flex: 1,
+        backgroundColor: glass.fill,
+        borderRadius: gradius.chip,
+        borderWidth: 1,
+        borderColor: glass.border,
+        paddingVertical: gspace.md,
+        paddingHorizontal: gspace.md,
+      }}
+    >
+      <GlassText variant="subtitle" nums>
+        {value}
+      </GlassText>
+      <GlassText variant="caption" tone="soft" style={{ marginTop: 2 }}>
+        {label}
+      </GlassText>
+    </View>
+  );
 }

@@ -1,8 +1,8 @@
 import { VideoView, useVideoPlayer } from 'expo-video';
 import { useEffect, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
-import { space } from '../theme/tokens';
-import { Text } from './Text';
+import { gspace } from '../theme/glass';
+import { GlassText } from './glass/GlassText';
 
 /** The LOOP export: the icon cycle with the splash's 1.5s intro stripped off. */
 const SOURCE = require('../../assets/videos/loader.mp4');
@@ -65,14 +65,14 @@ function LoadingArtVideo({ label }: { label?: string }) {
       />
 
       {label ? (
-        <Text
+        <GlassText
           variant="label"
           tone="soft"
           upper
-          style={{ position: 'absolute', bottom: space.huge, alignSelf: 'center' }}
+          style={{ position: 'absolute', bottom: gspace.xxxl, alignSelf: 'center' }}
         >
           {label}
-        </Text>
+        </GlassText>
       ) : null}
     </View>
   );

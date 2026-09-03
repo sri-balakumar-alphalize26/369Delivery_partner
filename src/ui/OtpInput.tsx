@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { TextInput, View } from 'react-native';
-import { color, font, space } from '../theme/tokens';
-import { Text } from './Text';
+import { glass, gspace, poppins } from '../theme/glass';
+import { GlassText } from './glass/GlassText';
 
 /**
  * Six-digit code entry, used at both ends of the job — the shop reads out the
@@ -28,13 +28,13 @@ export function OtpInput({
 
   return (
     <View>
-      <Text variant="label" tone="soft" upper>
+      <GlassText variant="label" tone="soft" upper>
         {label}
-      </Text>
+      </GlassText>
       {hint ? (
-        <Text variant="body" tone="soft" style={{ marginTop: space.xs }}>
+        <GlassText variant="body" tone="soft" style={{ marginTop: gspace.xs }}>
           {hint}
-        </Text>
+        </GlassText>
       ) : null}
 
       <TextInput
@@ -46,23 +46,23 @@ export function OtpInput({
         onFocus={() => setFocused(true)}
         onBlur={() => setFocused(false)}
         placeholder="000000"
-        placeholderTextColor={color.hairline}
+        placeholderTextColor={glass.divider}
         style={{
-          fontFamily: font.bold,
+          fontFamily: poppins.bold,
           fontSize: 42,
           letterSpacing: 10,
-          color: color.ink,
-          paddingVertical: space.md,
-          marginTop: space.sm,
+          color: glass.ink,
+          paddingVertical: gspace.md,
+          marginTop: gspace.sm,
           borderBottomWidth: focused ? 2 : 1,
-          borderBottomColor: error ? color.red : focused ? color.brand : color.hairline,
+          borderBottomColor: error ? glass.red : focused ? glass.indigo : glass.divider,
         }}
       />
 
       {error ? (
-        <Text variant="bodyStrong" tone="red" style={{ marginTop: space.sm }}>
+        <GlassText variant="bodyStrong" tone="red" style={{ marginTop: gspace.sm }}>
           {error}
-        </Text>
+        </GlassText>
       ) : null}
     </View>
   );

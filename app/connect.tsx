@@ -1,23 +1,16 @@
 import { useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
-import {
-  Image,
-  KeyboardAvoidingView,
-  Platform,
-  Pressable,
-  ScrollView,
-  Switch,
-  View,
-} from 'react-native';
+import { Image, KeyboardAvoidingView, Platform, ScrollView, Switch, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ENV_DEFAULTS } from '../src/api/config';
 import { ApiError } from '../src/api/types';
 import { useSession } from '../src/store/session';
-import { cardColor, cardRadius, space } from '../src/theme/tokens';
-import { Card } from '../src/ui/Card';
+import { glass, gradius, gspace } from '../src/theme/glass';
 import { Field } from '../src/ui/Field';
-import { GradientHeader } from '../src/ui/GradientHeader';
-import { Text } from '../src/ui/Text';
+import { GlassButton } from '../src/ui/glass/GlassButton';
+import { GlassCard } from '../src/ui/glass/GlassCard';
+import { GlassScreen } from '../src/ui/glass/GlassScreen';
+import { GlassText } from '../src/ui/glass/GlassText';
 
 /**
  * There is no login screen.
@@ -31,10 +24,13 @@ import { Text } from '../src/ui/Text';
  * tunnel whose address changes on restart; being able to paste the new one here
  * is what stops that costing a rebuild every time.
  *
- * The reference draws a mobile-number and one-time-code sign-in. That flow does
- * not exist yet, so this is the reference's *styling* over the fields that are
- * actually wired up. Drawing the OTP form would be drawing a login that cannot
- * log anyone in.
+ * The template draws a mobile-number and one-time-code sign-in. That flow does
+ * not exist yet, so this is its *styling* over the fields that are actually
+ * wired up. Drawing the OTP form would be drawing a login that cannot log
+ * anyone in.
+ *
+ * It stays outside the tabs group, so it is not a tab — reached only from
+ * Profile or by the Gate redirect.
  */
 export default function Connect() {
   const router = useRouter();
@@ -86,49 +82,45 @@ export default function Connect() {
   }
 
   return (
-    <KeyboardAvoidingView
-      style={{ flex: 1, backgroundColor: cardColor.canvas }}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
-      <ScrollView
-        contentContainerStyle={{ paddingBottom: space.huge + insets.bottom }}
-        keyboardShouldPersistTaps="handled"
-        showsVerticalScrollIndicator={false}
+    <GlassScreen>
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       >
-        <GradientHeader
-          style={{
-            paddingTop: insets.top + space.huge,
-            paddingHorizontal: space.xl,
-            paddingBottom: space.huge,
-            alignItems: 'center',
+        <ScrollView
+          contentContainerStyle={{
+            paddingTop: insets.top + gspace.xxxl,
+            paddingHorizontal: gspace.xl,
+            paddingBottom: gspace.xxxl + insets.bottom,
           }}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
         >
-          <View
-            style={{
-              backgroundColor: cardColor.card,
-              borderRadius: cardRadius.card,
-              padding: space.sm,
-            }}
-          >
-            <Image
-              source={require('../assets/images/brand-full.png')}
-              style={{ width: 96, height: 96 }}
-              resizeMode="contain"
-            />
+          <View style={{ alignItems: 'center' }}>
+            <View
+              style={{
+                backgroundColor: glass.fillStrong,
+                borderRadius: gradius.card,
+                borderWidth: 1,
+                borderColor: glass.border,
+                padding: gspace.md,
+              }}
+            >
+              <Image
+                source={require('../assets/images/brand-full.png')}
+                style={{ width: 84, height: 84 }}
+                resizeMode="contain"
+              />
+            </View>
+            <GlassText variant="hero" style={{ marginTop: gspace.lg }}>
+              Delivery Partner
+            </GlassText>
+            <GlassText variant="body" tone="soft" style={{ marginTop: gspace.xs }}>
+              Connect to start earning
+            </GlassText>
           </View>
-          <Text variant="cardTitle" style={{ color: cardColor.card, marginTop: space.lg }}>
-            Delivery Partner
-          </Text>
-          <Text
-            variant="cardBody"
-            style={{ color: 'rgba(255,255,255,0.72)', marginTop: space.xs }}
-          >
-            Connect to start earning
-          </Text>
-        </GradientHeader>
 
-        <View style={{ paddingHorizontal: space.xl, marginTop: -space.xxl }}>
-          <Card>
+          <GlassCard style={{ marginTop: gspace.xxl }}>
             <View
               style={{
                 flexDirection: 'row',
@@ -136,36 +128,31 @@ export default function Connect() {
                 justifyContent: 'space-between',
               }}
             >
-              <View style={{ flex: 1, paddingRight: space.lg }}>
-                <Text variant="cardBody" style={{ color: cardColor.textPrimary }}>
-                  Use demo data
-                </Text>
-                <Text
-                  variant="cardCaption"
-                  style={{ color: cardColor.textSecondary, marginTop: 2 }}
-                >
+              <View style={{ flex: 1, paddingRight: gspace.lg }}>
+                <GlassText variant="bodyStrong">Use demo data</GlassText>
+                <GlassText variant="caption" tone="soft" style={{ marginTop: 2 }}>
                   Try the app with no server at all
-                </Text>
+                </GlassText>
               </View>
               <Switch
                 value={useMock}
                 onValueChange={setUseMock}
-                trackColor={{ true: cardColor.brand }}
+                trackColor={{ true: glass.indigo }}
               />
             </View>
 
             <View
               style={{
                 borderBottomWidth: 1,
-                borderColor: cardColor.divider,
-                marginVertical: space.lg,
+                borderColor: glass.divider,
+                marginVertical: gspace.lg,
               }}
             />
 
             {useMock ? (
-              <Text variant="cardBody" style={{ color: cardColor.textSecondary }}>
+              <GlassText variant="body" tone="soft">
                 Demo mode is on. Pickup code is 482913 and delivery code is 739214.
-              </Text>
+              </GlassText>
             ) : (
               <>
                 <Field
@@ -195,56 +182,38 @@ export default function Connect() {
                 />
               </>
             )}
-          </Card>
+          </GlassCard>
 
           {error ? (
-            <Text variant="cardBody" style={{ color: cardColor.red, marginTop: space.lg }}>
+            <GlassText variant="bodyStrong" tone="red" style={{ marginTop: gspace.lg }}>
               {error}
-            </Text>
+            </GlassText>
           ) : null}
           {ok ? (
-            <Text variant="cardBody" style={{ color: cardColor.green, marginTop: space.lg }}>
+            <GlassText variant="bodyStrong" tone="green" style={{ marginTop: gspace.lg }}>
               {ok}
-            </Text>
+            </GlassText>
           ) : null}
 
-          <Pressable
+          <GlassButton
+            title="Continue"
+            kind="dark"
             onPress={save}
-            disabled={busy}
-            accessibilityRole="button"
-            style={({ pressed }) => ({
-              backgroundColor: cardColor.brand,
-              borderRadius: cardRadius.button,
-              height: 54,
-              alignItems: 'center',
-              justifyContent: 'center',
-              marginTop: space.xl,
-              opacity: busy ? 0.5 : pressed ? 0.85 : 1,
-            })}
-          >
-            <Text variant="cardButton" style={{ color: cardColor.card }}>
-              Continue
-            </Text>
-          </Pressable>
+            loading={busy}
+            style={{ marginTop: gspace.xl }}
+          />
 
           {!useMock ? (
-            <Pressable
+            <GlassButton
+              title="Test connection"
+              kind="ghost"
               onPress={test}
               disabled={busy}
-              accessibilityRole="button"
-              style={({ pressed }) => ({
-                paddingVertical: space.lg,
-                alignItems: 'center',
-                opacity: busy ? 0.5 : pressed ? 0.6 : 1,
-              })}
-            >
-              <Text variant="cardBody" style={{ color: cardColor.brand }}>
-                Test connection
-              </Text>
-            </Pressable>
+              style={{ marginTop: gspace.md }}
+            />
           ) : null}
-        </View>
-      </ScrollView>
-    </KeyboardAvoidingView>
+        </ScrollView>
+      </KeyboardAvoidingView>
+    </GlassScreen>
   );
 }

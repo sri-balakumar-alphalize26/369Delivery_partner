@@ -1,17 +1,11 @@
 import {
-  Archivo_400Regular,
-  Archivo_500Medium,
-  Archivo_600SemiBold,
-  Archivo_700Bold,
+  Poppins_400Regular,
+  Poppins_500Medium,
+  Poppins_600SemiBold,
+  Poppins_700Bold,
+  Poppins_800ExtraBold,
   useFonts,
-} from '@expo-google-fonts/archivo';
-import {
-  Outfit_400Regular,
-  Outfit_500Medium,
-  Outfit_600SemiBold,
-  Outfit_700Bold,
-  Outfit_800ExtraBold,
-} from '@expo-google-fonts/outfit';
+} from '@expo-google-fonts/poppins';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
@@ -19,7 +13,7 @@ import { StatusBar as ExpoStatusBar } from 'expo-status-bar';
 import { ReactNode, useCallback, useEffect, useState } from 'react';
 import { View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import { color } from '../src/theme/tokens';
+import { glass } from '../src/theme/glass';
 import { SplashAnimation } from '../src/ui/SplashAnimation';
 import { useSession } from '../src/store/session';
 
@@ -77,16 +71,11 @@ function Gate({ children }: { children: ReactNode }) {
 
 export default function RootLayout() {
   const [fontsLoaded, fontError] = useFonts({
-    Archivo_400Regular,
-    Archivo_500Medium,
-    Archivo_600SemiBold,
-    Archivo_700Bold,
-    // Bold Cards. Archivo stays until every screen has moved over.
-    Outfit_400Regular,
-    Outfit_500Medium,
-    Outfit_600SemiBold,
-    Outfit_700Bold,
-    Outfit_800ExtraBold,
+    Poppins_400Regular,
+    Poppins_500Medium,
+    Poppins_600SemiBold,
+    Poppins_700Bold,
+    Poppins_800ExtraBold,
   });
 
   const ready = useSession((s) => s.ready);
@@ -129,7 +118,7 @@ export default function RootLayout() {
             <Stack
               screenOptions={{
                 headerShown: false,
-                contentStyle: { backgroundColor: color.bg },
+                contentStyle: { backgroundColor: glass.meshMid },
                 animation: 'fade',
               }}
             />
