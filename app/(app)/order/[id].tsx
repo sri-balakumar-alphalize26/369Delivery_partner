@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useState } from 'react';
-import { Linking, Platform, Pressable, ScrollView, View, useWindowDimensions } from 'react-native';
+import { useEffect, useState } from 'react';
+import { Linking, Pressable, ScrollView, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { api } from '../../../src/api/endpoints';
 import {
@@ -10,16 +10,17 @@ import {
   ActionResult,
   ApiError,
   DeliveryOrder,
+  DELIVERY_REASONS,
   PRIMARY_ACTIONS,
 } from '../../../src/api/types';
-import { coords, money, promisedAt, shopName } from '../../../src/lib/format';
+import { money, promisedAt, shopName } from '../../../src/lib/format';
 import { startTracking, stopTracking } from '../../../src/location/tracking';
 import { useSession } from '../../../src/store/session';
 import { glass, gradius, gshadow, gspace } from '../../../src/theme/glass';
+import { Field } from '../../../src/ui/Field';
 import { LoadingArt } from '../../../src/ui/LoadingArt';
 import { OtpBoxes } from '../../../src/ui/OtpBoxes';
 import { OtpInput } from '../../../src/ui/OtpInput';
-import { StaticMap } from '../../../src/ui/StaticMap';
 import { GlassButton } from '../../../src/ui/glass/GlassButton';
 import { GlassCard } from '../../../src/ui/glass/GlassCard';
 import { GlassIcon, GlassIconName } from '../../../src/ui/glass/GlassIcon';
@@ -44,24 +45,17 @@ import { GlassText } from '../../../src/ui/glass/GlassText';
  * would be trusted and wrong.
  */
 
+/**
+ * Navigate by written address, always.
+ *
+ * The backend settled this: nothing in the flow geocodes an address, so
+ * `latitude` and `longitude` will always be null — "stop drawing the map and
+ * navigate on delivery_address". A coordinate branch here would be dead code
+ * pretending to be a fallback.
+ */
 function navigateTo(order: DeliveryOrder) {
-  // No row on res-test1 is geocoded: these arrive as null today and as 0.0
-  // before that. `coords` rejects both, so navigation falls back to the
-  // written address rather than steering the rider into the Atlantic.
-  const at = coords(order.latitude, order.longitude);
-  const byAddress = `https://maps.google.com/?q=${encodeURIComponent(order.delivery_address)}`;
-
-  const url = at
-    ? Platform.OS === 'android'
-      ? `google.navigation:q=${at.latitude},${at.longitude}`
-      : `comgooglemaps://?daddr=${at.latitude},${at.longitude}&directionsmode=driving`
-    : byAddress;
-
-  Linking.openURL(url).catch(() =>
-    Linking.openURL(
-      at ? `https://maps.google.com/?q=${at.latitude},${at.longitude}` : byAddress
-    ).catch(() => {})
-  );
+  const url = `https://maps.google.com/?q=${encodeURIComponent(order.delivery_address)}`;
+  Linking.openURL(url).catch(() => {});
 }
 
 export default function Job() {
@@ -70,7 +64,6 @@ export default function Job() {
   const router = useRouter();
   const qc = useQueryClient();
   const insets = useSafeAreaInsets();
-  const { width, height } = useWindowDimensions();
   // The shop's zone, from /auth/me — never the phone's own.
   const timezone = useSession((s) => s.timezone);
 
@@ -80,6 +73,17 @@ export default function Job() {
   const [otpError, setOtpError] = useState<string | null>(null);
   /** Set from a 409 so a stale screen re-renders without a reload. */
   const [override, setOverride] = useState<Action[] | null>(null);
+  /** Seconds left on the server's resend window, counted down locally. */
+  const [cooldown, setCooldown] = useState(0);
+  /** Which action is waiting on a reason, if any. */
+  const [reasonFor, setReasonFor] = useState<Action | null>(null);
+  const [reasonNote, setReasonNote] = useState('');
+
+  useEffect(() => {
+    if (cooldown <= 0) return;
+    const t = setTimeout(() => setCooldown((s) => s - 1), 1000);
+    return () => clearTimeout(t);
+  }, [cooldown]);
 
   /**
    * Expo Router reuses this component from one job to the next, so everything
@@ -95,6 +99,7 @@ export default function Job() {
     setOtp('');
     setError(null);
     setOtpError(null);
+    setCooldown(0);
   }
 
   const { data: order, isLoading } = useQuery({
@@ -162,7 +167,25 @@ export default function Job() {
     }
   }
 
+  /**
+   * Returning a parcel and reporting a problem both need a reason, and the
+   * reason codes are a list the two teams agreed rather than either inventing.
+   * So these two actions open the picker instead of firing straight away —
+   * the app used to send a hardcoded "Reported from the app", which told the
+   * office nothing.
+   */
   async function run(action: Action) {
+    if (action === 'return_to_shop' || action === 'report_issue') {
+      setError(null);
+      setOtpError(null);
+      setReasonNote('');
+      setReasonFor(action);
+      return;
+    }
+    await fire(action);
+  }
+
+  async function fire(action: Action, reason?: string) {
     setBusy(true);
     setError(null);
     setOtpError(null);
@@ -186,7 +209,7 @@ export default function Job() {
           res = await api.verifyDeliveryOtp(orderId, otp);
           break;
         case 'return_to_shop':
-          res = await api.returnToShop(orderId);
+          res = await api.returnToShop(orderId, reason);
           break;
         case 'confirm_return':
           // The contract's prose says only the shop closes a return, while its
@@ -195,7 +218,7 @@ export default function Job() {
           res = await api.confirmReturn(orderId);
           break;
         case 'report_issue':
-          res = await api.reportIssue(orderId, 'Reported from the app');
+          res = await api.reportIssue(orderId, reason ?? 'other');
           break;
         default:
           return;
@@ -222,6 +245,103 @@ export default function Job() {
   }
 
   const call = () => Linking.openURL(`tel:${order.customer_mobile}`).catch(() => {});
+
+  /* ----------------------------------------------------------------- *
+   * Why did it go wrong?
+   *
+   * Its own step rather than a sheet layered over each of the three layouts
+   * below — a rider standing at a door needs one question on the screen, and
+   * this way the picker exists once instead of three times.
+   * ----------------------------------------------------------------- */
+  if (reasonFor) {
+    const returning = reasonFor === 'return_to_shop';
+    return (
+      <GlassScreen>
+        <ScrollView
+          contentContainerStyle={{
+            paddingTop: insets.top + gspace.xxl,
+            paddingHorizontal: gspace.xl,
+            paddingBottom: gspace.xxxl + insets.bottom,
+          }}
+          keyboardShouldPersistTaps="handled"
+        >
+          <GlassText variant="title">
+            {returning ? 'Why are you returning it?' : 'What is the problem?'}
+          </GlassText>
+          <GlassText variant="body" tone="soft" style={{ marginTop: gspace.sm }}>
+            {returning
+              ? 'The shop closes the return. This tells them what happened.'
+              : 'This is logged against the job. It does not change anything you can do.'}
+          </GlassText>
+
+          <View style={{ marginTop: gspace.xl, gap: gspace.sm }}>
+            {DELIVERY_REASONS.map((r) => (
+              <Pressable
+                key={r.code}
+                disabled={busy}
+                accessibilityRole="button"
+                onPress={() => {
+                  if (r.code === 'other') {
+                    setReasonNote(' ');
+                    return;
+                  }
+                  setReasonFor(null);
+                  void fire(reasonFor, r.code);
+                }}
+                style={({ pressed }) => [
+                  {
+                    backgroundColor: glass.fillStrong,
+                    borderRadius: gradius.card,
+                    borderWidth: 1,
+                    borderColor: glass.border,
+                    paddingVertical: gspace.lg,
+                    paddingHorizontal: gspace.xl,
+                    opacity: pressed || busy ? 0.6 : 1,
+                  },
+                ]}
+              >
+                <GlassText variant="bodyStrong">{r.label}</GlassText>
+              </Pressable>
+            ))}
+          </View>
+
+          {/* Free text is only asked for behind "Something else" — the server
+              accepts it alongside the codes, so nothing is lost either way. */}
+          {reasonNote ? (
+            <View style={{ marginTop: gspace.lg }}>
+              <Field
+                label="In your words"
+                placeholder="A short line is enough — the office reads these"
+                value={reasonNote.trimStart()}
+                onChangeText={(v) => setReasonNote(v || ' ')}
+                multiline
+                autoFocus
+              />
+              <GlassButton
+                title="Send"
+                loading={busy}
+                onPress={() => {
+                  const note = reasonNote.trim();
+                  setReasonFor(null);
+                  void fire(reasonFor, note ? `other: ${note}` : 'other');
+                }}
+                style={{ marginTop: gspace.lg }}
+              />
+            </View>
+          ) : null}
+
+          <GhostLink
+            label="Never mind"
+            disabled={busy}
+            onPress={() => {
+              setReasonFor(null);
+              setReasonNote('');
+            }}
+          />
+        </ScrollView>
+      </GlassScreen>
+    );
+  }
 
   /* ----------------------------------------------------------------- *
    * Offer — not accepted yet.
@@ -439,25 +559,21 @@ export default function Job() {
   }
 
   /* ----------------------------------------------------------------- *
-   * En route — glass sheet over the map.
+   * En route.
+   *
+   * There was a map behind this sheet. It is gone: the backend confirmed
+   * nothing geocodes an address, so it could only ever render its empty-state
+   * panel — 40% of the screen given to a grey rectangle for the life of the
+   * app. The sheet now starts below the header and gets the whole screen.
    * ----------------------------------------------------------------- */
-  const mapH = Math.round(height * 0.4);
-
   return (
     <GlassScreen>
-      <StaticMap
-        latitude={coords(order.latitude, order.longitude)?.latitude}
-        longitude={coords(order.latitude, order.longitude)?.longitude}
-        width={width}
-        height={mapH}
-      />
-
-      <View style={{ position: 'absolute', top: insets.top + gspace.sm, left: gspace.xl }}>
+      <View style={{ paddingTop: insets.top + gspace.sm, paddingLeft: gspace.xl }}>
         <RoundButton icon="chev" mirrored onPress={() => router.back()} />
       </View>
 
       <ScrollView
-        style={{ marginTop: -gspace.xxl }}
+        style={{ marginTop: gspace.lg }}
         contentContainerStyle={{ paddingBottom: gspace.xxxl + insets.bottom }}
         keyboardShouldPersistTaps="handled"
       >
@@ -470,7 +586,6 @@ export default function Job() {
               borderWidth: 1,
               borderColor: glass.border,
               padding: gspace.xl,
-              minHeight: height - mapH,
             },
             gshadow.glass,
           ]}
@@ -563,14 +678,21 @@ export default function Job() {
                   still issuing it. Swallowing that left the button doing
                   nothing visible, so the server's own wording is shown. */}
               <GhostLink
-                label="Ask the shop to resend"
-                disabled={busy}
+                label={
+                  cooldown > 0
+                    ? `Ask the shop to resend (${cooldown}s)`
+                    : 'Ask the shop to resend'
+                }
+                disabled={busy || cooldown > 0}
                 onPress={async () => {
                   setError(null);
                   setOtpError(null);
                   try {
                     const res = await api.requestPickupOtp(orderId);
                     if (res.message) setError(res.message);
+                    // The server enforces the window; obey the number it sends
+                    // rather than a constant of our own.
+                    setCooldown(res.retry_after_seconds ?? 0);
                   } catch (err) {
                     setError(
                       err instanceof ApiError

@@ -294,6 +294,11 @@ async function main() {
   await page.waitForTimeout(1800);
 
   await tap(page, 'Return to shop');
+  await page.waitForTimeout(1200);
+  // Returning now asks why, from the reason list both teams agreed on, rather
+  // than sending a hardcoded string the office could not act on.
+  await expectText(page, 'Why are you returning it?', 'return asks for a reason');
+  await tap(page, 'Customer not there');
   await page.waitForTimeout(1800);
   await expectText(page, 'Confirm return', 'returning offers confirm_return');
   console.log(`        ${await shoot(page, 'returning')}`);
@@ -304,7 +309,9 @@ async function main() {
   console.log(`        ${await shoot(page, 'returned')}`);
 
   // ---- 9. The other tabs -----------------------------------------------
-  await tap(page, 'Orders');
+  // Exact match: with exact:false the home heading "Active orders · N" wins
+  // over the tab, and the tap lands on a heading that does nothing.
+  await page.getByText('Orders', { exact: true }).first().click();
   await page.waitForTimeout(1500);
   await expectText(page, 'Your jobs', 'orders tab renders');
   console.log(`        ${await shoot(page, 'orders-tab')}`);
