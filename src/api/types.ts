@@ -99,9 +99,30 @@ export interface OrderTimestamps {
   delivered: string;
 }
 
-/**  is the only signal that may start the location service. */
+/** `{ enabled: true }` is the only signal that may start the location service. */
 export interface Tracking {
   enabled: boolean;
+}
+
+/**
+ * The shop a job is collected from.
+ *
+ * This arrived as a bare string until the backend shipped N2, and the app
+ * rendered it directly — so the object crashed React Native with "Objects are
+ * not valid as a React child". Both shapes are accepted deliberately: the live
+ * server sends the object, older captures and the odd cached response send the
+ * string, and neither should be able to take a screen down. Read it through
+ * `shopName()` in `lib/format`, never straight into JSX.
+ */
+export interface Shop {
+  id: number;
+  name: string;
+  /** Absolute and unauthenticated, or null when the shop has no image. */
+  image_url: string | null;
+  latitude: number | null;
+  longitude: number | null;
+  address: string;
+  phone: string;
 }
 
 export interface DeliveryOrder {
@@ -113,7 +134,10 @@ export interface DeliveryOrder {
   customer_name: string;
   customer_mobile: string;
   delivery_address: string;
-  shop: string;
+  /** Object since N2; string before it. Render via `shopName()`. */
+  shop: Shop | string;
+  /** e.g. "1 item(s) - 2 unit(s)". Ships alongside the shop object. */
+  items_summary?: string;
 
   payment_status: PaymentStatus;
   amount_to_collect: number;
@@ -130,10 +154,15 @@ export interface DeliveryOrder {
 
   allowed_actions: Action[];
 
-  /** Only on GET /orders/{id}. */
+  /** Since N2 these ship on the list too, not only on GET /orders/{id}. */
   products?: Product[];
-  latitude?: number;
-  longitude?: number;
+  /**
+   * `null` when the address has never been geocoded — which is every row on
+   * res-test1 today. It was `0.0` before, which a map renders as a pin in the
+   * Atlantic, so treat both as absent and navigate by address instead.
+   */
+  latitude?: number | null;
+  longitude?: number | null;
   tracking?: Tracking;
   timestamps?: OrderTimestamps;
   delivered_at?: string;

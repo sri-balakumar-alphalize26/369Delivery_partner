@@ -1,4 +1,4 @@
-import { Currency, DeliveryOrder } from '../types';
+import { Currency, DeliveryOrder, Shop } from '../types';
 
 /**
  * Shaped exactly like the live examples in the contract, down to the currency
@@ -11,6 +11,24 @@ import { Currency, DeliveryOrder } from '../types';
 export const OMR: Currency = { code: 'OMR', symbol: 'ر.ع.', decimals: 3 };
 
 export const MOCK_TIMEZONE = 'Asia/Muscat';
+
+/**
+ * The shop object as res-test1 actually returns it — an object since the
+ * backend shipped N2, with no image and no coordinates on any row yet.
+ *
+ * It is the object rather than the old string on purpose. The mock hid the
+ * currency object and the nested order envelope by carrying the shape the app
+ * assumed instead of the shape the server sends; it must not hide a third.
+ */
+export const MOCK_SHOP: Shop = {
+  id: 12,
+  name: 'Muscat Branch',
+  image_url: null,
+  latitude: null,
+  longitude: null,
+  address: '',
+  phone: '96899990000',
+};
 
 let seq = 524;
 
@@ -30,7 +48,8 @@ export function makeOffer(): DeliveryOrder {
       'Villa 8, Way 3021, Al Khuwair',
       'Flat 402, Al Wadi Tower, Ruwi',
     ][seq % 3],
-    shop: 'Muscat Branch',
+    shop: MOCK_SHOP,
+    items_summary: '3 item(s) - 4 unit(s)',
     payment_status: cod ? 'cod' : 'paid',
     amount_to_collect: cod ? 12.5 : 0,
     currency: OMR,
@@ -44,8 +63,10 @@ export function makeOffer(): DeliveryOrder {
       { name: 'Brown Bread', quantity: 1, uom: 'Units' },
       { name: 'Farm Eggs (6 pcs)', quantity: 1, uom: 'Units' },
     ],
-    latitude: 23.588,
-    longitude: 58.3829,
+    // Null on every res-test1 row — no delivery address has been geocoded, so
+    // the app must navigate by address. Was 0.0, which maps as the Atlantic.
+    latitude: null,
+    longitude: null,
     tracking: { enabled: false },
     // The detail call carries these. An empty string means "not yet" — the
     // server sends the key regardless, so the app must not treat "" as missing.

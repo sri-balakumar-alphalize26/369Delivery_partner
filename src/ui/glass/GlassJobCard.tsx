@@ -1,6 +1,6 @@
 import { View } from 'react-native';
 import { DeliveryOrder } from '../../api/types';
-import { money, promisedAt } from '../../lib/format';
+import { money, promisedAt, shopName } from '../../lib/format';
 import { GlassBarState, glass, gradius, glassBand, gspace } from '../../theme/glass';
 import { GlassButton } from './GlassButton';
 import { GlassCard } from './GlassCard';
@@ -45,7 +45,7 @@ export function GlassJobCard({
 
         <View style={{ flex: 1, paddingRight: gspace.sm }}>
           <GlassText variant="bodyStrong" numberOfLines={1}>
-            {job.shop}
+            {shopName(job.shop)}
           </GlassText>
           <GlassText variant="caption" tone="soft" numberOfLines={1}>
             {job.job_code}

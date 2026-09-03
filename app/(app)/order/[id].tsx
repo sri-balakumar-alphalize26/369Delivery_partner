@@ -12,7 +12,7 @@ import {
   DeliveryOrder,
   PRIMARY_ACTIONS,
 } from '../../../src/api/types';
-import { money, promisedAt } from '../../../src/lib/format';
+import { coords, money, promisedAt, shopName } from '../../../src/lib/format';
 import { startTracking, stopTracking } from '../../../src/location/tracking';
 import { useSession } from '../../../src/store/session';
 import { glass, gradius, gshadow, gspace } from '../../../src/theme/glass';
@@ -45,20 +45,21 @@ import { GlassText } from '../../../src/ui/glass/GlassText';
  */
 
 function navigateTo(order: DeliveryOrder) {
-  const { latitude: lat, longitude: lng, delivery_address } = order;
+  // No row on res-test1 is geocoded: these arrive as null today and as 0.0
+  // before that. `coords` rejects both, so navigation falls back to the
+  // written address rather than steering the rider into the Atlantic.
+  const at = coords(order.latitude, order.longitude);
+  const byAddress = `https://maps.google.com/?q=${encodeURIComponent(order.delivery_address)}`;
 
-  const url =
-    lat && lng
-      ? Platform.OS === 'android'
-        ? `google.navigation:q=${lat},${lng}`
-        : `comgooglemaps://?daddr=${lat},${lng}&directionsmode=driving`
-      : `https://maps.google.com/?q=${encodeURIComponent(delivery_address)}`;
+  const url = at
+    ? Platform.OS === 'android'
+      ? `google.navigation:q=${at.latitude},${at.longitude}`
+      : `comgooglemaps://?daddr=${at.latitude},${at.longitude}&directionsmode=driving`
+    : byAddress;
 
   Linking.openURL(url).catch(() =>
     Linking.openURL(
-      lat && lng
-        ? `https://maps.google.com/?q=${lat},${lng}`
-        : `https://maps.google.com/?q=${encodeURIComponent(delivery_address)}`
+      at ? `https://maps.google.com/?q=${at.latitude},${at.longitude}` : byAddress
     ).catch(() => {})
   );
 }
@@ -248,7 +249,7 @@ export default function Job() {
           </View>
 
           <GlassText variant="hero" style={{ marginTop: gspace.lg }} numberOfLines={2}>
-            {order.shop} → {order.customer_name}
+            {shopName(order.shop)} → {order.customer_name}
           </GlassText>
 
           <GlassCard style={{ marginTop: gspace.xl }}>
@@ -256,7 +257,7 @@ export default function Job() {
               Pick up from
             </GlassText>
             <GlassText variant="bodyStrong" style={{ marginTop: gspace.xs }}>
-              {order.shop}
+              {shopName(order.shop)}
             </GlassText>
 
             <View
@@ -406,7 +407,9 @@ export default function Job() {
               tone="soft"
               style={{ marginTop: gspace.xs, marginBottom: gspace.lg }}
             >
-              Ask the customer for the 6-digit code from their app or SMS.
+              {/* WhatsApp, not SMS: the backend confirmed there is no SMS
+                  gateway configured and no plan to add one. */}
+              Ask the customer for the 6-digit code Odoo sent them on WhatsApp.
             </GlassText>
             <OtpBoxes value={otp} onChange={setOtp} error={otpError} />
           </GlassCard>
@@ -443,8 +446,8 @@ export default function Job() {
   return (
     <GlassScreen>
       <StaticMap
-        latitude={order.latitude}
-        longitude={order.longitude}
+        latitude={coords(order.latitude, order.longitude)?.latitude}
+        longitude={coords(order.latitude, order.longitude)?.longitude}
         width={width}
         height={mapH}
       />
@@ -478,7 +481,7 @@ export default function Job() {
                 Order {order.delivery_order_name}
               </GlassText>
               <GlassText variant="title" style={{ marginTop: 2 }} numberOfLines={1}>
-                {order.shop}
+                {shopName(order.shop)}
               </GlassText>
             </View>
             <View style={{ flexDirection: 'row', gap: gspace.sm }}>

@@ -12,6 +12,7 @@
 import { mockAdapter as api, mockFlags } from '../src/api/mock/adapter';
 import { MOCK_DELIVERY_OTP, MOCK_PICKUP_OTP } from '../src/api/mock/fixtures';
 import { Action, ApiError } from '../src/api/types';
+import { coords, shopName } from '../src/lib/format';
 
 let passed = 0;
 let failed = 0;
@@ -104,6 +105,23 @@ async function main() {
     JSON.stringify(Object.keys(detail).slice(0, 3)));
   check('detail carries timestamps', !!detail.timestamps, JSON.stringify(detail.timestamps));
   check('an untouched step is "" not missing', detail.timestamps?.accepted === '');
+
+  // `shop` became an object when the backend shipped N2. The app rendered it
+  // straight into JSX, which crashes React Native with "Objects are not valid
+  // as a React child" — the same failure the currency object caused. Anything
+  // that reaches a screen must go through shopName().
+  check('shop is the object the server sends', typeof job.shop === 'object',
+    typeof job.shop);
+  check('shopName() resolves the object', shopName(job.shop) === 'Muscat Branch',
+    shopName(job.shop));
+  check('shopName() still resolves a bare string', shopName('Old Branch') === 'Old Branch');
+  check('items_summary ships with it', typeof job.items_summary === 'string');
+
+  // Neither null nor 0,0 is a place. 0,0 is the Atlantic; a map would pin it.
+  check('ungeocoded coords resolve to null', coords(job.latitude, job.longitude) === null,
+    JSON.stringify([job.latitude, job.longitude]));
+  check('0,0 is rejected too', coords(0, 0) === null);
+  check('a real fix survives', coords(23.588, 58.3829)?.latitude === 23.588);
 
   // `failed` is live on res-test1 and absent from the published contract.
   const failedJob = list.orders.find((o) => o.delivery_status === 'failed');

@@ -1,4 +1,4 @@
-import { Currency } from '../api/types';
+import { Currency, Shop } from '../api/types';
 
 /**
  * Money and time formatting.
@@ -68,4 +68,34 @@ export function promisedAt(raw: string | undefined, timeZone?: string): string {
  */
 function asUtc(raw: string): string {
   return /[Zz]$|[+-]\d{2}:?\d{2}$/.test(raw) ? raw : `${raw}Z`;
+}
+
+/**
+ * The shop's name, whichever shape it arrives in.
+ *
+ * `shop` was a bare string until the backend shipped the shop object; the live
+ * server now sends `{ id, name, image_url, ... }`. Rendering that straight into
+ * JSX crashes React Native with "Objects are not valid as a React child" — the
+ * same failure the currency object caused. Both shapes resolve here, so no
+ * screen has to know which one it was handed.
+ */
+export function shopName(shop: Shop | string | undefined): string {
+  if (!shop) return '';
+  return typeof shop === 'string' ? shop : (shop.name ?? '');
+}
+
+/**
+ * Coordinates, or null when there are none worth using.
+ *
+ * res-test1 returns `null` today and returned `0.0` before that — and 0,0 is a
+ * real place in the Atlantic, so a map would happily drop a pin there. Both
+ * mean "never geocoded", and the caller should fall back to the address.
+ */
+export function coords(
+  lat: number | null | undefined,
+  lng: number | null | undefined
+): { latitude: number; longitude: number } | null {
+  if (typeof lat !== 'number' || typeof lng !== 'number') return null;
+  if (lat === 0 && lng === 0) return null;
+  return { latitude: lat, longitude: lng };
 }
