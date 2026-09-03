@@ -87,12 +87,19 @@ export function makeOffer(): DeliveryOrder {
  * shown a status it does not recognise until a rider hits one.
  */
 export function makeFailed(): DeliveryOrder {
-  return {
+  const job: DeliveryOrder = {
     ...makeOffer(),
     delivery_status: 'failed',
     allowed_actions: [],
   };
+  // Recorded because a terminal job is no longer returned by /orders, so a
+  // test cannot discover its id from the list any more — only fetch it.
+  mockFailedId = job.delivery_order_id;
+  return job;
 }
+
+/** The id of the seeded `failed` job, once one has been made. */
+export let mockFailedId = 0;
 
 /** Both codes are 6 digits, matching the contract. */
 export const MOCK_PICKUP_OTP = '482913';

@@ -59,6 +59,15 @@ const ACTIONS_FOR: Record<DeliveryStatus, Action[]> = {
   failed: [],
 };
 
+/**
+ * Finished work. Dropped from `/orders` and found in `/history` instead.
+ *
+ * `failed` is legacy: nothing has set it since Odoo module 19.0.6.0.0, where a
+ * failed WhatsApp nudge stopped being treated as a failed delivery. Old rows
+ * still carry it, so it stays mapped and terminal.
+ */
+const TERMINAL: DeliveryStatus[] = ['delivered', 'returned', 'cancelled', 'failed'];
+
 const rider: Rider = {
   id: 18,
   name: 'API Test Rider',
@@ -186,12 +195,16 @@ export const mockAdapter: ApiAdapter = {
           .length,
         delivered: live.filter((o) => o.delivery_status === 'delivered').length,
       },
-      // The live server keeps finished jobs in this list — the res-test1 run
-      // returned `failed` and `returned` rows alongside open ones, each with an
-      // empty allowed_actions. Only `delivered` is dropped. Mirroring that
-      // matters: a mock that hides them lets the app assume every order is
-      // actionable, which is exactly the assumption that breaks on real data.
-      orders: live.filter((o) => o.delivery_status !== 'delivered'),
+      // All four terminal states are dropped, matching the server again.
+      //
+      // This filter read `!== 'delivered'` for a while, mirroring a real bug:
+      // the server kept returned, cancelled and failed rows in the list
+      // forever. That is fixed on their side and verified live, so the mock
+      // follows. The app still tolerates a terminal row appearing here —
+      // legacy jobs like 530 exist — but it should not be the normal case.
+      orders: live.filter(
+        (o) => !TERMINAL.includes(o.delivery_status)
+      ),
       on_duty: rider.on_duty,
       timezone: MOCK_TIMEZONE,
       server_time: utcNow(),
@@ -233,6 +246,10 @@ export const mockAdapter: ApiAdapter = {
       status: o.delivery_status,
       allowed_actions: o.allowed_actions,
       message: 'The shop has been sent the pickup code.',
+      // The server enforces a 60s window and returns what is left of it on
+      // every call, so the app can time the button instead of leaving one that
+      // silently does nothing.
+      retry_after_seconds: 60,
     };
   },
 

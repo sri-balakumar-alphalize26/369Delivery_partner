@@ -65,6 +65,27 @@ export type DeliveryStatus =
    */
   | 'failed';
 
+/**
+ * Why a delivery went wrong.
+ *
+ * Proposed by the app team and adopted verbatim by the Odoo team, who prefer a
+ * shared list to one either side invents. Free text is still accepted
+ * alongside, so nothing is rejected mid-rollout — which is why `other` carries
+ * a note rather than standing alone.
+ */
+export const DELIVERY_REASONS = [
+  { code: 'customer_absent', label: 'Customer not there' },
+  { code: 'customer_refused', label: 'Customer refused it' },
+  { code: 'address_wrong', label: 'Address is wrong' },
+  { code: 'address_unreachable', label: 'Cannot reach the address' },
+  { code: 'payment_refused', label: 'Customer would not pay' },
+  { code: 'damaged', label: 'Parcel is damaged' },
+  { code: 'vehicle_problem', label: 'Problem with my vehicle' },
+  { code: 'other', label: 'Something else' },
+] as const;
+
+export type DeliveryReason = (typeof DELIVERY_REASONS)[number]['code'];
+
 export type PaymentStatus = 'cod' | 'paid';
 export type DeliveryType = 'quick' | 'express';
 
@@ -204,6 +225,14 @@ export interface ActionResult {
   tracking?: Tracking;
   message?: string;
   delivered_at?: string;
+  /**
+   * Seconds until another code may be requested. The server enforces a 60s
+   * window: inside it no new code is issued and the existing one keeps its
+   * full life, so a double-tap can no longer kill the code the rider is about
+   * to type. Present on every request-code response, so the button can be
+   * timed rather than left looking broken.
+   */
+  retry_after_seconds?: number;
 }
 
 /**
