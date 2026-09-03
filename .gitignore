@@ -41,3 +41,7 @@ app-example
 # generated native folders
 /ios
 /android
+
+# Firebase service-account private key. Lives only in EAS (eas credentials).
+# Never commit: it can send push as this project and reach other Firebase resources.
+*-firebase-adminsdk-*.json

@@ -313,6 +313,11 @@ export const mockAdapter: ApiAdapter = {
     };
   },
 
+  // Demo mode has no server to register with. Accepting and discarding keeps
+  // the adapter interface honest without pretending a token was stored.
+  async registerPush() {},
+  async unregisterPush() {},
+
   async returnToShop(id) {
     await wait(350);
     guard();

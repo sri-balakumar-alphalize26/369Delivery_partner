@@ -308,6 +308,22 @@ export interface ApiAdapter {
     fix: { latitude: number; longitude: number; accuracy: number }
   ): Promise<LocationResult>;
 
+  /**
+   * Hand Odoo a push token so it can wake this phone when a job is offered.
+   *
+   * `projectId` is sent because Expo rejects a send whose messages span two
+   * EAS projects — and rejects the whole request, so one stale token can
+   * silence every other rider. The server groups its sends by it.
+   */
+  registerPush(input: {
+    token: string;
+    platform: string;
+    projectId: string;
+  }): Promise<void>;
+
+  /** Deactivate a token on sign-out. */
+  unregisterPush(token: string): Promise<void>;
+
   returnToShop(id: number, reason?: string): Promise<ActionResult>;
   confirmReturn(id: number): Promise<ActionResult>;
   reportIssue(id: number, note: string): Promise<ActionResult>;

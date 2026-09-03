@@ -3,7 +3,7 @@ import { glass, gradius, gspace } from '../../theme/glass';
 import { GlassIcon, GlassIconName } from './GlassIcon';
 import { GlassText } from './GlassText';
 
-type Kind = 'dark' | 'orange' | 'green' | 'indigo' | 'ghost';
+type Kind = 'dark' | 'orange' | 'green' | 'indigo' | 'ghost' | 'danger';
 
 const BG: Record<Kind, string> = {
   dark: glass.btnDark,
@@ -11,6 +11,9 @@ const BG: Record<Kind, string> = {
   green: glass.green,
   indigo: glass.indigo,
   ghost: glass.btnGhost,
+  // Destructive actions read as an outline, not a solid red slab — signing out
+  // is reversible, so it should look serious without looking like a warning.
+  danger: glass.btnGhost,
 };
 
 /** 52px tall, 18px radius — the template's button spec. */
@@ -31,7 +34,8 @@ export function GlassButton({
   loading?: boolean;
   style?: ViewStyle;
 }) {
-  const fg = kind === 'ghost' ? glass.ink : glass.white;
+  const fg = kind === 'ghost' ? glass.ink : kind === 'danger' ? glass.red : glass.white;
+  const outlined = kind === 'ghost' || kind === 'danger';
   const off = disabled || loading;
 
   return (
@@ -48,8 +52,8 @@ export function GlassButton({
           flexDirection: 'row',
           alignItems: 'center',
           justifyContent: 'center',
-          borderWidth: kind === 'ghost' ? 1 : 0,
-          borderColor: glass.border,
+          borderWidth: outlined ? 1 : 0,
+          borderColor: kind === 'danger' ? 'rgba(185,28,28,0.35)' : glass.border,
           opacity: off ? 0.5 : pressed ? 0.85 : 1,
         },
         style,

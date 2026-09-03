@@ -15,9 +15,27 @@ import { View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { glass } from '../src/theme/glass';
 import { SplashAnimation } from '../src/ui/SplashAnimation';
+import * as Notifications from 'expo-notifications';
+import { usePush } from '../src/push/usePush';
 import { useSession } from '../src/store/session';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
+
+/**
+ * What a push does while the app is already open.
+ *
+ * Without this a notification arriving in the foreground is swallowed silently,
+ * which is exactly when a rider most needs to see a new job. shouldShowAlert is
+ * deprecated in SDK 54 — banner and list are now set separately.
+ */
+Notifications.setNotificationHandler({
+  handleNotification: async () => ({
+    shouldShowBanner: true,
+    shouldShowList: true,
+    shouldPlaySound: true,
+    shouldSetBadge: false,
+  }),
+});
 
 /** Free choice: the splash art is transparent, so nothing has to match it. */
 const SPLASH_BG = '#FFFFFF';
@@ -60,6 +78,10 @@ function Gate({ children }: { children: ReactNode }) {
   const connected = useSession((s) => s.connected);
   const segments = useSegments();
   const router = useRouter();
+
+  // Registers the device with Odoo once connected, refreshes the job list the
+  // moment a push lands, and opens the job when the banner is tapped.
+  usePush(connected);
 
   useEffect(() => {
     if (!ready) return;

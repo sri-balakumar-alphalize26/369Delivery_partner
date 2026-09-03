@@ -1,13 +1,20 @@
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
-import { Pressable, ScrollView, Switch, View } from 'react-native';
+import { ScrollView, Switch, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { isMock } from '../../src/api/endpoints';
 import { mockFlags } from '../../src/api/mock/adapter';
 import { MOCK_DELIVERY_OTP, MOCK_PICKUP_OTP } from '../../src/api/mock/fixtures';
 import { stopTracking, trackedOrderId } from '../../src/location/tracking';
+import {
+  currentPushToken,
+  sendTestNotification,
+  unregisterCurrentPush,
+} from '../../src/push/register';
+import { sortForRider, useOrders } from '../../src/hooks/useOrders';
 import { useSession } from '../../src/store/session';
 import { glass, gradius, gspace } from '../../src/theme/glass';
+import { GlassButton } from '../../src/ui/glass/GlassButton';
 import { GlassCard } from '../../src/ui/glass/GlassCard';
 import { GlassScreen } from '../../src/ui/glass/GlassScreen';
 import { GlassText } from '../../src/ui/glass/GlassText';
@@ -25,6 +32,8 @@ export default function Profile() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { rider, server, connected, disconnect } = useSession();
+  // Only to give the test notification a real job to open.
+  const { data: orders } = useOrders();
 
   const [steal, setSteal] = useState(mockFlags.stealNextOrder);
   const [offline, setOffline] = useState(mockFlags.offline);
@@ -120,15 +129,52 @@ export default function Profile() {
           </GlassCard>
         ) : null}
 
-        <View style={{ marginTop: gspace.xl }}>
-          <LinkRow label="Change connection" onPress={() => router.push('/connect')} />
-          <LinkRow
-            label="Sign out"
-            tone="red"
+        {/* Development only — __DEV__ is false in a release build, so this
+            cannot reach a rider. Deliberately NOT tied to demo mode: push has
+            to be testable against a live server too. */}
+        {__DEV__ ? (
+          <GlassCard style={{ marginTop: gspace.lg }}>
+            <GlassText variant="label" tone="soft" upper>
+              Push diagnostics
+            </GlassText>
+            <GlassText variant="caption" tone="soft" style={{ marginTop: gspace.sm }}>
+              A local notification never touches Firebase, so this works over the
+              Expo QR with no rebuild. It checks permission, the Android channel,
+              the banner and tap-to-open — everything except delivery.
+            </GlassText>
+
+            <GlassButton
+              title="Send test notification"
+              kind="ghost"
+              icon="bell"
+              onPress={() => sendTestNotification(sortForRider(orders?.orders)[0]?.delivery_order_id)}
+              style={{ marginTop: gspace.lg }}
+            />
+
+            <GlassText variant="caption" tone="faint" style={{ marginTop: gspace.md }}>
+              {currentPushToken()
+                ? `Token: ${currentPushToken()?.slice(0, 28)}…`
+                : 'No push token yet — expected until the APK is rebuilt with google-services.json and Odoo exposes /push/register.'}
+            </GlassText>
+          </GlassCard>
+        ) : null}
+
+        <View style={{ marginTop: gspace.xl, gap: gspace.md }}>
+          <GlassButton
+            title="Change connection"
+            kind="ghost"
+            icon="compass"
+            onPress={() => router.push('/connect')}
+          />
+          <GlassButton
+            title="Sign out"
+            kind="danger"
             onPress={async () => {
-              // Never leave the location service running for a rider who has
-              // left. This ordering is deliberate: stop first, then disconnect.
+              // Never leave the location service running, or keep pushing jobs
+              // to, a rider who has left. Both happen BEFORE disconnect, while
+              // the session can still authenticate the calls.
               if (trackedOrderId() !== null) await stopTracking();
+              await unregisterCurrentPush();
               await disconnect();
               router.replace('/connect');
             }}
@@ -203,31 +249,5 @@ function Toggle({
       </GlassText>
       <Switch value={value} onValueChange={onChange} trackColor={{ true: glass.indigo }} />
     </View>
-  );
-}
-
-function LinkRow({
-  label,
-  tone = 'indigo',
-  onPress,
-}: {
-  label: string;
-  tone?: 'indigo' | 'red';
-  onPress: () => void;
-}) {
-  return (
-    <Pressable
-      onPress={onPress}
-      accessibilityRole="button"
-      style={({ pressed }) => ({
-        paddingVertical: gspace.lg,
-        alignItems: 'center',
-        opacity: pressed ? 0.6 : 1,
-      })}
-    >
-      <GlassText variant="button" tone={tone}>
-        {label}
-      </GlassText>
-    </Pressable>
   );
 }

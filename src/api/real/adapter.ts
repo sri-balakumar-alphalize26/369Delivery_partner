@@ -86,6 +86,21 @@ export const realAdapter: ApiAdapter = {
       timeoutMs: 10000,
     }),
 
+  // Not yet implemented in Odoo. A failure here is expected and must stay
+  // non-fatal: push is the fast path for hearing about a job, and /orders
+  // polling is the fallback that keeps working without it.
+  registerPush: ({ token, platform, projectId }) =>
+    request<void>('/api/delivery/push/register', {
+      method: 'POST',
+      body: { token, platform, project_id: projectId },
+    }),
+
+  unregisterPush: (token) =>
+    request<void>('/api/delivery/push/unregister', {
+      method: 'POST',
+      body: { token },
+    }),
+
   returnToShop: (id, reason) =>
     request<ActionResult>('/api/delivery/return', {
       method: 'POST',
