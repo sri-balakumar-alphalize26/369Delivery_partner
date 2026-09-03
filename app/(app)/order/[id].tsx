@@ -555,10 +555,27 @@ export default function Job() {
                 onChange={setOtp}
                 error={otpError}
               />
+              {/* Verified on res-test1: with no WhatsApp session this answers
+                  success:false — "Could not send the pickup code." — while
+                  still issuing it. Swallowing that left the button doing
+                  nothing visible, so the server's own wording is shown. */}
               <GhostLink
                 label="Ask the shop to resend"
                 disabled={busy}
-                onPress={() => api.requestPickupOtp(orderId).catch(() => {})}
+                onPress={async () => {
+                  setError(null);
+                  setOtpError(null);
+                  try {
+                    const res = await api.requestPickupOtp(orderId);
+                    if (res.message) setError(res.message);
+                  } catch (err) {
+                    setError(
+                      err instanceof ApiError
+                        ? err.message
+                        : 'Could not reach the shop. Ask them to read the code out.'
+                    );
+                  }
+                }}
               />
             </View>
           ) : null}

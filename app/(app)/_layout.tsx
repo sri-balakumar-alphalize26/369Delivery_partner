@@ -4,12 +4,11 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { glass, gradius, poppins } from '../../src/theme/glass';
 
 /**
- * The Bold Cards tab bar: icon over label, brand blue when active.
+ * The Glass Light tab bar: icon over label, indigo when active.
  *
- * The reference template draws four tabs — Home, Orders, Earnings, Profile —
- * but Orders and Earnings have neither a screen nor an endpoint behind them
- * (there is no history or payout API), so only the two that exist are shown. A
- * tab that opens nothing is worse than a tab that is absent.
+ * All four tabs the template draws, but two are honest about what the backend
+ * lacks: Orders lists work in hand rather than history (a delivered job leaves
+ * /orders), and Earnings says plainly that payouts are not set up.
  *
  * There is still no offer modal: the contract gives riders no way to decline a
  * job (`offered` allows only `accept`) and no expiry to count down, so an
@@ -33,16 +32,26 @@ export default function AppLayout() {
           borderTopWidth: 1,
           borderTopColor: glass.border,
           elevation: 0,
-          height: 68 + insets.bottom,
-          paddingTop: 6,
+          // Tall enough for icon + label with the label's full line box. At 68
+          // the descenders were being clipped.
+          height: 76 + insets.bottom,
+          paddingTop: 8,
           paddingBottom: 8 + insets.bottom,
         },
         tabBarLabelStyle: {
           fontFamily: poppins.semibold,
-          fontSize: 12,
+          fontSize: 11,
+          // Both of these matter on Android. A custom font carries extra
+          // intrinsic padding, which in a tight tab bar clips the label; an
+          // explicit lineHeight plus includeFontPadding:false gives the text a
+          // box that fits what it actually draws.
+          lineHeight: 15,
+          includeFontPadding: false,
           letterSpacing: 0.2,
+          paddingBottom: 2,
         },
-        tabBarItemStyle: { borderRadius: gradius.chip },
+        tabBarIconStyle: { marginTop: 2 },
+        tabBarItemStyle: { borderRadius: gradius.chip, paddingVertical: 2 },
       }}
     >
       <Tabs.Screen

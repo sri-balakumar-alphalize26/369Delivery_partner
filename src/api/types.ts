@@ -57,7 +57,13 @@ export type DeliveryStatus =
   | 'delivered'
   | 'returning'
   | 'returned'
-  | 'cancelled';
+  | 'cancelled'
+  /**
+   * Undocumented, but live: job 530 on res-test1 came back as `failed` with an
+   * empty `allowed_actions`. Odoo can add a state faster than the app ships, so
+   * anything unmapped has to degrade rather than crash.
+   */
+  | 'failed';
 
 export type PaymentStatus = 'cod' | 'paid';
 export type DeliveryType = 'quick' | 'express';
@@ -80,7 +86,20 @@ export interface Product {
   uom?: string;
 }
 
-/** `{ enabled: true }` is the only signal that may start the location service. */
+/**
+ * When each step happened, on GET /orders/{id}. An empty string means 'not yet'
+ * — the server does not omit the key.
+ */
+export interface OrderTimestamps {
+  offered: string;
+  accepted: string;
+  picked_up: string;
+  dispatched: string;
+  out_for_delivery: string;
+  delivered: string;
+}
+
+/**  is the only signal that may start the location service. */
 export interface Tracking {
   enabled: boolean;
 }
@@ -116,6 +135,7 @@ export interface DeliveryOrder {
   latitude?: number;
   longitude?: number;
   tracking?: Tracking;
+  timestamps?: OrderTimestamps;
   delivered_at?: string;
 }
 

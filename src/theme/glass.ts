@@ -116,7 +116,8 @@ export type GlassBarState =
   | 'delivered'
   | 'returning'
   | 'returned'
-  | 'cancelled';
+  | 'cancelled'
+  | 'failed';
 
 export const glassBand: Record<GlassBarState, { bg: string; fg: string; label: string }> = {
   disconnected: { bg: '#6B7280', fg: glass.white, label: 'NOT CONNECTED' },
@@ -130,4 +131,5 @@ export const glassBand: Record<GlassBarState, { bg: string; fg: string; label: s
   returning: { bg: glass.red, fg: glass.white, label: 'RETURNING TO SHOP' },
   returned: { bg: '#6B7280', fg: glass.white, label: 'RETURNED' },
   cancelled: { bg: '#6B7280', fg: glass.white, label: 'CANCELLED' },
+  failed: { bg: glass.red, fg: glass.white, label: 'FAILED' },
 };

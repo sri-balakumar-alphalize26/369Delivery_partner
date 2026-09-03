@@ -29,7 +29,13 @@ export const realAdapter: ApiAdapter = {
 
   orders: () => request<OrdersResponse>('/api/delivery/orders'),
 
-  order: (id) => request<DeliveryOrder>(`/api/delivery/orders/${id}`),
+  // Nested, unlike /orders. Verified against res-test1: the detail call answers
+  // { success: true, order: {...} }, so returning the envelope here left every
+  // field undefined and the job screen reading 'That job is gone'.
+  async order(id) {
+    const r = await request<{ order: DeliveryOrder }>(`/api/delivery/orders/${id}`);
+    return r.order;
+  },
 
   accept: (id) =>
     request<ActionResult>('/api/delivery/accept', {

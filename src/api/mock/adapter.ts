@@ -16,6 +16,7 @@ import {
   MOCK_PICKUP_OTP,
   MOCK_TIMEZONE,
   OMR,
+  makeFailed,
   makeOffer,
 } from './fixtures';
 
@@ -54,6 +55,8 @@ const ACTIONS_FOR: Record<DeliveryStatus, Action[]> = {
   returning: ['confirm_return'],
   returned: [],
   cancelled: [],
+  // Undocumented but live on res-test1, and terminal like the rest.
+  failed: [],
 };
 
 const rider: Rider = {
@@ -74,6 +77,8 @@ const state = {
    * thing the endpoint exists for.
    */
   pending: [makeOffer(), makeOffer()] as DeliveryOrder[],
+  /** One job that already went wrong, so the unknown-status path is exercised. */
+  finished: [makeFailed()] as DeliveryOrder[],
   pickupAttempts: 0,
   deliveryAttempts: 0,
   /** Set once /start has been called, mirroring tracking.enabled. */
@@ -87,7 +92,9 @@ function guard() {
 }
 
 function find(id: number): DeliveryOrder {
-  const o = state.orders.find((x) => x.delivery_order_id === id);
+  const o =
+    state.orders.find((x) => x.delivery_order_id === id) ??
+    state.finished.find((x) => x.delivery_order_id === id);
   // The contract returns 404 for another rider's job too — the same answer, deliberately.
   if (!o) throw new ApiError('not_found', 'That job could not be found.', { status: 404 });
   return o;
@@ -168,7 +175,7 @@ export const mockAdapter: ApiAdapter = {
 
   async orders(): Promise<OrdersResponse> {
     guard();
-    const live = state.orders;
+    const live = [...state.orders, ...state.finished];
     return {
       counts: {
         assigned: live.filter((o) => ['offered', 'accepted'].includes(o.delivery_status))
@@ -179,11 +186,12 @@ export const mockAdapter: ApiAdapter = {
           .length,
         delivered: live.filter((o) => o.delivery_status === 'delivered').length,
       },
-      // Finished work belongs to /history, not to the active list — otherwise a
-      // returned job sits on the rider's screen forever.
-      orders: live.filter(
-        (o) => !['delivered', 'returned', 'cancelled'].includes(o.delivery_status)
-      ),
+      // The live server keeps finished jobs in this list — the res-test1 run
+      // returned `failed` and `returned` rows alongside open ones, each with an
+      // empty allowed_actions. Only `delivered` is dropped. Mirroring that
+      // matters: a mock that hides them lets the app assume every order is
+      // actionable, which is exactly the assumption that breaks on real data.
+      orders: live.filter((o) => o.delivery_status !== 'delivered'),
       on_duty: rider.on_duty,
       timezone: MOCK_TIMEZONE,
       server_time: utcNow(),

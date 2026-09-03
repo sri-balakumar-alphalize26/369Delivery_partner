@@ -52,7 +52,13 @@ async function main() {
   check('/auth/me carries the currency', identity.currency.decimals === 3);
 
   const idle = await api.orders();
-  check('no jobs while off duty', idle.orders.length === 0);
+  // A terminal job stays listed even off duty, exactly as res-test1 does —
+  // what duty gates is new *offers*, not visibility of finished work.
+  check(
+    'no work is OFFERED while off duty',
+    idle.orders.every((o) => o.allowed_actions.length === 0),
+    idle.orders.map((o) => o.delivery_status).join(',')
+  );
   check('response reports on_duty false', idle.on_duty === false);
 
   console.log('\n=== 2. Clocking on picks up what was waiting ===');
@@ -64,7 +70,11 @@ async function main() {
 
   console.log('\n=== 3. Listing jobs, in the contract shapes ===');
   const list = await api.orders();
-  check('both jobs returned', list.orders.length === 2, String(list.orders.length));
+  check(
+    'both offers returned, plus the finished one',
+    list.orders.filter((o) => o.delivery_status === 'offered').length === 2,
+    String(list.orders.length)
+  );
   check('counts.assigned is 2', list.counts.assigned === 2);
   check('response carries a timezone', list.timezone === 'Asia/Muscat');
   check('server_time is UTC', /Z$/.test(list.server_time ?? ''), list.server_time);
@@ -84,6 +94,21 @@ async function main() {
 
   const id = job.delivery_order_id;
   const secondId = list.orders[1].delivery_order_id;
+
+  console.log('\n=== 3b. Shapes that broke against the real server ===');
+  // GET /orders/{id} answers { success, order: {...} } on res-test1, not a flat
+  // envelope. Returning the envelope left every field undefined and the job
+  // screen reading "That job is gone", so the adapter must unwrap it.
+  const detail = await api.order(id);
+  check('order(id) returns the order itself, not an envelope', detail.delivery_order_id === id,
+    JSON.stringify(Object.keys(detail).slice(0, 3)));
+  check('detail carries timestamps', !!detail.timestamps, JSON.stringify(detail.timestamps));
+  check('an untouched step is "" not missing', detail.timestamps?.accepted === '');
+
+  // `failed` is live on res-test1 and absent from the published contract.
+  const failedJob = list.orders.find((o) => o.delivery_status === 'failed');
+  check('an undocumented terminal status is listed', !!failedJob, 'no failed job');
+  check('...and offers no actions', failedJob?.allowed_actions.length === 0);
 
   console.log('\n=== 4. Acting out of state is refused ===');
   await expectError('dispatch before accept -> wrong_state', () => api.dispatch(id), 'wrong_state');
@@ -161,11 +186,13 @@ async function main() {
   check('status returned', returned.status === 'returned');
   check('no actions left', returned.allowed_actions.length === 0);
 
+  // res-test1 keeps a returned job in /orders with an empty allowed_actions —
+  // it does not disappear. The app must therefore never assume every row in
+  // this list is something the rider can act on.
   const afterReturn = await api.orders();
-  check(
-    'finished work leaves the active list',
-    afterReturn.orders.every((o) => o.delivery_order_id !== secondId)
-  );
+  const closed = afterReturn.orders.find((o) => o.delivery_order_id === secondId);
+  check('a returned job stays listed', !!closed, 'it vanished');
+  check('...but offers nothing to do', closed?.allowed_actions.length === 0);
 
   console.log('\n=== 11. Losing the race to another rider ===');
   await new Promise((r) => setTimeout(r, 8500));

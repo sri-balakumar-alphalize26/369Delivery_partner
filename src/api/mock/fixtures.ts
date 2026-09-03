@@ -47,6 +47,29 @@ export function makeOffer(): DeliveryOrder {
     latitude: 23.588,
     longitude: 58.3829,
     tracking: { enabled: false },
+    // The detail call carries these. An empty string means "not yet" — the
+    // server sends the key regardless, so the app must not treat "" as missing.
+    timestamps: {
+      offered: '2026-09-03T09:23:27Z',
+      accepted: '',
+      picked_up: '',
+      dispatched: '',
+      out_for_delivery: '',
+      delivered: '',
+    },
+  };
+}
+
+/**
+ * A job that ended badly. `failed` is not in the published contract but is
+ * live on res-test1, so the demo carries one — otherwise the app is never
+ * shown a status it does not recognise until a rider hits one.
+ */
+export function makeFailed(): DeliveryOrder {
+  return {
+    ...makeOffer(),
+    delivery_status: 'failed',
+    allowed_actions: [],
   };
 }
 
