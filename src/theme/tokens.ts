@@ -75,11 +75,12 @@ export const font = {
 /** Tabular figures so counters and money never jitter as digits change. */
 export const tabular = { fontVariant: ['tabular-nums' as const] };
 
-export const fontJakarta = {
-  medium: 'PlusJakartaSans_500Medium',
-  semibold: 'PlusJakartaSans_600SemiBold',
-  bold: 'PlusJakartaSans_700Bold',
-  extrabold: 'PlusJakartaSans_800ExtraBold',
+export const fontOutfit = {
+  regular: 'Outfit_400Regular',
+  medium: 'Outfit_500Medium',
+  semibold: 'Outfit_600SemiBold',
+  bold: 'Outfit_700Bold',
+  extrabold: 'Outfit_800ExtraBold',
 } as const;
 
 export const type = {
@@ -99,13 +100,13 @@ export const type = {
 
   /* Bold Cards variants. Prefixed so they cannot collide with the Big Type
      names above, which other screens still use. */
-  cardAmount: { fontFamily: fontJakarta.extrabold, fontSize: 36, letterSpacing: -1 },
-  cardStat: { fontFamily: fontJakarta.extrabold, fontSize: 22, letterSpacing: -0.5 },
-  cardTitle: { fontFamily: fontJakarta.extrabold, fontSize: 19 },
-  cardBody: { fontFamily: fontJakarta.semibold, fontSize: 15, lineHeight: 21 },
-  cardLabel: { fontFamily: fontJakarta.bold, fontSize: 12, letterSpacing: 0.4 },
-  cardCaption: { fontFamily: fontJakarta.semibold, fontSize: 12, lineHeight: 17 },
-  cardButton: { fontFamily: fontJakarta.bold, fontSize: 15 },
+  cardAmount: { fontFamily: fontOutfit.extrabold, fontSize: 36, letterSpacing: -1 },
+  cardStat: { fontFamily: fontOutfit.extrabold, fontSize: 22, letterSpacing: -0.5 },
+  cardTitle: { fontFamily: fontOutfit.extrabold, fontSize: 19 },
+  cardBody: { fontFamily: fontOutfit.semibold, fontSize: 15, lineHeight: 21 },
+  cardLabel: { fontFamily: fontOutfit.bold, fontSize: 12, letterSpacing: 0.4 },
+  cardCaption: { fontFamily: fontOutfit.semibold, fontSize: 12, lineHeight: 17 },
+  cardButton: { fontFamily: fontOutfit.bold, fontSize: 15 },
 } as const;
 
 export const space = {

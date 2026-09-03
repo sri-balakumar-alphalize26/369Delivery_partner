@@ -1,14 +1,14 @@
 import { useRouter } from 'expo-router';
-import { Pressable, ScrollView, Switch, View } from 'react-native';
+import { ScrollView, Switch, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { DeliveryOrder } from '../../src/api/types';
 import { sortForRider, useDuty, useOrders } from '../../src/hooks/useOrders';
-import { money, promisedAt } from '../../src/lib/format';
+import { money } from '../../src/lib/format';
 import { useSession } from '../../src/store/session';
-import { BarState, cardColor, cardRadius, space, statusBar } from '../../src/theme/tokens';
+import { cardColor, cardRadius, space } from '../../src/theme/tokens';
 import { Avatar } from '../../src/ui/Avatar';
-import { Badge } from '../../src/ui/Badge';
 import { Card } from '../../src/ui/Card';
+import { GradientHeader } from '../../src/ui/GradientHeader';
+import { JobCard } from '../../src/ui/JobCard';
 import { PrimaryButton } from '../../src/ui/PrimaryButton';
 import { StatChip } from '../../src/ui/StatChip';
 import { Text } from '../../src/ui/Text';
@@ -58,14 +58,11 @@ export default function Home() {
         {/* Blue header. No notification bell: nothing registers for push yet
             (useOrders polls instead), so it would be a control that does
             nothing. */}
-        <View
+        <GradientHeader
           style={{
-            backgroundColor: cardColor.brand,
             paddingTop: insets.top + space.lg,
             paddingHorizontal: space.xl,
             paddingBottom: space.huge + space.xxl,
-            borderBottomLeftRadius: cardRadius.header,
-            borderBottomRightRadius: cardRadius.header,
           }}
         >
           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
@@ -115,7 +112,7 @@ export default function Home() {
               thumbColor={cardColor.card}
             />
           </View>
-        </View>
+        </GradientHeader>
 
         {/* Pulled up to overlap the header, exactly as the reference does. */}
         <View style={{ paddingHorizontal: space.xl, marginTop: -(space.huge + space.md) }}>
@@ -239,94 +236,4 @@ function greeting(): string {
   if (h < 12) return 'Good morning';
   if (h < 17) return 'Good afternoon';
   return 'Good evening';
-}
-
-/**
- * One job as a card: shop and code, a state badge, a dashed rule, then the
- * customer and address with the promised time, and the button through.
- */
-function JobCard({
-  job,
-  timezone,
-  onPress,
-}: {
-  job: DeliveryOrder;
-  timezone: string | undefined;
-  onPress: () => void;
-}) {
-  const cod = job.payment_status === 'cod';
-  // Fed from the same map the status band uses, so one source of truth decides
-  // what every delivery state looks like.
-  const band = statusBar[job.delivery_status as BarState] ?? statusBar.idle;
-
-  return (
-    <Card>
-      <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
-        <View style={{ flex: 1, paddingRight: space.md }}>
-          <Text variant="cardTitle" style={{ color: cardColor.textPrimary }} numberOfLines={1}>
-            {job.shop}
-          </Text>
-          <Text
-            variant="cardCaption"
-            style={{ color: cardColor.textSecondary, marginTop: 2 }}
-            numberOfLines={1}
-          >
-            {job.job_code}
-            {job.products?.length ? ` · ${job.products.length} items` : ''}
-          </Text>
-        </View>
-        <Badge label={band.label} bg={band.bg} fg={band.fg} />
-      </View>
-
-      <View
-        style={{
-          borderBottomWidth: 1,
-          borderStyle: 'dashed',
-          borderColor: cardColor.border,
-          marginVertical: space.lg,
-        }}
-      />
-
-      <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
-        <View style={{ flex: 1, paddingRight: space.md }}>
-          <Text variant="cardBody" style={{ color: cardColor.textPrimary }}>
-            {job.customer_name}
-          </Text>
-          <Text variant="cardCaption" style={{ color: cardColor.textSecondary, marginTop: 2 }}>
-            {job.delivery_address}
-          </Text>
-        </View>
-        <Text variant="cardCaption" nums style={{ color: cardColor.textSecondary }}>
-          {promisedAt(job.promised_by, timezone)}
-        </Text>
-      </View>
-
-      <Text
-        variant="cardBody"
-        nums
-        style={{ color: cod ? cardColor.red : cardColor.green, marginTop: space.md }}
-      >
-        {cod ? money(job.amount_to_collect, job.currency) : 'Already paid'}
-      </Text>
-
-      <Pressable
-        onPress={onPress}
-        accessibilityRole="button"
-        accessibilityLabel={`Open order for ${job.customer_name}`}
-        style={({ pressed }) => ({
-          backgroundColor: cardColor.brand,
-          borderRadius: cardRadius.button,
-          height: 54,
-          alignItems: 'center',
-          justifyContent: 'center',
-          marginTop: space.lg,
-          opacity: pressed ? 0.85 : 1,
-        })}
-      >
-        <Text variant="cardButton" style={{ color: cardColor.card }}>
-          Open order
-        </Text>
-      </Pressable>
-    </Card>
-  );
 }

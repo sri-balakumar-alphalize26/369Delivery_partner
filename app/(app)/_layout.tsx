@@ -1,6 +1,7 @@
 import { Ionicons } from '@expo/vector-icons';
 import { Tabs } from 'expo-router';
-import { cardColor, cardRadius, fontJakarta } from '../../src/theme/tokens';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { cardColor, cardRadius, fontOutfit } from '../../src/theme/tokens';
 
 /**
  * The Bold Cards tab bar: icon over label, brand blue when active.
@@ -15,6 +16,11 @@ import { cardColor, cardRadius, fontJakarta } from '../../src/theme/tokens';
  * interrupting popup would be theatre. New jobs surface on Home.
  */
 export default function AppLayout() {
+  // app.json sets edgeToEdgeEnabled, so the app draws underneath Android's
+  // navigation bar. Without adding the inset the gesture bar sits on top of the
+  // tabs and swallows taps on them.
+  const insets = useSafeAreaInsets();
+
   return (
     <Tabs
       screenOptions={{
@@ -26,12 +32,12 @@ export default function AppLayout() {
           borderTopWidth: 1,
           borderTopColor: cardColor.divider,
           elevation: 0,
-          height: 68,
+          height: 68 + insets.bottom,
           paddingTop: 6,
-          paddingBottom: 8,
+          paddingBottom: 8 + insets.bottom,
         },
         tabBarLabelStyle: {
-          fontFamily: fontJakarta.bold,
+          fontFamily: fontOutfit.bold,
           fontSize: 12,
           letterSpacing: 0.2,
         },
@@ -44,6 +50,24 @@ export default function AppLayout() {
           title: 'Home',
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="home-outline" size={size ?? 22} color={color} />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="orders"
+        options={{
+          title: 'Orders',
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="list-outline" size={size ?? 22} color={color} />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="earnings"
+        options={{
+          title: 'Earnings',
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="wallet-outline" size={size ?? 22} color={color} />
           ),
         }}
       />

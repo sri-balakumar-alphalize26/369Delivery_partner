@@ -1,7 +1,9 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { Ionicons } from '@expo/vector-icons';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useState } from 'react';
-import { Linking, Platform, View } from 'react-native';
+import { Linking, Platform, Pressable, ScrollView, View, useWindowDimensions } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { api } from '../../../src/api/endpoints';
 import {
   ACTION_LABEL,
@@ -14,23 +16,30 @@ import {
 import { money, promisedAt } from '../../../src/lib/format';
 import { startTracking, stopTracking } from '../../../src/location/tracking';
 import { useSession } from '../../../src/store/session';
-import { BarState, color, space } from '../../../src/theme/tokens';
-import { BigNumber } from '../../../src/ui/BigNumber';
-import { Hairline } from '../../../src/ui/Hairline';
+import { cardColor, cardRadius, shadow, space } from '../../../src/theme/tokens';
+import { Card } from '../../../src/ui/Card';
 import { LoadingArt } from '../../../src/ui/LoadingArt';
+import { OtpBoxes } from '../../../src/ui/OtpBoxes';
 import { OtpInput } from '../../../src/ui/OtpInput';
-import { PrimaryButton } from '../../../src/ui/PrimaryButton';
-import { Screen } from '../../../src/ui/Screen';
-import { StatusBar } from '../../../src/ui/StatusBar';
+import { StaticMap } from '../../../src/ui/StaticMap';
 import { Text } from '../../../src/ui/Text';
 
 /**
- * The job screen.
+ * The job screen, in the Bold Cards style.
  *
- * Every button on it comes from `allowed_actions`. There is no local state
- * machine and no "what comes next" logic — the contract's first rule is that
- * Odoo decides the workflow and the app renders it, so when the flow changes in
- * Odoo this screen follows with no new release.
+ * Every button on it still comes from `allowed_actions`. There is no local
+ * state machine and no "what comes next" logic — the contract's first rule is
+ * that Odoo decides the workflow and the app renders it, so when the flow
+ * changes in Odoo this screen follows with no new release.
+ *
+ * Three layouts, chosen by which action Odoo is offering rather than by any
+ * state we keep: the orange offer screen while the job is only offered, the
+ * green handover screen when the delivery code is due, and the en-route
+ * sheet-over-map for everything between.
+ *
+ * The reference also shows a per-order fee ("You earn"), a distance and an ETA.
+ * None of the three exist in the contract, so none is drawn — a number here
+ * would be trusted and wrong.
  */
 
 function navigateTo(order: DeliveryOrder) {
@@ -57,6 +66,8 @@ export default function Job() {
   const orderId = Number(id);
   const router = useRouter();
   const qc = useQueryClient();
+  const insets = useSafeAreaInsets();
+  const { width, height } = useWindowDimensions();
   // The shop's zone, from /auth/me — never the phone's own.
   const timezone = useSession((s) => s.timezone);
 
@@ -91,8 +102,7 @@ export default function Job() {
 
   if (isLoading) {
     return (
-      <View style={{ flex: 1, backgroundColor: color.bg }}>
-        <StatusBar state="idle" label="Loading job" />
+      <View style={{ flex: 1, backgroundColor: cardColor.canvas }}>
         <LoadingArt />
       </View>
     );
@@ -102,16 +112,20 @@ export default function Job() {
   // loading loop.
   if (!order) {
     return (
-      <View style={{ flex: 1, backgroundColor: color.bg }}>
-        <StatusBar state="idle" label="Job not found" />
-        <Screen>
-          <Text variant="title">That job is gone</Text>
-          <PrimaryButton
-            label="Back"
-            onPress={() => router.replace('/')}
-            style={{ marginTop: space.huge }}
-          />
-        </Screen>
+      <View
+        style={{
+          flex: 1,
+          backgroundColor: cardColor.canvas,
+          paddingTop: insets.top + space.huge,
+          paddingHorizontal: space.xl,
+        }}
+      >
+        <Card>
+          <Text variant="cardTitle" style={{ color: cardColor.textPrimary }}>
+            That job is gone
+          </Text>
+          <SheetButton label="Back" onPress={() => router.replace('/')} />
+        </Card>
       </View>
     );
   }
@@ -122,6 +136,7 @@ export default function Job() {
 
   const needsOtp = primary === 'verify_pickup_otp' || primary === 'verify_delivery_otp';
   const canSubmit = !needsOtp || otp.length === 6;
+  const cod = order.payment_status === 'cod';
 
   /** Applies whatever Odoo says came back, including any tracking instruction. */
   async function applyResult(res: ActionResult) {
@@ -206,155 +221,587 @@ export default function Job() {
     }
   }
 
-  const cod = order.payment_status === 'cod';
+  const call = () =>
+    Linking.openURL(`tel:${order.customer_mobile}`).catch(() => {});
 
-  return (
-    <View style={{ flex: 1, backgroundColor: color.bg }}>
-      <StatusBar
-        state={order.delivery_status as BarState}
-        trailing={order.delivery_order_name}
-      />
-
-      <Screen>
-        <Text variant="label" tone="soft" upper>
-          {order.job_code} · {order.sales_order} · {order.delivery_type}
-        </Text>
-
-        <Text variant="title" style={{ marginTop: space.md }}>
-          {order.customer_name}
-        </Text>
-        <Text variant="body" tone="soft" style={{ marginTop: space.xs }}>
-          {order.delivery_address}
-        </Text>
-        {order.promised_by ? (
-          <Text variant="body" tone="soft" nums style={{ marginTop: space.xs }}>
-            Promised {promisedAt(order.promised_by, timezone)}
+  /* ----------------------------------------------------------------- *
+   * Offer — not accepted yet.
+   *
+   * There is deliberately no Decline button: the contract gives `offered`
+   * only `accept`, so a rider cannot refuse a job, and there is no expiry to
+   * count down either. The reference's timer pill, "You earn", distance and
+   * estimated time are all dropped for the same reason — no field exists
+   * behind any of them.
+   * ----------------------------------------------------------------- */
+  if (primary === 'accept') {
+    return (
+      <View style={{ flex: 1, backgroundColor: cardColor.canvas }}>
+        <View
+          style={{
+            backgroundColor: cardColor.orange,
+            paddingTop: insets.top + space.md,
+            paddingHorizontal: space.xl,
+            paddingBottom: space.xxl,
+            borderBottomLeftRadius: cardRadius.header,
+            borderBottomRightRadius: cardRadius.header,
+          }}
+        >
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <RoundButton icon="chevron-back" onPress={() => router.back()} translucent />
+            <Text
+              variant="cardLabel"
+              upper
+              style={{ color: cardColor.card, marginLeft: space.md }}
+            >
+              New job offer
+            </Text>
+          </View>
+          <Text
+            variant="cardTitle"
+            style={{ color: cardColor.card, marginTop: space.lg }}
+            numberOfLines={2}
+          >
+            {order.shop} → {order.customer_name}
           </Text>
-        ) : null}
-
-        <View style={{ flexDirection: 'row', gap: space.md, marginTop: space.xl }}>
-          <PrimaryButton
-            label="Navigate"
-            kind="dark"
-            onPress={() => navigateTo(order)}
-            style={{ flex: 1 }}
-          />
-          <PrimaryButton
-            label="Call"
-            kind="ghost"
-            onPress={() =>
-              Linking.openURL(`tel:${order.customer_mobile}`).catch(() => {})
-            }
-            style={{ flex: 1, borderWidth: 1, borderColor: color.hairline }}
-          />
         </View>
 
-        <Hairline />
-
-        {cod ? (
-          <BigNumber
-            value={money(order.amount_to_collect, order.currency)}
-            label="Cash to collect from the customer"
-            size="big"
-          />
-        ) : (
-          <Text variant="bodyStrong" tone="green">
-            Already paid — collect nothing
-          </Text>
-        )}
-
-        {order.products?.length ? (
-          <>
-            <Hairline />
-            <Text variant="label" tone="soft" upper>
-              {order.products.length} items from {order.shop}
+        <ScrollView
+          contentContainerStyle={{
+            padding: space.xl,
+            paddingBottom: space.huge + insets.bottom,
+          }}
+        >
+          <Card>
+            <Text variant="cardLabel" upper style={{ color: cardColor.textSecondary }}>
+              Pick up from
             </Text>
-            {order.products.map((p, i) => (
-              <View
-                key={`${p.name}-${i}`}
-                style={{
-                  flexDirection: 'row',
-                  paddingVertical: space.md,
-                  borderBottomWidth: 1,
-                  borderBottomColor: color.hairline,
-                }}
-              >
-                <Text variant="body" style={{ flex: 1 }}>
-                  {p.name}
-                </Text>
-                <Text variant="bodyStrong" tone="soft" nums>
-                  x{p.quantity}
-                </Text>
-              </View>
-            ))}
-          </>
-        ) : null}
+            <Text
+              variant="cardBody"
+              style={{ color: cardColor.textPrimary, marginTop: space.xs }}
+            >
+              {order.shop}
+            </Text>
 
-        {needsOtp ? (
-          <>
-            <Hairline />
-            <OtpInput
-              label={
-                primary === 'verify_pickup_otp' ? 'Pickup code' : 'Delivery code'
-              }
-              hint={
-                primary === 'verify_pickup_otp'
-                  ? 'The shop staff will read this out when they hand the parcel over.'
-                  : 'Ask the customer for the code they were sent.'
-              }
-              value={otp}
-              onChange={setOtp}
-              error={otpError}
+            <View
+              style={{
+                borderBottomWidth: 1,
+                borderColor: cardColor.divider,
+                marginVertical: space.lg,
+              }}
             />
-            {primary === 'verify_pickup_otp' ? (
-              <PrimaryButton
+
+            <Text variant="cardLabel" upper style={{ color: cardColor.textSecondary }}>
+              Deliver to
+            </Text>
+            <Text
+              variant="cardBody"
+              style={{ color: cardColor.textPrimary, marginTop: space.xs }}
+            >
+              {order.customer_name}
+            </Text>
+            <Text
+              variant="cardCaption"
+              style={{ color: cardColor.textSecondary, marginTop: 2 }}
+            >
+              {order.delivery_address}
+            </Text>
+            {order.promised_by ? (
+              <Text
+                variant="cardCaption"
+                nums
+                style={{ color: cardColor.textSecondary, marginTop: space.sm }}
+              >
+                Promised {promisedAt(order.promised_by, timezone)}
+              </Text>
+            ) : null}
+          </Card>
+
+          {cod ? (
+            <View style={{ alignItems: 'center', marginTop: space.xxl }}>
+              <Text variant="cardBody" style={{ color: cardColor.textSecondary }}>
+                Cash to collect from customer
+              </Text>
+              <Text
+                variant="cardAmount"
+                nums
+                style={{ color: cardColor.textPrimary, marginTop: space.xs }}
+              >
+                {money(order.amount_to_collect, order.currency)}
+              </Text>
+            </View>
+          ) : (
+            <View style={{ alignItems: 'center', marginTop: space.xxl }}>
+              <Text variant="cardTitle" style={{ color: cardColor.green }}>
+                Already paid — collect nothing
+              </Text>
+            </View>
+          )}
+
+          {error ? (
+            <Text variant="cardBody" style={{ color: cardColor.red, marginTop: space.lg }}>
+              {error}
+            </Text>
+          ) : null}
+
+          <SheetButton
+            label={ACTION_LABEL[primary]}
+            icon="checkmark"
+            tone="orange"
+            onPress={() => run(primary)}
+            disabled={busy}
+            style={{ marginTop: space.xxl }}
+          />
+
+          {secondary.map((a) => (
+            <GhostLink key={a} label={ACTION_LABEL[a]} onPress={() => run(a)} disabled={busy} />
+          ))}
+        </ScrollView>
+      </View>
+    );
+  }
+
+  /* ----------------------------------------------------------------- *
+   * Handover — the delivery code is due.
+   * ----------------------------------------------------------------- */
+  if (primary === 'verify_delivery_otp') {
+    return (
+      <View style={{ flex: 1, backgroundColor: cardColor.canvas }}>
+        <View
+          style={{
+            backgroundColor: cardColor.green,
+            paddingTop: insets.top + space.md,
+            paddingBottom: space.xxl,
+            paddingHorizontal: space.xl,
+            flexDirection: 'row',
+            alignItems: 'center',
+          }}
+        >
+          <RoundButton icon="chevron-back" onPress={() => router.back()} translucent />
+          <Text
+            variant="cardTitle"
+            style={{ color: cardColor.card, flex: 1, textAlign: 'center', marginRight: 40 }}
+          >
+            Delivering
+          </Text>
+        </View>
+
+        <ScrollView
+          contentContainerStyle={{
+            padding: space.xl,
+            paddingBottom: space.huge + insets.bottom,
+          }}
+          keyboardShouldPersistTaps="handled"
+        >
+          <Card>
+            <Text variant="cardTitle" style={{ color: cardColor.textPrimary }}>
+              {order.customer_name}
+            </Text>
+            <Text
+              variant="cardBody"
+              style={{ color: cardColor.textSecondary, marginTop: 2 }}
+            >
+              {order.delivery_address}
+            </Text>
+
+            <View style={{ flexDirection: 'row', gap: space.md, marginTop: space.lg }}>
+              <SheetButton
+                label="Navigate"
+                icon="navigate"
+                tone="dark"
+                onPress={() => navigateTo(order)}
+                style={{ flex: 1, marginTop: 0 }}
+              />
+              <SheetButton
+                label="Call"
+                icon="call-outline"
+                tone="ghost"
+                onPress={call}
+                style={{ flex: 1, marginTop: 0 }}
+              />
+            </View>
+          </Card>
+
+          {cod ? (
+            <View style={{ alignItems: 'center', marginTop: space.xxl }}>
+              <Text variant="cardBody" style={{ color: cardColor.textSecondary }}>
+                Collect this cash before handing over
+              </Text>
+              <Text
+                variant="cardAmount"
+                nums
+                style={{ color: cardColor.textPrimary, marginTop: space.xs }}
+              >
+                {money(order.amount_to_collect, order.currency)}
+              </Text>
+            </View>
+          ) : (
+            <View style={{ alignItems: 'center', marginTop: space.xxl }}>
+              <Text variant="cardTitle" style={{ color: cardColor.green }}>
+                Already paid — collect nothing
+              </Text>
+            </View>
+          )}
+
+          <Card style={{ marginTop: space.xxl }}>
+            <Text variant="cardLabel" upper style={{ color: cardColor.textSecondary }}>
+              Delivery code
+            </Text>
+            <Text
+              variant="cardBody"
+              style={{ color: cardColor.textSecondary, marginTop: space.xs, marginBottom: space.lg }}
+            >
+              Ask the customer for the 6-digit code from their app or SMS.
+            </Text>
+            <OtpBoxes value={otp} onChange={setOtp} error={otpError} />
+          </Card>
+
+          {error ? (
+            <Text variant="cardBody" style={{ color: cardColor.red, marginTop: space.lg }}>
+              {error}
+            </Text>
+          ) : null}
+
+          <SheetButton
+            label={ACTION_LABEL[primary]}
+            icon="checkmark"
+            tone="green"
+            onPress={() => run(primary)}
+            disabled={busy || !canSubmit}
+            style={{ marginTop: space.xxl }}
+          />
+
+          {secondary.map((a) => (
+            <GhostLink key={a} label={ACTION_LABEL[a]} onPress={() => run(a)} disabled={busy} />
+          ))}
+        </ScrollView>
+      </View>
+    );
+  }
+
+  /* ----------------------------------------------------------------- *
+   * En route — sheet over the map.
+   * ----------------------------------------------------------------- */
+  const mapH = Math.round(height * 0.42);
+
+  return (
+    <View style={{ flex: 1, backgroundColor: cardColor.canvas }}>
+      <StaticMap
+        latitude={order.latitude}
+        longitude={order.longitude}
+        width={width}
+        height={mapH}
+      />
+
+      <View style={{ position: 'absolute', top: insets.top + space.sm, left: space.xl }}>
+        <RoundButton icon="chevron-back" onPress={() => router.back()} />
+      </View>
+
+      <ScrollView
+        style={{ marginTop: -space.xxl }}
+        contentContainerStyle={{ paddingBottom: space.huge + insets.bottom }}
+        keyboardShouldPersistTaps="handled"
+      >
+        <View
+          style={[
+            {
+              backgroundColor: cardColor.card,
+              borderTopLeftRadius: cardRadius.card,
+              borderTopRightRadius: cardRadius.card,
+              padding: space.xl,
+              minHeight: height - mapH,
+            },
+            shadow.floating,
+          ]}
+        >
+          <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
+            <View style={{ flex: 1, paddingRight: space.md }}>
+              <Text variant="cardLabel" upper style={{ color: cardColor.textFaint }}>
+                Order {order.delivery_order_name}
+              </Text>
+              <Text
+                variant="cardTitle"
+                style={{ color: cardColor.textPrimary, marginTop: 2 }}
+                numberOfLines={1}
+              >
+                {order.shop}
+              </Text>
+            </View>
+            <View style={{ flexDirection: 'row', gap: space.sm }}>
+              <RoundButton icon="call-outline" onPress={call} tone="tint" />
+              <RoundButton icon="navigate" onPress={() => navigateTo(order)} tone="brand" />
+            </View>
+          </View>
+
+          {/* Where the parcel is going, once the shop is done. */}
+          <View
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              backgroundColor: cardColor.chipBg,
+              borderRadius: cardRadius.chip,
+              padding: space.md,
+              marginTop: space.lg,
+            }}
+          >
+            <Ionicons name="location" size={18} color={cardColor.orange} />
+            <Text
+              variant="cardBody"
+              style={{ color: cardColor.textPrimary, flex: 1, marginLeft: space.sm }}
+              numberOfLines={2}
+            >
+              Then: {order.customer_name} · {order.delivery_address}
+            </Text>
+          </View>
+
+          {order.promised_by ? (
+            <Text
+              variant="cardCaption"
+              nums
+              style={{ color: cardColor.textSecondary, marginTop: space.sm }}
+            >
+              Promised {promisedAt(order.promised_by, timezone)}
+            </Text>
+          ) : null}
+
+          {/* Collect and Items only. The reference's "You earn" has no field
+              behind it, and there is no distance or ETA in the contract. */}
+          <View style={{ flexDirection: 'row', gap: space.md, marginTop: space.lg }}>
+            <Tile
+              label="Collect"
+              value={cod ? money(order.amount_to_collect, order.currency) : 'Paid'}
+              tone={cod ? cardColor.red : cardColor.green}
+            />
+            <Tile label="Items" value={String(order.products?.length ?? 0)} />
+          </View>
+
+          {order.products?.length ? (
+            <View style={{ marginTop: space.lg }}>
+              {order.products.map((p, i) => (
+                <View
+                  key={`${p.name}-${i}`}
+                  style={{
+                    flexDirection: 'row',
+                    paddingVertical: space.sm,
+                    borderBottomWidth: 1,
+                    borderBottomColor: cardColor.divider,
+                  }}
+                >
+                  <Text
+                    variant="cardBody"
+                    style={{ flex: 1, color: cardColor.textPrimary }}
+                  >
+                    {p.name}
+                  </Text>
+                  <Text variant="cardBody" nums style={{ color: cardColor.textSecondary }}>
+                    x{p.quantity}
+                  </Text>
+                </View>
+              ))}
+            </View>
+          ) : null}
+
+          {primary === 'verify_pickup_otp' ? (
+            <View style={{ marginTop: space.lg }}>
+              <OtpInput
+                label="Pickup code"
+                hint="The shop staff will read this out when they hand the parcel over."
+                value={otp}
+                onChange={setOtp}
+                error={otpError}
+              />
+              <GhostLink
                 label="Ask the shop to resend"
-                kind="ghost"
                 disabled={busy}
                 onPress={() => api.requestPickupOtp(orderId).catch(() => {})}
-                style={{ marginTop: space.md }}
               />
-            ) : null}
-          </>
-        ) : null}
+            </View>
+          ) : null}
 
-        {error ? (
-          <Text variant="bodyStrong" tone="red" style={{ marginTop: space.xl }}>
-            {error}
-          </Text>
-        ) : null}
+          {error ? (
+            <Text variant="cardBody" style={{ color: cardColor.red, marginTop: space.lg }}>
+              {error}
+            </Text>
+          ) : null}
 
-        {/* Only what Odoo permits, in the order Odoo permits it. */}
-        {primary ? (
-          <PrimaryButton
-            label={ACTION_LABEL[primary]}
-            kind={primary === 'verify_delivery_otp' ? 'green' : 'brand'}
-            onPress={() => run(primary)}
-            loading={busy}
-            disabled={!canSubmit}
-            style={{ marginTop: space.huge }}
-          />
-        ) : (
-          <Text variant="bodyStrong" tone="soft" style={{ marginTop: space.huge }}>
-            This job is finished. Nothing left to do.
-          </Text>
-        )}
+          {/* Only what Odoo permits, in the order Odoo permits it. */}
+          {primary ? (
+            <SheetButton
+              label={ACTION_LABEL[primary]}
+              icon="checkmark"
+              onPress={() => run(primary)}
+              disabled={busy || !canSubmit}
+              style={{ marginTop: space.xl }}
+            />
+          ) : (
+            <Text
+              variant="cardBody"
+              style={{ color: cardColor.textSecondary, marginTop: space.xl }}
+            >
+              This job is finished. Nothing left to do.
+            </Text>
+          )}
 
-        {secondary.map((a) => (
-          <PrimaryButton
-            key={a}
-            label={ACTION_LABEL[a]}
-            kind="ghost"
-            onPress={() => run(a)}
-            disabled={busy}
-            style={{
-              marginTop: space.sm,
-              borderWidth: 1,
-              borderColor: color.hairline,
-            }}
-          />
-        ))}
-      </Screen>
+          {secondary.map((a) => (
+            <GhostLink key={a} label={ACTION_LABEL[a]} onPress={() => run(a)} disabled={busy} />
+          ))}
+        </View>
+      </ScrollView>
     </View>
+  );
+}
+
+/** A stat tile in the sheet. */
+function Tile({ label, value, tone }: { label: string; value: string; tone?: string }) {
+  return (
+    <View
+      style={{
+        flex: 1,
+        backgroundColor: cardColor.chipBg,
+        borderRadius: cardRadius.chip,
+        padding: space.md,
+      }}
+    >
+      <Text variant="cardCaption" style={{ color: cardColor.textSecondary }}>
+        {label}
+      </Text>
+      <Text
+        variant="cardTitle"
+        nums
+        style={{ color: tone ?? cardColor.textPrimary, marginTop: 2 }}
+        numberOfLines={1}
+      >
+        {value}
+      </Text>
+    </View>
+  );
+}
+
+/** The full-width action button. */
+function SheetButton({
+  label,
+  icon,
+  tone = 'brand',
+  onPress,
+  disabled,
+  style,
+}: {
+  label: string;
+  icon?: keyof typeof Ionicons.glyphMap;
+  tone?: 'brand' | 'green' | 'dark' | 'ghost' | 'orange';
+  onPress: () => void;
+  disabled?: boolean;
+  style?: object;
+}) {
+  const bg =
+    tone === 'green'
+      ? cardColor.green
+      : tone === 'orange'
+        ? cardColor.orange
+        : tone === 'dark'
+        ? cardColor.brandDark
+        : tone === 'ghost'
+          ? cardColor.chipBg
+          : cardColor.brand;
+  const fg = tone === 'ghost' ? cardColor.textPrimary : cardColor.card;
+
+  return (
+    <Pressable
+      onPress={onPress}
+      disabled={disabled}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      style={({ pressed }) => [
+        {
+          backgroundColor: bg,
+          borderRadius: cardRadius.button,
+          height: 54,
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'center',
+          marginTop: space.lg,
+          opacity: disabled ? 0.5 : pressed ? 0.85 : 1,
+        },
+        style,
+      ]}
+    >
+      {icon ? (
+        <Ionicons name={icon} size={18} color={fg} style={{ marginRight: space.sm }} />
+      ) : null}
+      <Text variant="cardButton" style={{ color: fg }}>
+        {label}
+      </Text>
+    </Pressable>
+  );
+}
+
+/** A quiet secondary action, as the reference draws them. */
+function GhostLink({
+  label,
+  onPress,
+  disabled,
+}: {
+  label: string;
+  onPress: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      disabled={disabled}
+      accessibilityRole="button"
+      style={({ pressed }) => ({
+        paddingVertical: space.md,
+        alignItems: 'center',
+        opacity: disabled ? 0.5 : pressed ? 0.6 : 1,
+      })}
+    >
+      <Text variant="cardBody" style={{ color: cardColor.textSecondary }}>
+        {label}
+      </Text>
+    </Pressable>
+  );
+}
+
+/** Circular icon button — back, call, navigate. */
+function RoundButton({
+  icon,
+  onPress,
+  tone = 'plain',
+  translucent,
+}: {
+  icon: keyof typeof Ionicons.glyphMap;
+  onPress: () => void;
+  tone?: 'plain' | 'tint' | 'brand';
+  translucent?: boolean;
+}) {
+  const bg = translucent
+    ? 'rgba(255,255,255,0.22)'
+    : tone === 'brand'
+      ? cardColor.brand
+      : tone === 'tint'
+        ? cardColor.chipBg
+        : cardColor.card;
+  const fg = tone === 'brand' || translucent ? cardColor.card : cardColor.brand;
+
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      hitSlop={8}
+      style={({ pressed }) => [
+        {
+          width: 44,
+          height: 44,
+          borderRadius: 22,
+          backgroundColor: bg,
+          alignItems: 'center',
+          justifyContent: 'center',
+          opacity: pressed ? 0.8 : 1,
+        },
+        translucent ? null : shadow.card,
+      ]}
+    >
+      <Ionicons name={icon} size={20} color={fg} />
+    </Pressable>
   );
 }
