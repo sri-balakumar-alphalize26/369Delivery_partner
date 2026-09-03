@@ -1,39 +1,61 @@
+import { Ionicons } from '@expo/vector-icons';
 import { Tabs } from 'expo-router';
-import { color, font, space } from '../../src/theme/tokens';
+import { cardColor, cardRadius, fontJakarta } from '../../src/theme/tokens';
 
 /**
- * Label-only tab bar — no icons. Icons would be chrome, and this design has
- * none.
+ * The Bold Cards tab bar: icon over label, brand blue when active.
  *
- * There is no offer modal any more: the contract gives riders no way to decline
- * a job (`offered` allows only `accept`) and no expiry to count down, so an
- * interrupting popup would be theatre. New jobs surface on the Duty screen.
+ * The reference template draws four tabs — Home, Orders, Earnings, Profile —
+ * but Orders and Earnings have neither a screen nor an endpoint behind them
+ * (there is no history or payout API), so only the two that exist are shown. A
+ * tab that opens nothing is worse than a tab that is absent.
+ *
+ * There is still no offer modal: the contract gives riders no way to decline a
+ * job (`offered` allows only `accept`) and no expiry to count down, so an
+ * interrupting popup would be theatre. New jobs surface on Home.
  */
 export default function AppLayout() {
   return (
     <Tabs
       screenOptions={{
         headerShown: false,
-        tabBarActiveTintColor: color.ink,
-        tabBarInactiveTintColor: color.inkSoft,
+        tabBarActiveTintColor: cardColor.brand,
+        tabBarInactiveTintColor: cardColor.textFaint,
         tabBarStyle: {
-          backgroundColor: color.bg,
+          backgroundColor: cardColor.card,
           borderTopWidth: 1,
-          borderTopColor: color.hairline,
+          borderTopColor: cardColor.divider,
           elevation: 0,
-          height: 64,
-          paddingTop: space.sm,
+          height: 68,
+          paddingTop: 6,
+          paddingBottom: 8,
         },
         tabBarLabelStyle: {
-          fontFamily: font.semibold,
-          fontSize: 11,
-          letterSpacing: 1.4,
-          textTransform: 'uppercase',
+          fontFamily: fontJakarta.bold,
+          fontSize: 12,
+          letterSpacing: 0.2,
         },
+        tabBarItemStyle: { borderRadius: cardRadius.chip },
       }}
     >
-      <Tabs.Screen name="index" options={{ title: 'Jobs' }} />
-      <Tabs.Screen name="profile" options={{ title: 'Profile' }} />
+      <Tabs.Screen
+        name="index"
+        options={{
+          title: 'Home',
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="home-outline" size={size ?? 22} color={color} />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="profile"
+        options={{
+          title: 'Profile',
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="person-outline" size={size ?? 22} color={color} />
+          ),
+        }}
+      />
       <Tabs.Screen name="order/[id]" options={{ href: null }} />
     </Tabs>
   );
