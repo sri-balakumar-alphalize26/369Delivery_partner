@@ -81,6 +81,9 @@ export default function Profile() {
 
         <Row label="Rider ID" value={rider ? String(rider.id) : '—'} />
         <Row label="Type" value={rider?.kind ?? '—'} />
+        {/* Read-only here — the Jobs tab owns the control, so there is one
+            source of truth for a state the server holds anyway. */}
+        <Row label="Duty" value={rider?.on_duty ? 'On duty' : 'Off duty'} />
         <Row label="Mode" value={mock ? 'Demo data' : 'Live server'} />
         {!mock ? (
           <>

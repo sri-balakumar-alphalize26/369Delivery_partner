@@ -5,18 +5,50 @@ import {
   Archivo_700Bold,
   useFonts,
 } from '@expo-google-fonts/archivo';
+import {
+  PlusJakartaSans_500Medium,
+  PlusJakartaSans_600SemiBold,
+  PlusJakartaSans_700Bold,
+  PlusJakartaSans_800ExtraBold,
+} from '@expo-google-fonts/plus-jakarta-sans';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar as ExpoStatusBar } from 'expo-status-bar';
-import { ReactNode, useEffect, useState } from 'react';
+import { ReactNode, useCallback, useEffect, useState } from 'react';
 import { View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { color } from '../src/theme/tokens';
-import { SplashArt } from '../src/ui/SplashArt';
+import { SplashAnimation } from '../src/ui/SplashAnimation';
 import { useSession } from '../src/store/session';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
+
+/** Free choice: the splash art is transparent, so nothing has to match it. */
+const SPLASH_BG = '#FFFFFF';
+
+/**
+ * How long the splash is shown.
+ *
+ * The clip loops, so it cannot define its own end. 7000ms is one complete pass
+ * of the 8.4s clip played at 1.2x (see PLAYBACK_RATE in SplashAnimation): the
+ * 1.5s intro plus all six icons. Chosen so the whole sequence is seen, never cut
+ * — if the rate changes, this must change with it.
+ */
+const SPLASH_MIN_MS = 7000;
+
+/**
+ * Hard ceiling on the splash.
+ *
+ * `restore()` calls /auth/me, and `src/api/client.ts` defaults to a 20s request
+ * timeout, so a rider with a saved server and no signal would otherwise stare at
+ * the splash for twenty seconds before `ready` flips. Enter without the session
+ * instead — `Gate` redirects the moment it resolves.
+ *
+ * Must stay ABOVE SPLASH_MIN_MS: if the ceiling fired first it would cut the
+ * animation short, which is the exact problem the 8400ms floor exists to fix.
+ */
+const SPLASH_MAX_MS = 12000;
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -43,54 +75,73 @@ function Gate({ children }: { children: ReactNode }) {
 }
 
 export default function RootLayout() {
-  const [fontsLoaded] = useFonts({
+  const [fontsLoaded, fontError] = useFonts({
     Archivo_400Regular,
     Archivo_500Medium,
     Archivo_600SemiBold,
     Archivo_700Bold,
+    // Bold Cards. Archivo stays until every screen has moved over.
+    PlusJakartaSans_500Medium,
+    PlusJakartaSans_600SemiBold,
+    PlusJakartaSans_700Bold,
+    PlusJakartaSans_800ExtraBold,
   });
 
   const ready = useSession((s) => s.ready);
   const restore = useSession((s) => s.restore);
 
-  // Hold the brand splash briefly even on a fast start, so it registers as
-  // branding rather than flashing past as a glitch.
-  const [minTimeDone, setMinTimeDone] = useState(false);
+  const [floorDone, setFloorDone] = useState(false);
+  const [ceilingHit, setCeilingHit] = useState(false);
+  const [splashGone, setSplashGone] = useState(false);
 
   useEffect(() => {
     restore();
-    const t = setTimeout(() => setMinTimeDone(true), 1200);
-    return () => clearTimeout(t);
+    const floor = setTimeout(() => setFloorDone(true), SPLASH_MIN_MS);
+    const ceiling = setTimeout(() => setCeilingHit(true), SPLASH_MAX_MS);
+    return () => {
+      clearTimeout(floor);
+      clearTimeout(ceiling);
+    };
   }, [restore]);
 
-  // Hand off from the native splash the moment we can paint our own, so the
+  // Hand off from the native splash the moment our own art is on screen, so the
   // rider never sees a blank frame between the two.
-  useEffect(() => {
-    if (fontsLoaded) SplashScreen.hideAsync().catch(() => {});
-  }, [fontsLoaded]);
+  const handOff = useCallback(() => {
+    SplashScreen.hideAsync().catch(() => {});
+  }, []);
 
-  if (!fontsLoaded) {
-    return <View style={{ flex: 1, backgroundColor: '#F3F7FE' }} />;
-  }
+  // A font error must not hold the app hostage — fall through to system fonts.
+  const appReady = (fontsLoaded || !!fontError) && ready;
+  const canExit = (appReady && floorDone) || ceilingHit;
 
-  if (!ready || !minTimeDone) {
-    return <SplashArt />;
-  }
-
+  // The app tree is mounted from the first frame and simply covered, so the
+  // router settles and Gate's /connect redirect lands behind the splash. The
+  // fade then reveals a screen that is already in its final state.
   return (
-    <QueryClientProvider client={queryClient}>
-      <SafeAreaProvider>
-        <ExpoStatusBar style="light" />
-        <Gate>
-          <Stack
-            screenOptions={{
-              headerShown: false,
-              contentStyle: { backgroundColor: color.bg },
-              animation: 'fade',
-            }}
-          />
-        </Gate>
-      </SafeAreaProvider>
-    </QueryClientProvider>
+    <View style={{ flex: 1, backgroundColor: SPLASH_BG }}>
+      <ExpoStatusBar style={splashGone ? 'light' : 'dark'} />
+
+      <QueryClientProvider client={queryClient}>
+        <SafeAreaProvider>
+          <Gate>
+            <Stack
+              screenOptions={{
+                headerShown: false,
+                contentStyle: { backgroundColor: color.bg },
+                animation: 'fade',
+              }}
+            />
+          </Gate>
+        </SafeAreaProvider>
+      </QueryClientProvider>
+
+      {!splashGone ? (
+        <SplashAnimation
+          exiting={canExit}
+          onExited={() => setSplashGone(true)}
+          onPainted={handOff}
+        />
+      ) : null}
+    </View>
   );
 }

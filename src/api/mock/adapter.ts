@@ -5,22 +5,33 @@ import {
   ApiError,
   DeliveryOrder,
   DeliveryStatus,
+  DutyResult,
+  Identity,
   LocationResult,
   OrdersResponse,
   Rider,
 } from '../types';
-import { MOCK_DELIVERY_OTP, MOCK_PICKUP_OTP, makeOffer } from './fixtures';
+import {
+  MOCK_DELIVERY_OTP,
+  MOCK_PICKUP_OTP,
+  MOCK_TIMEZONE,
+  OMR,
+  makeOffer,
+} from './fixtures';
 
 /**
  * An in-memory stand-in for Odoo, matching the published contract exactly —
- * same statuses, same allowed_actions, same error codes.
+ * same statuses, same allowed_actions, same error codes, same field shapes.
  *
  * It exists so the whole app stays testable without a token or a live tunnel,
- * and so the error paths that matter (wrong state, bad OTP, lockout) can
- * actually be exercised rather than hoped about.
+ * and so the error paths that matter (wrong state, bad OTP, lockout, off duty)
+ * can actually be exercised rather than hoped about.
  */
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** UTC to the second, the way the contract writes every timestamp. */
+const utcNow = () => new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
 
 /** Toggled from the Profile screen to force the paths that are hard to hit. */
 export const mockFlags = {
@@ -50,10 +61,19 @@ const rider: Rider = {
   name: 'API Test Rider',
   mobile: '96899990001',
   kind: 'own',
+  on_duty: false,
+  duty_since: '',
 };
 
 const state = {
-  orders: [makeOffer()] as DeliveryOrder[],
+  /** Jobs already handed to this rider. */
+  orders: [] as DeliveryOrder[],
+  /**
+   * Confirmed orders with nobody on duty to take them — the contract's
+   * "To Dispatch". Two wait from the start, so clocking on demonstrates the
+   * thing the endpoint exists for.
+   */
+  pending: [makeOffer(), makeOffer()] as DeliveryOrder[],
   pickupAttempts: 0,
   deliveryAttempts: 0,
   /** Set once /start has been called, mirroring tracking.enabled. */
@@ -96,11 +116,54 @@ function advance(o: DeliveryOrder, to: DeliveryStatus): ActionResult {
   };
 }
 
+/**
+ * A new job only reaches a rider who is on duty. Off duty it waits in
+ * To Dispatch, which is what makes the duty endpoint load-bearing.
+ */
+function offer() {
+  const job = makeOffer();
+  if (rider.on_duty) state.orders.push(job);
+  else state.pending.push(job);
+}
+
 export const mockAdapter: ApiAdapter = {
-  async me() {
+  async me(): Promise<Identity> {
     await wait(200);
     guard();
-    return rider;
+    return { rider, timezone: MOCK_TIMEZONE, currency: OMR };
+  },
+
+  async duty(on): Promise<DutyResult> {
+    await wait(350);
+    guard();
+
+    rider.on_duty = on;
+
+    if (!on) {
+      // Going off duty never takes back a job already accepted — that would
+      // strand a parcel mid-route. It only stops new work being offered.
+      rider.duty_since = '';
+      return {
+        on_duty: false,
+        duty_since: '',
+        jobs_picked_up: 0,
+        message: 'You are off duty. No new jobs will be offered.',
+      };
+    }
+
+    rider.duty_since = utcNow();
+
+    // Clocking on picks up whatever was waiting.
+    const waiting = state.pending.length;
+    state.orders.push(...state.pending);
+    state.pending = [];
+
+    return {
+      on_duty: true,
+      duty_since: rider.duty_since,
+      jobs_picked_up: waiting,
+      message: `You are on duty. ${waiting} job(s) were waiting.`,
+    };
   },
 
   async orders(): Promise<OrdersResponse> {
@@ -116,7 +179,14 @@ export const mockAdapter: ApiAdapter = {
           .length,
         delivered: live.filter((o) => o.delivery_status === 'delivered').length,
       },
-      orders: live.filter((o) => o.delivery_status !== 'delivered'),
+      // Finished work belongs to /history, not to the active list — otherwise a
+      // returned job sits on the rider's screen forever.
+      orders: live.filter(
+        (o) => !['delivered', 'returned', 'cancelled'].includes(o.delivery_status)
+      ),
+      on_duty: rider.on_duty,
+      timezone: MOCK_TIMEZONE,
+      server_time: utcNow(),
     };
   },
 
@@ -134,7 +204,7 @@ export const mockAdapter: ApiAdapter = {
     if (mockFlags.stealNextOrder) {
       mockFlags.stealNextOrder = false;
       state.orders = state.orders.filter((x) => x.delivery_order_id !== id);
-      setTimeout(() => state.orders.push(makeOffer()), 6000);
+      setTimeout(offer, 6000);
       throw new ApiError('wrong_state', 'Another rider has already taken this job.', {
         status: 409,
         statusName: 'offered',
@@ -218,11 +288,11 @@ export const mockAdapter: ApiAdapter = {
     state.tracking = false;
     const res = advance(o, 'delivered');
     res.message = 'Delivery completed successfully';
-    res.delivered_at = new Date().toISOString().slice(0, 19);
+    res.delivered_at = utcNow();
     o.delivered_at = res.delivered_at;
 
     // A fresh job turns up shortly, so the loop can be walked repeatedly.
-    setTimeout(() => state.orders.push(makeOffer()), 8000);
+    setTimeout(offer, 8000);
     return res;
   },
 
@@ -242,6 +312,14 @@ export const mockAdapter: ApiAdapter = {
     requireAction(o, 'return_to_shop');
     state.tracking = false;
     return advance(o, 'returning');
+  },
+
+  async confirmReturn(id) {
+    await wait(350);
+    guard();
+    const o = find(id);
+    requireAction(o, 'confirm_return');
+    return advance(o, 'returned');
   },
 
   async reportIssue(id) {

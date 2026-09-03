@@ -2,8 +2,8 @@
  * Headless walk of the whole delivery flow against the mock adapter.
  *
  * The mock mirrors the published contract exactly — same statuses, same
- * allowed_actions, same error codes — so this exercises the logic every screen
- * depends on without needing a phone, a token or the tunnel.
+ * allowed_actions, same error codes, same field shapes — so this exercises the
+ * logic every screen depends on without needing a phone, a token or the tunnel.
  *
  * Run:  npx tsc scripts/flow-test.ts --outDir <dir> --module commonjs \
  *         --target es2020 --skipLibCheck --esModuleInterop && node <dir>/scripts/flow-test.js
@@ -45,20 +45,47 @@ async function expectError(
 }
 
 async function main() {
-  console.log('\n=== 1. Listing jobs ===');
+  console.log('\n=== 1. Off duty — nothing is offered ===');
+  const identity = await api.me();
+  check('rider starts off duty', identity.rider.on_duty === false);
+  check('/auth/me carries the timezone', identity.timezone === 'Asia/Muscat');
+  check('/auth/me carries the currency', identity.currency.decimals === 3);
+
+  const idle = await api.orders();
+  check('no jobs while off duty', idle.orders.length === 0);
+  check('response reports on_duty false', idle.on_duty === false);
+
+  console.log('\n=== 2. Clocking on picks up what was waiting ===');
+  const on = await api.duty(true);
+  check('now on duty', on.on_duty === true);
+  check('two jobs were waiting', on.jobs_picked_up === 2, String(on.jobs_picked_up));
+  check('duty_since is UTC', /Z$/.test(on.duty_since), on.duty_since);
+  check('message is written for the rider', /2 job\(s\) were waiting/.test(on.message ?? ''));
+
+  console.log('\n=== 3. Listing jobs, in the contract shapes ===');
   const list = await api.orders();
+  check('both jobs returned', list.orders.length === 2, String(list.orders.length));
+  check('counts.assigned is 2', list.counts.assigned === 2);
+  check('response carries a timezone', list.timezone === 'Asia/Muscat');
+  check('server_time is UTC', /Z$/.test(list.server_time ?? ''), list.server_time);
+
   const job = list.orders[0];
-  check('one job returned', list.orders.length === 1);
   check('status is offered', job.delivery_status === 'offered');
   check(
     'only action is accept',
     sameActions(job.allowed_actions, ['accept']),
     job.allowed_actions.join(',')
   );
-  check('counts.assigned is 1', list.counts.assigned === 1);
-  const id = job.delivery_order_id;
+  // The bug this whole change exists for: currency is an object, not a string.
+  check('currency is an object', typeof job.currency === 'object');
+  check('currency.code is OMR', job.currency.code === 'OMR');
+  check('currency.decimals is 3, not 2', job.currency.decimals === 3);
+  check('promised_by is UTC', /Z$/.test(job.promised_by), job.promised_by);
 
-  console.log('\n=== 2. Acting out of state is refused ===');
+  const id = job.delivery_order_id;
+  const secondId = list.orders[1].delivery_order_id;
+
+  console.log('\n=== 4. Acting out of state is refused ===');
   await expectError('dispatch before accept -> wrong_state', () => api.dispatch(id), 'wrong_state');
   await expectError(
     'delivery OTP before accept -> wrong_state',
@@ -67,7 +94,7 @@ async function main() {
   );
   await expectError('unknown job -> not_found', () => api.order(999999), 'not_found');
 
-  console.log('\n=== 3. Accept ===');
+  console.log('\n=== 5. Accept ===');
   const acc = await api.accept(id);
   check('status accepted', acc.status === 'accepted');
   check(
@@ -77,7 +104,7 @@ async function main() {
   );
   check('tracking still off', acc.tracking?.enabled === false);
 
-  console.log('\n=== 4. Pickup code (from the shop) ===');
+  console.log('\n=== 6. Pickup code (from the shop) ===');
   await api.requestPickupOtp(id);
   await expectError('wrong pickup code -> bad_otp', () => api.verifyPickupOtp(id, '000000'), 'bad_otp');
   const picked = await api.verifyPickupOtp(id, MOCK_PICKUP_OTP);
@@ -88,7 +115,7 @@ async function main() {
     picked.allowed_actions.join(',')
   );
 
-  console.log('\n=== 5. Leaving the shop ===');
+  console.log('\n=== 7. Leaving the shop ===');
   const disp = await api.dispatch(id);
   check('status dispatched', disp.status === 'dispatched');
   check('tracking STILL off before /start', disp.tracking?.enabled === false);
@@ -96,7 +123,7 @@ async function main() {
   const locBefore = await api.sendLocation(id, { latitude: 23.5, longitude: 58.3, accuracy: 10 });
   check('GPS before /start is told to stop', locBefore.stop === true);
 
-  console.log('\n=== 6. Start delivery — the only moment GPS may begin ===');
+  console.log('\n=== 8. Start delivery — the only moment GPS may begin ===');
   const start = await api.start(id);
   check('status out_for_delivery', start.status === 'out_for_delivery');
   check('tracking.enabled turns TRUE here', start.tracking?.enabled === true);
@@ -104,7 +131,7 @@ async function main() {
   const locDuring = await api.sendLocation(id, { latitude: 23.5, longitude: 58.3, accuracy: 10 });
   check('GPS accepted during delivery', locDuring.stop === false);
 
-  console.log('\n=== 7. Delivery code (from the customer) ===');
+  console.log('\n=== 9. Delivery code (from the customer) ===');
   await expectError(
     'wrong delivery code -> bad_otp',
     () => api.verifyDeliveryOtp(id, '111111'),
@@ -114,19 +141,54 @@ async function main() {
   check('status delivered', done.status === 'delivered');
   check('no actions left', done.allowed_actions.length === 0);
   check('tracking off again', done.tracking?.enabled === false);
-  check('delivered_at present', !!done.delivered_at);
+  check('delivered_at is UTC', /Z$/.test(done.delivered_at ?? ''), done.delivered_at);
 
   const locAfter = await api.sendLocation(id, { latitude: 23.5, longitude: 58.3, accuracy: 10 });
   check('GPS after delivery is told to stop', locAfter.stop === true);
 
-  console.log('\n=== 8. Losing the race to another rider ===');
+  console.log('\n=== 10. The return path, end to end ===');
+  await api.accept(secondId);
+  await api.verifyPickupOtp(secondId, MOCK_PICKUP_OTP);
+  const returning = await api.returnToShop(secondId);
+  check('status returning', returning.status === 'returning');
+  check(
+    'only action is confirm_return',
+    sameActions(returning.allowed_actions, ['confirm_return']),
+    returning.allowed_actions.join(',')
+  );
+  // Previously a dead button: the action was offered and nothing was wired to it.
+  const returned = await api.confirmReturn(secondId);
+  check('status returned', returned.status === 'returned');
+  check('no actions left', returned.allowed_actions.length === 0);
+
+  const afterReturn = await api.orders();
+  check(
+    'finished work leaves the active list',
+    afterReturn.orders.every((o) => o.delivery_order_id !== secondId)
+  );
+
+  console.log('\n=== 11. Losing the race to another rider ===');
   await new Promise((r) => setTimeout(r, 8500));
   const next = await api.orders();
-  const nextId = next.orders[0].delivery_order_id;
-  mockFlags.stealNextOrder = true;
-  await expectError('accept a taken job -> wrong_state', () => api.accept(nextId), 'wrong_state');
+  const fresh = next.orders.find((o) => o.delivery_status === 'offered');
+  check('a new job arrived while on duty', !!fresh);
+  if (fresh) {
+    mockFlags.stealNextOrder = true;
+    await expectError(
+      'accept a taken job -> wrong_state',
+      () => api.accept(fresh.delivery_order_id),
+      'wrong_state'
+    );
+  }
 
-  console.log('\n=== 9. No signal ===');
+  console.log('\n=== 12. Clocking off stops new work ===');
+  const off = await api.duty(false);
+  check('now off duty', off.on_duty === false);
+  check('duty_since cleared', off.duty_since === '');
+  const afterOff = await api.orders();
+  check('response reports on_duty false', afterOff.on_duty === false);
+
+  console.log('\n=== 13. No signal ===');
   mockFlags.offline = true;
   await expectError('any call while offline -> network', () => api.orders(), 'network');
   mockFlags.offline = false;

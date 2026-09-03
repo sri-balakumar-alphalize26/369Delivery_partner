@@ -13,9 +13,11 @@ import {
 } from '../../../src/api/types';
 import { money, promisedAt } from '../../../src/lib/format';
 import { startTracking, stopTracking } from '../../../src/location/tracking';
+import { useSession } from '../../../src/store/session';
 import { BarState, color, space } from '../../../src/theme/tokens';
 import { BigNumber } from '../../../src/ui/BigNumber';
 import { Hairline } from '../../../src/ui/Hairline';
+import { LoadingArt } from '../../../src/ui/LoadingArt';
 import { OtpInput } from '../../../src/ui/OtpInput';
 import { PrimaryButton } from '../../../src/ui/PrimaryButton';
 import { Screen } from '../../../src/ui/Screen';
@@ -55,6 +57,8 @@ export default function Job() {
   const orderId = Number(id);
   const router = useRouter();
   const qc = useQueryClient();
+  // The shop's zone, from /auth/me — never the phone's own.
+  const timezone = useSession((s) => s.timezone);
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -63,25 +67,50 @@ export default function Job() {
   /** Set from a 409 so a stale screen re-renders without a reload. */
   const [override, setOverride] = useState<Action[] | null>(null);
 
+  /**
+   * Expo Router reuses this component from one job to the next, so everything
+   * above belongs to whichever job was open last until it is cleared. Without
+   * this, the empty `allowed_actions` of a job just delivered blanks out every
+   * button on the next job opened, and a half-typed code follows the rider
+   * from one door to another.
+   */
+  const [shownFor, setShownFor] = useState(orderId);
+  if (shownFor !== orderId) {
+    setShownFor(orderId);
+    setOverride(null);
+    setOtp('');
+    setError(null);
+    setOtpError(null);
+  }
+
   const { data: order, isLoading } = useQuery({
     queryKey: ['order', orderId],
     queryFn: () => api.order(orderId),
     refetchInterval: 15_000,
   });
 
-  if (isLoading || !order) {
+  if (isLoading) {
     return (
       <View style={{ flex: 1, backgroundColor: color.bg }}>
-        <StatusBar state="idle" label={isLoading ? 'Loading job' : 'Job not found'} />
+        <StatusBar state="idle" label="Loading job" />
+        <LoadingArt />
+      </View>
+    );
+  }
+
+  // A job that resolved to nothing is not a wait — it gets an answer, not the
+  // loading loop.
+  if (!order) {
+    return (
+      <View style={{ flex: 1, backgroundColor: color.bg }}>
+        <StatusBar state="idle" label="Job not found" />
         <Screen>
-          <Text variant="title">{isLoading ? 'Loading…' : 'That job is gone'}</Text>
-          {!isLoading ? (
-            <PrimaryButton
-              label="Back"
-              onPress={() => router.replace('/')}
-              style={{ marginTop: space.huge }}
-            />
-          ) : null}
+          <Text variant="title">That job is gone</Text>
+          <PrimaryButton
+            label="Back"
+            onPress={() => router.replace('/')}
+            style={{ marginTop: space.huge }}
+          />
         </Screen>
       </View>
     );
@@ -144,6 +173,12 @@ export default function Job() {
         case 'return_to_shop':
           res = await api.returnToShop(orderId);
           break;
+        case 'confirm_return':
+          // The contract's prose says only the shop closes a return, while its
+          // state table offers this action to the rider. Render what Odoo
+          // offers and let Odoo refuse it — a 409 re-renders from the truth.
+          res = await api.confirmReturn(orderId);
+          break;
         case 'report_issue':
           res = await api.reportIssue(orderId, 'Reported from the app');
           break;
@@ -193,7 +228,7 @@ export default function Job() {
         </Text>
         {order.promised_by ? (
           <Text variant="body" tone="soft" nums style={{ marginTop: space.xs }}>
-            Promised {promisedAt(order.promised_by)}
+            Promised {promisedAt(order.promised_by, timezone)}
           </Text>
         ) : null}
 

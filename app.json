@@ -5,7 +5,7 @@
     "scheme": "delivery369",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/icon.png",
+    "icon": "./assets/images/splash-icon.png",
     "userInterfaceStyle": "light",
     "newArchEnabled": true,
     "assetBundlePatterns": [
@@ -14,7 +14,7 @@
     "splash": {
       "image": "./assets/images/splash-icon.png",
       "resizeMode": "contain",
-      "backgroundColor": "#F3F7FE"
+      "backgroundColor": "#FFFFFF"
     },
     "ios": {
       "supportsTablet": false,
@@ -60,7 +60,7 @@
           "image": "./assets/images/splash-icon.png",
           "imageWidth": 260,
           "resizeMode": "contain",
-          "backgroundColor": "#F3F7FE"
+          "backgroundColor": "#FFFFFF"
         }
       ],
       [
@@ -77,7 +77,8 @@
         {
           "color": "#0042B3"
         }
-      ]
+      ],
+      "expo-video"
     ],
     "experiments": {
       "typedRoutes": true

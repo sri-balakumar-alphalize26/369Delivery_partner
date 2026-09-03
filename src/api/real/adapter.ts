@@ -3,9 +3,10 @@ import {
   ActionResult,
   ApiAdapter,
   DeliveryOrder,
+  DutyResult,
+  Identity,
   LocationResult,
   OrdersResponse,
-  Rider,
 } from '../types';
 
 /**
@@ -15,10 +16,16 @@ import {
  * are attached by `client.ts`, so nothing here deals with auth.
  */
 export const realAdapter: ApiAdapter = {
-  async me() {
-    const r = await request<{ rider: Rider }>('/api/delivery/auth/me');
-    return r.rider;
-  },
+  // The contract calls this the first call to make after signing in: it answers
+  // "did the credentials work" and "is this person a rider" together, and
+  // carries the timezone and currency everything else is formatted with.
+  me: () => request<Identity>('/api/delivery/auth/me'),
+
+  duty: (on) =>
+    request<DutyResult>('/api/delivery/duty', {
+      method: 'POST',
+      body: { on_duty: on },
+    }),
 
   orders: () => request<OrdersResponse>('/api/delivery/orders'),
 
@@ -77,6 +84,18 @@ export const realAdapter: ApiAdapter = {
     request<ActionResult>('/api/delivery/return', {
       method: 'POST',
       body: { delivery_order_id: id, reason },
+    }),
+
+  /**
+   * The contract's prose says only the shop closes a return, but its state
+   * table lists `confirm_return` as the allowed action for `returning`. The
+   * first rule wins — render what Odoo offers and let Odoo refuse it. A 409
+   * already re-renders this screen from the returned `allowed_actions`.
+   */
+  confirmReturn: (id) =>
+    request<ActionResult>('/api/delivery/return/confirm', {
+      method: 'POST',
+      body: { delivery_order_id: id },
     }),
 
   reportIssue: (id, note) =>

@@ -62,6 +62,18 @@ export type DeliveryStatus =
 export type PaymentStatus = 'cod' | 'paid';
 export type DeliveryType = 'quick' | 'express';
 
+/**
+ * Every money field arrives with its own currency.
+ *
+ * The contract is explicit that `decimals` is the only correct source for
+ * rounding — "OMR is 3, most currencies 2, some 0. Do not hardcode two."
+ */
+export interface Currency {
+  code: string;
+  symbol: string;
+  decimals: number;
+}
+
 export interface Product {
   name: string;
   quantity: number;
@@ -86,13 +98,14 @@ export interface DeliveryOrder {
 
   payment_status: PaymentStatus;
   amount_to_collect: number;
-  currency: string;
+  currency: Currency;
 
   delivery_status: DeliveryStatus;
   delivery_type: DeliveryType;
   /**
-   * Naive timestamp — the contract gives no offset and the Odoo team have not
-   * yet confirmed the zone. Display verbatim; do NOT do local-time maths on it.
+   * UTC, ending in `Z`. Convert for display with the `timezone` the API
+   * returns — never with the phone's own zone, which the contract warns may
+   * not match the server's.
    */
   promised_by: string;
 
@@ -117,6 +130,10 @@ export interface OrderCounts {
 export interface OrdersResponse {
   counts: OrderCounts;
   orders: DeliveryOrder[];
+  /** Duty is server-held; this is the authority, not anything the app remembers. */
+  on_duty?: boolean;
+  timezone?: string;
+  server_time?: string;
 }
 
 export interface Rider {
@@ -125,6 +142,10 @@ export interface Rider {
   mobile: string;
   /** "own" for staff riders; freelancers differ. */
   kind: string;
+  /** No work is offered at all while this is false. */
+  on_duty: boolean;
+  /** UTC, or "" when off duty. */
+  duty_since: string;
 }
 
 /** What every action endpoint returns. */
@@ -134,6 +155,20 @@ export interface ActionResult {
   tracking?: Tracking;
   message?: string;
   delivered_at?: string;
+}
+
+/**
+ * POST /duty.
+ *
+ * `jobs_picked_up` is the point of the endpoint: clocking on collects whatever
+ * was confirmed while nobody was on duty, so the app can open on "3 jobs were
+ * waiting for you" rather than an empty screen.
+ */
+export interface DutyResult {
+  on_duty: boolean;
+  duty_since: string;
+  jobs_picked_up: number;
+  message?: string;
 }
 
 export interface LocationResult {
@@ -193,8 +228,21 @@ export interface ServerConfig {
   useMock: boolean;
 }
 
+/** What /auth/me answers: who this is, plus how to format what they are shown. */
+export interface Identity {
+  rider: Rider;
+  timezone: string;
+  currency: Currency;
+}
+
+/**
+ * Both backends implement this, so contract drift surfaces as a compile error
+ * rather than as a blank screen on a rider's phone.
+ */
 export interface ApiAdapter {
-  me(): Promise<Rider>;
+  me(): Promise<Identity>;
+
+  duty(on: boolean): Promise<DutyResult>;
 
   orders(): Promise<OrdersResponse>;
   order(id: number): Promise<DeliveryOrder>;
@@ -212,5 +260,6 @@ export interface ApiAdapter {
   ): Promise<LocationResult>;
 
   returnToShop(id: number, reason?: string): Promise<ActionResult>;
+  confirmReturn(id: number): Promise<ActionResult>;
   reportIssue(id: number, note: string): Promise<ActionResult>;
 }

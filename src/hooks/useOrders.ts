@@ -1,6 +1,6 @@
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/endpoints';
-import { DeliveryOrder, OrdersResponse } from '../api/types';
+import { DeliveryOrder, DutyResult, OrdersResponse } from '../api/types';
 import { useSession } from '../store/session';
 
 /**
@@ -23,11 +23,42 @@ export function useOrders() {
   });
 }
 
-/** The one job the rider should be looking at, if any. */
-export function pickCurrent(orders: DeliveryOrder[] | undefined): DeliveryOrder | null {
-  if (!orders?.length) return null;
+/**
+ * Clocking on or off.
+ *
+ * The contract is clear that duty is what makes work flow at all: nothing is
+ * offered to an off-duty rider, and clocking on collects whatever was confirmed
+ * while nobody was available. So the orders list is refetched immediately
+ * rather than waiting up to ten seconds for the next poll.
+ */
+export function useDuty() {
+  const qc = useQueryClient();
+  const applyDuty = useSession((s) => s.applyDuty);
 
-  // Anything already under way outranks a fresh offer — finish what you started.
-  const live = orders.find((o) => o.delivery_status !== 'offered');
-  return live ?? orders[0];
+  return useMutation<DutyResult, Error, boolean>({
+    mutationFn: (on) => api.duty(on),
+    onSuccess: (result) => {
+      applyDuty(result);
+      qc.invalidateQueries({ queryKey: ['orders'] });
+    },
+  });
+}
+
+/**
+ * The order to work through first: anything already under way outranks a fresh
+ * offer — finish what you started — and within a group, the soonest promise.
+ *
+ * A rider can hold several jobs at once, so this sorts rather than picks. The
+ * previous behaviour returned only the first, which made every other job
+ * unreachable.
+ */
+export function sortForRider(orders: DeliveryOrder[] | undefined): DeliveryOrder[] {
+  if (!orders?.length) return [];
+
+  return [...orders].sort((a, b) => {
+    const aOffered = a.delivery_status === 'offered' ? 1 : 0;
+    const bOffered = b.delivery_status === 'offered' ? 1 : 0;
+    if (aOffered !== bOffered) return aOffered - bOffered;
+    return (a.promised_by ?? '').localeCompare(b.promised_by ?? '');
+  });
 }
