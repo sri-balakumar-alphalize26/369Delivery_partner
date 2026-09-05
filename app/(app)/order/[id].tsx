@@ -15,11 +15,16 @@ import {
   PRIMARY_ACTIONS,
 } from '../../../src/api/types';
 import { money, promisedAt, shopName } from '../../../src/lib/format';
-import { startTracking, stopTracking } from '../../../src/location/tracking';
+import {
+  hasLocationPermission,
+  startTracking,
+  stopTracking,
+} from '../../../src/location/tracking';
 import { useSession } from '../../../src/store/session';
 import { glass, gradius, gshadow, gspace } from '../../../src/theme/glass';
 import { Field } from '../../../src/ui/Field';
 import { LoadingArt } from '../../../src/ui/LoadingArt';
+import { LocationPrimer } from '../../../src/ui/LocationPrimer';
 import { OtpBoxes } from '../../../src/ui/OtpBoxes';
 import { OtpInput } from '../../../src/ui/OtpInput';
 import { MAP_ENABLED, RouteMap } from '../../../src/ui/RouteMap';
@@ -91,6 +96,8 @@ export default function Job() {
   const [cooldown, setCooldown] = useState(0);
   /** Which action is waiting on a reason, if any. */
   const [reasonFor, setReasonFor] = useState<Action | null>(null);
+  /** Which action is waiting on the location explainer, if any. */
+  const [primerFor, setPrimerFor] = useState<Action | null>(null);
   const [reasonNote, setReasonNote] = useState('');
 
   useEffect(() => {
@@ -195,6 +202,22 @@ export default function Job() {
       setReasonFor(action);
       return;
     }
+
+    /**
+     * Explain before Android asks.
+     *
+     * `start_delivery` is the one action that triggers a permission prompt, and
+     * it fires while the rider is at a shop counter holding a parcel — the
+     * worst possible moment to meet a dialog with no context and every reason
+     * to dismiss it. On Android a refusal is close to permanent, so the cost of
+     * asking badly is a rider who can never be tracked again.
+     */
+    if (action === 'start_delivery' && !(await hasLocationPermission())) {
+      setError(null);
+      setPrimerFor(action);
+      return;
+    }
+
     await fire(action);
   }
 
@@ -258,6 +281,32 @@ export default function Job() {
   }
 
   const call = () => Linking.openURL(`tel:${order.customer_mobile}`).catch(() => {});
+
+  /* ----------------------------------------------------------------- *
+   * Why this app wants your location.
+   *
+   * Its own step for the same reason the reason picker is: one question on
+   * the screen at a time. Shown before Android's dialog, never instead of it
+   * — Continue is what actually triggers the system prompt.
+   * ----------------------------------------------------------------- */
+  if (primerFor) {
+    return (
+      <GlassScreen>
+        <View style={{ paddingTop: insets.top + gspace.sm, paddingLeft: gspace.xl }}>
+          <RoundButton icon="chev" mirrored onPress={() => setPrimerFor(null)} />
+        </View>
+        <LocationPrimer
+          busy={busy}
+          onContinue={() => {
+            const action = primerFor;
+            setPrimerFor(null);
+            void fire(action);
+          }}
+          onSkip={() => setPrimerFor(null)}
+        />
+      </GlassScreen>
+    );
+  }
 
   /* ----------------------------------------------------------------- *
    * Why did it go wrong?
@@ -482,6 +531,18 @@ export default function Job() {
             Delivering
           </GlassText>
         </View>
+
+        {/* The leg where the rider is actually driving to the door, and the
+            one place a map earns its space most. It was the only job layout
+            without one. `heading` resolves to the customer here. */}
+        <RouteMap
+          latitude={order.latitude}
+          longitude={order.longitude}
+          shopLatitude={typeof order.shop === 'object' ? order.shop.latitude : null}
+          shopLongitude={typeof order.shop === 'object' ? order.shop.longitude : null}
+          heading={headingFor(order.delivery_status)}
+          height={Math.round(screenH * 0.32)}
+        />
 
         <ScrollView
           contentContainerStyle={{

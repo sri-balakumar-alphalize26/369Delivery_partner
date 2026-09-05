@@ -1,5 +1,5 @@
 import * as Location from 'expo-location';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { View, ViewStyle } from 'react-native';
 import MapView, { LatLng, Marker, Polyline, Region } from 'react-native-maps';
 import { coords } from '../lib/format';
@@ -29,6 +29,28 @@ const FALLBACK: Region = {
 /** Keeps the pins clear of the sheet that overlaps the map's foot. */
 const EDGE_PADDING = { top: 64, right: 64, bottom: 96, left: 64 };
 
+/**
+ * How far from the job the rider can be and still be treated as on it.
+ *
+ * Generous on purpose — a long Muscat run is well inside this. It exists to
+ * catch the case where the two are not on the same journey at all, which today
+ * means a demo running on a device thousands of kilometres from the Muscat
+ * fixtures.
+ */
+const MAX_RIDER_KM = 50;
+
+/** Great-circle distance, near enough for deciding whether two points are the same trip. */
+function distanceKm(a: LatLng, b: LatLng): number {
+  const R = 6371;
+  const dLat = ((b.latitude - a.latitude) * Math.PI) / 180;
+  const dLon = ((b.longitude - a.longitude) * Math.PI) / 180;
+  const lat1 = (a.latitude * Math.PI) / 180;
+  const lat2 = (b.latitude * Math.PI) / 180;
+  const h =
+    Math.sin(dLat / 2) ** 2 + Math.sin(dLon / 2) ** 2 * Math.cos(lat1) * Math.cos(lat2);
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+
 export function RouteMapView({
   latitude,
   longitude,
@@ -51,17 +73,22 @@ export function RouteMapView({
   const [rider, setRider] = useState<LatLng | null>(null);
 
   /**
-   * The map draws the rider's own dot, which needs foreground permission. Ask
-   * for it here rather than assuming: without it the rider gets a map with no
-   * blue dot and no explanation of why.
+   * Whether the rider's own dot can be drawn — CHECKED, never requested.
    *
-   * Foreground only. The background permission belongs to the tracker, which
-   * asks for it at /start, and the map has no business requesting it early.
+   * This asked at first, and testing on the tablet showed why it must not: the
+   * map mounts with the job screen, so Android's location dialog appeared the
+   * instant a rider opened a job, cold and unexplained. That is the prompt the
+   * explainer exists to precede, and asking here fired it first and made the
+   * explainer pointless.
+   *
+   * Permission is the tracker's business, requested at /start behind
+   * `LocationPrimer`. The map draws the dot if it happens to be granted and
+   * quietly does without it otherwise.
    */
   const [canShowRider, setCanShowRider] = useState(false);
   useEffect(() => {
     let alive = true;
-    Location.requestForegroundPermissionsAsync()
+    Location.getForegroundPermissionsAsync()
       .then((res) => {
         if (alive) setCanShowRider(res.granted);
       })
@@ -90,17 +117,44 @@ export function RouteMapView({
   const target = heading === 'shop' ? shop : customer;
   const behind = heading === 'shop' ? customer : shop;
 
-  /** The leg still to travel. Falls back to the pin behind before the first fix. */
-  const from = rider ?? behind;
+  /**
+   * The rider only counts if they are plausibly on this job.
+   *
+   * The dot comes from real GPS, so running the demo anywhere but Muscat drew
+   * the line off toward the actual device and framed half a continent. Past
+   * MAX_RIDER_KM nobody is delivering this parcel, so fall back to drawing the
+   * two fixed ends. Costs nothing in production, where the rider is by
+   * definition near the job.
+   */
+  const riderIsOnThisJob =
+    rider != null && target != null && distanceKm(rider, target) <= MAX_RIDER_KM;
+  const from = riderIsOnThisJob ? rider : behind;
   const leg = from && target ? [from, target] : null;
 
   /** Frame what matters now: the rider and where they are going, not the pin behind them. */
-  function frame() {
-    const focus = [rider, target].filter((p): p is LatLng => p != null);
+  const frame = useCallback(() => {
+    const focus = [riderIsOnThisJob ? rider : behind, target].filter(
+      (p): p is LatLng => p != null
+    );
     if (focus.length > 1) {
       map.current?.fitToCoordinates(focus, { edgePadding: EDGE_PADDING, animated: true });
+    } else if (target) {
+      map.current?.animateToRegion({ ...target, latitudeDelta: 0.02, longitudeDelta: 0.02 });
     }
-  }
+  }, [rider, riderIsOnThisJob, behind, target]);
+
+  /**
+   * Re-frame when the leg flips.
+   *
+   * `initialRegion` applies once, on mount, so without this the camera stayed
+   * on the shop after the pickup code and left the customer pin off-screen
+   * with no way to reach it.
+   */
+  useEffect(() => {
+    frame();
+    // Only on a change of leg. Following every GPS tick would wrestle the map
+    // away from a rider trying to pan it.
+  }, [heading]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const initialRegion: Region = target
     ? { ...target, latitudeDelta: 0.04, longitudeDelta: 0.04 }
