@@ -5,6 +5,10 @@ import { GlassText } from './glass/GlassText';
 
 const LENGTH = 6;
 
+/** A digit is one character wide; the box only has to be comfortable to tap. */
+const BOX_W = 46;
+const BOX_H = 54;
+
 /**
  * The six-box delivery code.
  *
@@ -47,16 +51,15 @@ export function OtpBoxes({
             <View
               key={i}
               style={{
-                flex: 1,
-                aspectRatio: 0.92,
+                // Fixed rather than flex:1. Stretching to the container made
+                // each box about 190px wide on a full-width tablet — six
+                // enormous panels for six digits.
+                width: BOX_W,
+                height: BOX_H,
                 borderRadius: gradius.chip,
-                backgroundColor: glass.fill,
-                borderWidth: 2,
-                borderColor: error
-                  ? glass.red
-                  : active
-                    ? glass.indigo
-                    : 'transparent',
+                backgroundColor: glass.bg,
+                borderWidth: 1.5,
+                borderColor: error ? glass.red : active ? glass.orange : glass.border,
                 alignItems: 'center',
                 justifyContent: 'center',
               }}

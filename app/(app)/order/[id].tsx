@@ -1,7 +1,14 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { Linking, Pressable, ScrollView, useWindowDimensions, View } from 'react-native';
+import {
+  KeyboardAvoidingView,
+  Linking,
+  Pressable,
+  ScrollView,
+  useWindowDimensions,
+  View,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { api } from '../../../src/api/endpoints';
 import {
@@ -21,7 +28,14 @@ import {
   stopTracking,
 } from '../../../src/location/tracking';
 import { useSession } from '../../../src/store/session';
-import { gcolumn, glass, gradius, gshadow, gspace } from '../../../src/theme/glass';
+import {
+  GlassBarState,
+  glass,
+  glassBand,
+  gradius,
+  gshadow,
+  gspace,
+} from '../../../src/theme/glass';
 import { Field } from '../../../src/ui/Field';
 import { LoadingArt } from '../../../src/ui/LoadingArt';
 import { LocationPrimer } from '../../../src/ui/LocationPrimer';
@@ -31,6 +45,7 @@ import { MAP_ENABLED, RouteMap } from '../../../src/ui/RouteMap';
 import { GlassButton } from '../../../src/ui/glass/GlassButton';
 import { GlassCard } from '../../../src/ui/glass/GlassCard';
 import { GlassIcon, GlassIconName } from '../../../src/ui/glass/GlassIcon';
+import { GlassPill } from '../../../src/ui/glass/GlassPill';
 import { GlassProgress } from '../../../src/ui/glass/GlassProgress';
 import { GlassScreen } from '../../../src/ui/glass/GlassScreen';
 import { GlassText } from '../../../src/ui/glass/GlassText';
@@ -160,6 +175,10 @@ export default function Job() {
   const actions = override ?? order.allowed_actions;
   const primary = PRIMARY_ACTIONS.find((a) => actions.includes(a)) ?? null;
   const secondary = actions.filter((a) => a !== primary);
+
+  // The job's state, as the list already shows it. Shared so a chip in a
+  // header and a badge on a card can never disagree.
+  const band = glassBand[order.delivery_status as GlassBarState] ?? glassBand.idle;
 
   const needsOtp = primary === 'verify_pickup_otp' || primary === 'verify_delivery_otp';
   const canSubmit = !needsOtp || otp.length === 6;
@@ -499,9 +518,20 @@ export default function Job() {
             style={{ marginTop: gspace.xxl }}
           />
 
-          {secondary.map((a) => (
-            <GhostLink key={a} label={ACTION_LABEL[a]} onPress={() => run(a)} disabled={busy} />
-          ))}
+          {/* Side by side rather than stacked. Full-width one under another,
+              they read as three primary actions competing with the real one. */}
+          <View
+            style={{
+              flexDirection: 'row',
+              flexWrap: 'wrap',
+              justifyContent: 'center',
+              columnGap: gspace.xl,
+            }}
+          >
+            {secondary.map((a) => (
+              <GhostLink key={a} label={ACTION_LABEL[a]} onPress={() => run(a)} disabled={busy} />
+            ))}
+          </View>
         </ScrollView>
       </GlassScreen>
     );
@@ -524,13 +554,14 @@ export default function Job() {
           }}
         >
           <RoundButton icon="chev" mirrored translucent onPress={() => router.back()} />
-          <GlassText
-            variant="title"
-            tone="white"
-            style={{ flex: 1, textAlign: 'center', marginRight: 40 }}
-          >
+          <GlassText variant="title" tone="white" style={{ flex: 1, textAlign: 'center' }}>
             Delivering
           </GlassText>
+          {/* The same state the card badge shows, from the same table, so the
+              header and the list cannot say different things about one job. */}
+          <View style={{ minWidth: 40, alignItems: 'flex-end' }}>
+            <GlassPill label={band.label} bg={band.bg} fg={band.fg} />
+          </View>
         </View>
 
         {/* The leg where the rider is actually driving to the door, and the
@@ -545,6 +576,14 @@ export default function Job() {
           height={Math.round(screenH * 0.32)}
         />
 
+        {/* Same reason as the sheet: edge-to-edge stops Android resizing for
+            the keyboard, so the delivery code and its button would sit under
+            it. */}
+        <KeyboardAvoidingView
+          style={{ flex: 1 }}
+          behavior="padding"
+          keyboardVerticalOffset={insets.bottom}
+        >
         <ScrollView
           contentContainerStyle={{
             padding: gspace.xl,
@@ -576,21 +615,34 @@ export default function Job() {
             </View>
           </GlassCard>
 
-          <View style={{ alignItems: 'center', marginTop: gspace.xxl }}>
-            {cod ? (
-              <>
-                <GlassText variant="body" tone="soft">
-                  Collect this cash before handing over
-                </GlassText>
-                <GlassText variant="amountLg" nums style={{ marginTop: gspace.xs }}>
-                  {money(order.amount_to_collect, order.currency)}
-                </GlassText>
-              </>
-            ) : (
-              <GlassText variant="subtitle" tone="green">
-                Already paid — collect nothing
+          {/* A tinted panel rather than centred body text. This is the one
+              thing on the screen a rider must not forget, and as plain
+              paragraph it read like a caption between two cards. */}
+          <View
+            style={{
+              flexDirection: 'row',
+              alignItems: 'center',
+              marginTop: gspace.lg,
+              padding: gspace.lg,
+              borderRadius: gradius.chip,
+              backgroundColor: cod ? glass.orangeSoft : glass.greenSoft,
+              borderWidth: 1,
+              borderColor: cod ? glass.orangeLine : glass.greenSoft,
+            }}
+          >
+            <View style={{ flex: 1, paddingRight: gspace.md }}>
+              <GlassText variant="label" tone={cod ? 'orange' : 'green'} upper>
+                {cod ? 'Cash on delivery' : 'Already paid'}
               </GlassText>
-            )}
+              <GlassText variant="caption" tone="soft" style={{ marginTop: 2 }}>
+                {cod ? 'Collect before handing over' : 'Collect nothing'}
+              </GlassText>
+            </View>
+            {cod ? (
+              <GlassText variant="subtitle" nums>
+                {money(order.amount_to_collect, order.currency)}
+              </GlassText>
+            ) : null}
           </View>
 
           <GlassCard style={{ marginTop: gspace.xxl }}>
@@ -625,10 +677,22 @@ export default function Job() {
             style={{ marginTop: gspace.xxl }}
           />
 
-          {secondary.map((a) => (
-            <GhostLink key={a} label={ACTION_LABEL[a]} onPress={() => run(a)} disabled={busy} />
-          ))}
+          {/* Side by side rather than stacked. Full-width one under another,
+              they read as three primary actions competing with the real one. */}
+          <View
+            style={{
+              flexDirection: 'row',
+              flexWrap: 'wrap',
+              justifyContent: 'center',
+              columnGap: gspace.xl,
+            }}
+          >
+            {secondary.map((a) => (
+              <GhostLink key={a} label={ACTION_LABEL[a]} onPress={() => run(a)} disabled={busy} />
+            ))}
+          </View>
         </ScrollView>
+        </KeyboardAvoidingView>
       </GlassScreen>
     );
   }
@@ -661,19 +725,38 @@ export default function Job() {
 
       {/* Over the map when there is one, in normal flow when there is not —
           absolute against a missing map would drop it onto the sheet. */}
+      {/* Back button and state chip ride over the map, at its two corners.
+          Without a map they fall into normal flow, or they would land on the
+          sheet. The chip is the same one the card badge uses. */}
       <View
-        style={
+        style={[
+          {
+            flexDirection: 'row',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            paddingHorizontal: gspace.xl,
+          },
           MAP_ENABLED
-            ? { position: 'absolute', top: insets.top + gspace.sm, left: gspace.xl }
-            : { paddingTop: insets.top + gspace.sm, paddingLeft: gspace.xl }
-        }
+            ? { position: 'absolute', top: insets.top + gspace.sm, left: 0, right: 0, zIndex: 1 }
+            : { paddingTop: insets.top + gspace.sm },
+        ]}
       >
         <RoundButton icon="chev" mirrored onPress={() => router.back()} />
+        <GlassPill label={band.label} bg={band.bg} fg={band.fg} />
       </View>
 
+      {/* The code boxes sit low on this screen, so the keyboard covered them
+          and the button under them. app.json turns edge-to-edge on, which
+          stops Android resizing the window for the keyboard, so the inset has
+          to be added here rather than left to the system. */}
+      <KeyboardAvoidingView
+        style={{ flex: 1 }}
+        behavior="padding"
+        keyboardVerticalOffset={insets.bottom}
+      >
       <ScrollView
         style={{ marginTop: gspace.lg }}
-        contentContainerStyle={{ paddingBottom: gspace.xxxl + insets.bottom, ...gcolumn }}
+        contentContainerStyle={{ paddingBottom: gspace.xxxl + insets.bottom }}
         keyboardShouldPersistTaps="handled"
       >
         <View
@@ -774,25 +857,31 @@ export default function Job() {
 
           {primary === 'verify_pickup_otp' ? (
             <View style={{ marginTop: gspace.lg }}>
-              <OtpInput
-                label="Pickup code"
-                hint="The shop staff will read this out when they hand the parcel over."
-                value={otp}
-                onChange={setOtp}
-                error={otpError}
-              />
-              {/* Verified on res-test1: with no WhatsApp session this answers
-                  success:false — "Could not send the pickup code." — while
-                  still issuing it. Swallowing that left the button doing
-                  nothing visible, so the server's own wording is shown. */}
-              <GhostLink
-                label={
-                  cooldown > 0
-                    ? `Ask the shop to resend (${cooldown}s)`
-                    : 'Ask the shop to resend'
-                }
-                disabled={busy || cooldown > 0}
-                onPress={async () => {
+              {/* The label row carries the resend, right-aligned. Below the
+                  boxes it read as a second action of equal weight to entering
+                  the code, which it is not. */}
+              <View
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                }}
+              >
+                <GlassText variant="label" tone="soft" upper>
+                  Pickup code
+                </GlassText>
+                {/* Verified on res-test1: with no WhatsApp session this answers
+                    success:false — "Could not send the pickup code." — while
+                    still issuing it. Swallowing that left the button doing
+                    nothing visible, so the server's own wording is shown. */}
+                <ResendLink
+                  label={
+                    cooldown > 0
+                      ? `Ask shop to resend (${cooldown}s)`
+                      : 'Ask shop to resend'
+                  }
+                  disabled={busy || cooldown > 0}
+                  onPress={async () => {
                   setError(null);
                   setOtpError(null);
                   try {
@@ -806,10 +895,22 @@ export default function Job() {
                       err instanceof ApiError
                         ? err.message
                         : 'Could not reach the shop. Ask them to read the code out.'
-                    );
-                  }
-                }}
-              />
+                      );
+                    }
+                  }}
+                />
+              </View>
+
+              <GlassText variant="body" tone="soft" style={{ marginTop: gspace.xs }}>
+                The shop staff will read this out when they hand the parcel over.
+              </GlassText>
+
+              {/* Six bordered squares, the same component the delivery code
+                  uses. This was OtpInput, which draws bare digits on a rule —
+                  so the two codes in one flow looked like different controls. */}
+              <View style={{ marginTop: gspace.lg }}>
+                <OtpBoxes value={otp} onChange={setOtp} error={otpError} />
+              </View>
             </View>
           ) : null}
 
@@ -836,11 +937,23 @@ export default function Job() {
             </GlassText>
           )}
 
-          {secondary.map((a) => (
-            <GhostLink key={a} label={ACTION_LABEL[a]} onPress={() => run(a)} disabled={busy} />
-          ))}
+          {/* Side by side rather than stacked. Full-width one under another,
+              they read as three primary actions competing with the real one. */}
+          <View
+            style={{
+              flexDirection: 'row',
+              flexWrap: 'wrap',
+              justifyContent: 'center',
+              columnGap: gspace.xl,
+            }}
+          >
+            {secondary.map((a) => (
+              <GhostLink key={a} label={ACTION_LABEL[a]} onPress={() => run(a)} disabled={busy} />
+            ))}
+          </View>
         </View>
       </ScrollView>
+      </KeyboardAvoidingView>
     </GlassScreen>
   );
 }
@@ -874,6 +987,36 @@ function Tile({ label, value, tone }: { label: string; value: string; tone?: str
 }
 
 /** A quiet secondary action, as the template draws them. */
+/**
+ * The resend, sized to sit on a label row rather than stand on its own line.
+ *
+ * `GhostLink` pads itself out to a full-width tap target, which is right for a
+ * secondary action at the foot of a screen and wrong beside a heading.
+ */
+function ResendLink({
+  label,
+  onPress,
+  disabled,
+}: {
+  label: string;
+  onPress: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      disabled={disabled}
+      accessibilityRole="button"
+      hitSlop={8}
+      style={({ pressed }) => ({ opacity: disabled ? 0.4 : pressed ? 0.6 : 1 })}
+    >
+      <GlassText variant="caption" tone="orange" nums>
+        {label}
+      </GlassText>
+    </Pressable>
+  );
+}
+
 function GhostLink({
   label,
   onPress,
