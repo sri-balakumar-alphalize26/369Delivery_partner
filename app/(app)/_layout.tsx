@@ -26,6 +26,13 @@ export default function AppLayout() {
         headerShown: false,
         tabBarActiveTintColor: glass.indigo,
         tabBarInactiveTintColor: glass.inkFaint,
+        // React Navigation picks the label position itself, and on a screen
+        // 768dp or wider — this tablet is ~800dp — it puts the label in a row
+        // beside the icon instead. The label then gets only the width the icon
+        // leaves it, and Android ellipsizes it to "Ho…". Pin it: the
+        // icon-over-label stack described above is also the one that gives each
+        // label the full width of its tab.
+        tabBarLabelPosition: 'below-icon',
         tabBarStyle: {
           // Translucent over the mesh, as the template's floating glass pill.
           backgroundColor: glass.fillStrong,
