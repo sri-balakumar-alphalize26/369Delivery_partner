@@ -1,70 +1,50 @@
-import { ViewStyle } from 'react-native';
+import { Platform, ViewStyle } from 'react-native';
+import { RouteMapView } from './RouteMapView';
 
 /**
- * The job map: where the rider is, and where the parcel is going.
+ * The job map: where the shop is, where the parcel is going, and where the
+ * rider is between them.
  *
  * This replaces `StaticMap`, deleted in b32f0b0 because it could only ever draw
  * its own empty state — every order on res-test1 carries a null latitude and
  * longitude, and nothing geocodes an address. That deletion was right for that
- * component. Its replacement survives the same data, because it draws something
- * the old one never had access to: the rider's own position, which the phone
- * knows regardless of what Odoo sends.
+ * component. This one has coordinates to draw because the mock now carries real
+ * Muscat ones, and because the rider's own position comes from the phone rather
+ * than from Odoo.
  *
- * So the map reveals itself in stages as the backend catches up, and no stage
- * is a grey rectangle:
+ * Stages, as the backend catches up:
  *
- *   - Today, the rider alone. The camera follows them.
- *   - Once the contract's `latitude` and `longitude` arrive, a destination pin
- *     and a line appear, and the camera frames both.
+ *   - Demo mode today, both pins and the line between them.
+ *   - Against the live server, the rider's dot alone until `latitude` and
+ *     `longitude` start arriving, at which point the pins appear on their own.
  *
- * MapLibre over Google: Google's map display is genuinely unmetered, but it
- * issues no key until a card sits on the Cloud account, and the requirement
- * here was no payment method anywhere.
- *
- * This file deliberately imports NO map code. MapLibre is a native module and
- * Expo Go ships a fixed set of those, so importing it there takes the whole app
- * down at startup — before anything renders, and whether or not a map was ever
- * wanted. The real component lives in `RouteMapView` and is required lazily
- * below, so Expo Go keeps running until the development build replaces it.
- *
- * This is for orientation, not navigation. `navigateTo` on the job screen still
- * hands the written address to Google Maps, which has traffic and voice and is
- * the app the rider already knows.
+ * This is for orientation, not navigation. The Navigate button still hands the
+ * written address to Google Maps, which has traffic and voice and is the app
+ * the rider already knows.
  */
 
 /**
- * A MapTiler free-tier style, or any other. Unset in a fresh checkout, and the
- * map is absent rather than a grid of failed tiles.
- */
-const STYLE_URL = process.env.EXPO_PUBLIC_MAP_STYLE_URL;
-
-/**
- * Whether `RouteMap` will draw anything at all.
+ * Whether the map will draw anything at all.
  *
  * The job screen needs this before it renders: with a map it floats the back
  * button over the map, and without one that same button has to sit in normal
  * flow or it lands on top of the sheet.
+ *
+ * Native only. `react-native-maps` has no web implementation, and the web build
+ * exists solely to preview the UI in a browser.
  */
-export const MAP_ENABLED = Boolean(STYLE_URL);
+export const MAP_ENABLED = Platform.OS !== 'web';
 
 export function RouteMap(props: {
   latitude: number | null | undefined;
   longitude: number | null | undefined;
+  shopLatitude?: number | null;
+  shopLongitude?: number | null;
+  /** Which end of the job the rider is travelling to right now. */
+  heading: 'shop' | 'customer';
   height: number;
   style?: ViewStyle;
 }) {
-  if (!STYLE_URL) return null;
-
-  try {
-    // Required here, not imported above, so the native module is only reached
-    // once we know a map is configured and therefore that this is a build which
-    // has one.
-    const { RouteMapView } = require('./RouteMapView') as typeof import('./RouteMapView');
-    return <RouteMapView {...props} styleUrl={STYLE_URL} />;
-  } catch {
-    // A build without the native side — Expo Go with a style URL set, most
-    // likely — degrades to no map, which is the same outcome as no URL at all.
-    // Losing the map is survivable; taking the app down over it is not.
-    return null;
-  }
+  if (!MAP_ENABLED) return null;
+  return <RouteMapView {...props} />;
 }

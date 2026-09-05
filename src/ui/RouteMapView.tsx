@@ -1,164 +1,184 @@
-import {
-  Camera,
-  GeoJSONSource,
-  Layer,
-  Map,
-  Marker,
-  UserLocation,
-  useCurrentPosition,
-} from '@maplibre/maplibre-react-native';
+import * as Location from 'expo-location';
+import { useEffect, useRef, useState } from 'react';
 import { View, ViewStyle } from 'react-native';
+import MapView, { LatLng, Marker, Polyline, Region } from 'react-native-maps';
 import { coords } from '../lib/format';
 import { glass } from '../theme/glass';
 
 /**
- * The map itself. Split out from `RouteMap` for one reason: this file imports
- * MapLibre, which is a native module.
+ * The map itself, kept in its own file so `RouteMap` can decide whether to
+ * mount it without importing any map code.
  *
- * Expo Go ships a fixed set of native modules and MapLibre is not among them,
- * so merely importing it there takes the whole app down at startup. `RouteMap`
- * therefore requires this file lazily, and only once it knows a map is
- * configured. Nothing outside `RouteMap` should import this module.
+ * `react-native-maps` rather than MapLibre, and the reason is worth recording
+ * because it reverses an earlier decision. MapLibre was chosen to avoid Google,
+ * which issues no key without a card on the Cloud account. That constraint is
+ * real, but it only applies to a store binary: Expo Go bundles this library and
+ * needs no key at all, so the map is visible today instead of after a
+ * development build nobody has run yet. A standalone Android build will need
+ * that key, and the choice then is a card or a return to MapLibre.
  */
 
-/** Metres the rider must move before the position updates. Smooth, not chatty. */
-const MIN_DISPLACEMENT_M = 5;
+/** Muscat, for the moment before any real coordinate is known. */
+const FALLBACK: Region = {
+  latitude: 23.5975,
+  longitude: 58.4187,
+  latitudeDelta: 0.08,
+  longitudeDelta: 0.08,
+};
 
-/** Zoom used when the rider is the only thing on the map. */
-const SOLO_ZOOM = 15;
+/** Keeps the pins clear of the sheet that overlaps the map's foot. */
+const EDGE_PADDING = { top: 64, right: 64, bottom: 96, left: 64 };
 
 export function RouteMapView({
   latitude,
   longitude,
+  shopLatitude,
+  shopLongitude,
+  heading,
   height,
-  styleUrl,
   style,
 }: {
   latitude: number | null | undefined;
   longitude: number | null | undefined;
+  shopLatitude?: number | null;
+  shopLongitude?: number | null;
+  /** Which end of the job the rider is travelling to right now. */
+  heading: 'shop' | 'customer';
   height: number;
-  styleUrl: string;
   style?: ViewStyle;
 }) {
+  const map = useRef<MapView>(null);
+  const [rider, setRider] = useState<LatLng | null>(null);
+
+  /**
+   * The map draws the rider's own dot, which needs foreground permission. Ask
+   * for it here rather than assuming: without it the rider gets a map with no
+   * blue dot and no explanation of why.
+   *
+   * Foreground only. The background permission belongs to the tracker, which
+   * asks for it at /start, and the map has no business requesting it early.
+   */
+  const [canShowRider, setCanShowRider] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    Location.requestForegroundPermissionsAsync()
+      .then((res) => {
+        if (alive) setCanShowRider(res.granted);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   /**
    * Read through the shared guard, never `typeof lat === 'number'` inline. It
    * rejects the `0, 0` pair as well as null — that pair is a real place in the
    * Atlantic, and a map is exactly the consumer that would sail a pin there.
+   *
+   * `coords()` already returns `{ latitude, longitude }`, which is the shape
+   * this library wants everywhere, so nothing needs converting.
    */
-  const destination = coords(latitude, longitude);
+  const customer = coords(latitude, longitude);
+  const shop = coords(shopLatitude, shopLongitude);
 
   /**
-   * The rider's own position, from MapLibre's location manager.
-   *
-   * Deliberately NOT the background task in `src/location/tracking.ts`. That
-   * one answers to the contract — start only on the `/start` response, one fix
-   * per 20 seconds, stop the moment the server says stop — and those rules are
-   * not ours to relax for a smoother-looking marker. This subscription is
-   * foreground-only, lives as long as this screen, and never posts anywhere.
+   * A delivery is two journeys. Before the pickup code the rider is going to
+   * the shop; after it, to the customer. Drawing shop-to-customer during the
+   * first leg points past the rider entirely, which is what this fixes.
    */
-  const rider = useCurrentPosition({ minDisplacement: MIN_DISPLACEMENT_M });
+  const target = heading === 'shop' ? shop : customer;
+  const behind = heading === 'shop' ? customer : shop;
 
-  const riderPoint: [number, number] | null = rider
-    ? [rider.coords.longitude, rider.coords.latitude]
-    : null;
-  const destinationPoint: [number, number] | null = destination
-    ? [destination.longitude, destination.latitude]
-    : null;
+  /** The leg still to travel. Falls back to the pin behind before the first fix. */
+  const from = rider ?? behind;
+  const leg = from && target ? [from, target] : null;
 
-  // Both ends known: frame them together. Otherwise let the camera follow the
-  // rider, which is every job today.
-  const bothEnds = riderPoint && destinationPoint;
+  /** Frame what matters now: the rider and where they are going, not the pin behind them. */
+  function frame() {
+    const focus = [rider, target].filter((p): p is LatLng => p != null);
+    if (focus.length > 1) {
+      map.current?.fitToCoordinates(focus, { edgePadding: EDGE_PADDING, animated: true });
+    }
+  }
+
+  const initialRegion: Region = target
+    ? { ...target, latitudeDelta: 0.04, longitudeDelta: 0.04 }
+    : FALLBACK;
 
   return (
     <View style={[{ height, overflow: 'hidden' }, style]}>
-      <Map
+      <MapView
+        ref={map}
         style={{ flex: 1 }}
-        mapStyle={styleUrl}
-        logo={false}
-        compass={false}
-        scaleBar={false}
-        attribution
-        attributionPosition={{ bottom: 8, right: 8 }}
+        initialRegion={initialRegion}
+        onMapReady={frame}
+        // The rider's own blue dot, drawn by the library from the permission
+        // requested above. Deliberately not a second GPS subscription of our
+        // own: the tracker in `src/location/tracking.ts` answers to the
+        // contract's rules and those are not worth bending for a smoother
+        // marker.
+        showsUserLocation={canShowRider}
+        onUserLocationChange={(e) => {
+          const c = e.nativeEvent.coordinate;
+          if (!c) return;
+          setRider({ latitude: c.latitude, longitude: c.longitude });
+        }}
+        showsMyLocationButton={false}
+        toolbarEnabled={false}
+        showsCompass={false}
       >
-        {bothEnds ? (
-          <Camera
-            bounds={[
-              Math.min(riderPoint[0], destinationPoint[0]),
-              Math.min(riderPoint[1], destinationPoint[1]),
-              Math.max(riderPoint[0], destinationPoint[0]),
-              Math.max(riderPoint[1], destinationPoint[1]),
-            ]}
-            // Keep both pins clear of the sheet that overlaps the map's foot.
-            padding={{ top: 64, right: 64, bottom: 96, left: 64 }}
-            duration={600}
-          />
-        ) : (
-          <Camera
-            trackUserLocation="default"
-            initialViewState={{ zoom: SOLO_ZOOM }}
-            duration={600}
-          />
-        )}
-
-        <UserLocation animated minDisplacement={MIN_DISPLACEMENT_M} />
-
-        {destinationPoint ? (
-          <Marker lngLat={destinationPoint} anchor="bottom">
-            <DestinationPin />
+        {shop ? (
+          <Marker coordinate={shop} anchor={{ x: 0.5, y: 1 }} title="Shop">
+            <Pin color={glass.indigo} active={heading === 'shop'} />
           </Marker>
         ) : null}
 
-        {bothEnds ? (
-          <GeoJSONSource
-            id="route"
-            data={{
-              type: 'Feature',
-              properties: {},
-              geometry: {
-                type: 'LineString',
-                coordinates: [riderPoint, destinationPoint],
-              },
-            }}
-          >
-            {/* Straight, and honest about it. A road-following route needs a
-                routing service, which is stage three and the first thing here
-                that would cost money. */}
-            <Layer
-              id="route-line"
-              type="line"
-              layout={{ 'line-cap': 'round', 'line-join': 'round' }}
-              paint={{
-                'line-color': glass.indigo,
-                'line-width': 4,
-                'line-opacity': 0.75,
-                'line-dasharray': [2, 1.5],
-              }}
-            />
-          </GeoJSONSource>
+        {customer ? (
+          <Marker coordinate={customer} anchor={{ x: 0.5, y: 1 }} title="Customer">
+            <Pin color={glass.orange} active={heading === 'customer'} />
+          </Marker>
         ) : null}
-      </Map>
+
+        {/* Straight, and honest about it. A road-following route needs a
+            routing service, which is not in this change. */}
+        {leg ? (
+          <Polyline
+            coordinates={leg}
+            strokeColor={heading === 'shop' ? glass.indigo : glass.orange}
+            strokeWidth={4}
+            lineDashPattern={[8, 6]}
+          />
+        ) : null}
+      </MapView>
     </View>
   );
 }
 
 /**
- * The customer's pin, in the job screen's own palette rather than the map
- * library's default. Anchored at its point, so the tip sits on the address.
+ * A pin, in the job screen's own palette rather than the library's default red.
+ * Anchored at its stem, so the tip sits on the place rather than beside it.
+ *
+ * The pin the rider is heading for is full size and solid; the other fades
+ * back. Two identical pins with a line between them do not say which way to
+ * drive, which is the whole point of the leg.
  */
-function DestinationPin() {
+function Pin({ color, active }: { color: string; active: boolean }) {
+  const size = active ? 26 : 18;
+
   return (
-    <View style={{ alignItems: 'center' }}>
+    <View style={{ alignItems: 'center', opacity: active ? 1 : 0.5 }}>
       <View
         style={{
-          width: 26,
-          height: 26,
-          borderRadius: 13,
-          backgroundColor: glass.orange,
+          width: size,
+          height: size,
+          borderRadius: size / 2,
+          backgroundColor: color,
           borderWidth: 3,
           borderColor: glass.white,
         }}
       />
-      <View style={{ width: 2, height: 10, backgroundColor: glass.orange }} />
+      <View style={{ width: 2, height: active ? 10 : 7, backgroundColor: color }} />
     </View>
   );
 }

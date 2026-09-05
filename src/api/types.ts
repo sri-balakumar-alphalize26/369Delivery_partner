@@ -48,6 +48,27 @@ export const PRIMARY_ACTIONS: Action[] = [
   'confirm_return',
 ];
 
+/**
+ * Which end of the job the rider is actually travelling to, so the map can
+ * draw the leg in front of them rather than the whole journey.
+ *
+ * A delivery is two trips, not one: to the shop to collect, then to the
+ * customer to hand over. Drawing shop-to-customer while the rider is still on
+ * their way to the shop points past them entirely.
+ *
+ * `returning` is the case worth spelling out — a refused parcel goes back
+ * where it came from, so the target flips to the shop a second time.
+ *
+ * Lives here rather than in the screen because it is pure status logic that
+ * wants testing, and a Node test cannot import a file full of React Native
+ * components.
+ */
+export function headingFor(status: DeliveryStatus): 'shop' | 'customer' {
+  return status === 'offered' || status === 'accepted' || status === 'returning'
+    ? 'shop'
+    : 'customer';
+}
+
 export type DeliveryStatus =
   | 'offered'
   | 'accepted'

@@ -84,8 +84,7 @@
           "color": "#0042B3"
         }
       ],
-      "expo-video",
-      "@maplibre/maplibre-react-native"
+      "expo-video"
     ],
     "experiments": {
       "typedRoutes": true

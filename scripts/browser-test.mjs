@@ -27,8 +27,11 @@ import { join } from 'node:path';
 const BASE = process.argv[2] ?? 'http://localhost:8090';
 const OUT = process.argv[3] ?? './shots';
 
-const PICKUP_OTP = '482913';
-const DELIVERY_OTP = '739214';
+// Must match MOCK_PICKUP_OTP and MOCK_DELIVERY_OTP in src/api/mock/fixtures.ts.
+// Duplicated rather than imported because this script is plain ESM and those
+// live in TypeScript.
+const PICKUP_OTP = '111111';
+const DELIVERY_OTP = '111111';
 
 /**
  * The two jobs waiting in the demo data, by customer. The first is cash on

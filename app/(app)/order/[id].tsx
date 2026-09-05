@@ -11,6 +11,7 @@ import {
   ApiError,
   DeliveryOrder,
   DELIVERY_REASONS,
+  headingFor,
   PRIMARY_ACTIONS,
 } from '../../../src/api/types';
 import { money, promisedAt, shopName } from '../../../src/lib/format';
@@ -58,6 +59,17 @@ function navigateTo(order: DeliveryOrder) {
   const url = `https://maps.google.com/?q=${encodeURIComponent(order.delivery_address)}`;
   Linking.openURL(url).catch(() => {});
 }
+
+/** Why tracking would not start, in words a rider can act on. */
+const TRACKING_ERROR: Record<
+  Exclude<Awaited<ReturnType<typeof startTracking>>, { ok: true }>['reason'],
+  string
+> = {
+  services_off: 'Location is switched off on this phone. Turn it on to start the delivery.',
+  foreground_denied: 'This delivery needs your location. Allow it to carry on.',
+  background_denied:
+    'Location must be allowed "All the time" so the shop can follow the delivery while the app is closed.',
+};
 
 export default function Job() {
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -153,11 +165,10 @@ export default function Job() {
     if (res.tracking?.enabled) {
       // The ONLY place tracking may start. Sending GPS before this is forbidden.
       const started = await startTracking(orderId);
-      if (!started) {
-        setError(
-          'Location permission is required to deliver. Allow location "All the time" in Settings.'
-        );
-      }
+      // One message per cause. This was a single sentence about Settings, which
+      // was wrong advice for a rider whose permissions were fine and whose
+      // location switch was simply off.
+      if (!started.ok) setError(TRACKING_ERROR[started.reason]);
     } else {
       await stopTracking();
     }
@@ -575,9 +586,14 @@ export default function Job() {
    * ----------------------------------------------------------------- */
   return (
     <GlassScreen>
+      {/* The shop is an object since N2 but a bare string on older captures,
+          so read coordinates off it only when it is the object. */}
       <RouteMap
         latitude={order.latitude}
         longitude={order.longitude}
+        shopLatitude={typeof order.shop === 'object' ? order.shop.latitude : null}
+        shopLongitude={typeof order.shop === 'object' ? order.shop.longitude : null}
+        heading={headingFor(order.delivery_status)}
         height={Math.round(screenH * 0.4)}
       />
 

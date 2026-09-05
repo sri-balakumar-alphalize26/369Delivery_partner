@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { Image, KeyboardAvoidingView, Platform, ScrollView, Switch, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ENV_DEFAULTS } from '../src/api/config';
+import { MOCK_DELIVERY_OTP, MOCK_PICKUP_OTP } from '../src/api/mock/fixtures';
 import { ApiError } from '../src/api/types';
 import { useSession } from '../src/store/session';
 import { glass, gradius, gspace } from '../src/theme/glass';
@@ -149,9 +150,13 @@ export default function Connect() {
               }}
             />
 
+            {/* The codes are read from the fixtures, as Profile already does.
+                They were typed out by hand here and went stale the moment the
+                demo codes changed. */}
             {useMock ? (
               <GlassText variant="body" tone="soft">
-                Demo mode is on. Pickup code is 482913 and delivery code is 739214.
+                Demo mode is on. Pickup code is {MOCK_PICKUP_OTP} and delivery code is{' '}
+                {MOCK_DELIVERY_OTP}.
               </GlassText>
             ) : (
               <>
