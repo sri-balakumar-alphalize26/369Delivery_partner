@@ -14,7 +14,7 @@ import {
   headingFor,
   PRIMARY_ACTIONS,
 } from '../../../src/api/types';
-import { money, promisedAt, shopName } from '../../../src/lib/format';
+import { money, promisedAt, shopName, timeOnly } from '../../../src/lib/format';
 import {
   hasLocationPermission,
   startTracking,
@@ -735,8 +735,10 @@ export default function Job() {
             </GlassText>
           ) : null}
 
-          {/* Collect and Items only. The template's "You earn" has no field
-              behind it, and there is no distance or ETA in the contract. */}
+          {/* Collect, Items and Due. The template's "You earn" has no field
+              behind it, and there is still no distance or ETA in the contract —
+              but `promised_by` is real and was only ever shown on the list, so
+              the rider had to go back a screen to see when a job was due. */}
           <View style={{ flexDirection: 'row', gap: gspace.md, marginTop: gspace.lg }}>
             <Tile
               label="Collect"
@@ -744,6 +746,7 @@ export default function Job() {
               tone={cod ? glass.red : glass.green}
             />
             <Tile label="Items" value={String(order.products?.length ?? 0)} />
+            <Tile label="Due" value={timeOnly(order.promised_by, timezone) || '—'} />
           </View>
 
           {order.products?.length ? (

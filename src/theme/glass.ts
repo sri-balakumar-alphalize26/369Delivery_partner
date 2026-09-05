@@ -7,14 +7,21 @@
  */
 
 export const glass = {
-  ink: '#1E293B',
-  inkSoft: '#475569',
-  inkFaint: '#94A3B8',
-  indigo: '#3730A3',
-  orange: '#EA580C',
-  orangeSoft: 'rgba(234,88,12,0.15)',
-  green: '#15803D',
-  red: '#B91C1C',
+  // Navy and orange house palette, from the UI refresh. `indigo` keeps its
+  // token name so every call site still compiles, but it resolves to the navy
+  // primary now — the old #3730A3 read as a purple app rather than a delivery
+  // one, and the soft tints below are most of why the refresh looks calmer.
+  ink: '#1B2A4A',
+  inkSoft: '#6B7280',
+  inkFaint: '#9AA1B1',
+  indigo: '#1B2A4A',
+  orange: '#F26B1D',
+  orangeSoft: '#FFF1E8',
+  orangeLine: '#F9D3BC',
+  green: '#1E8E4E',
+  greenSoft: '#E8F5EE',
+  red: '#D94141',
+  redSoft: '#FDEBEB',
   white: '#FFFFFF',
 
   /** The mesh's own stops, kept for anything that needs to blend into it. */
@@ -33,19 +40,19 @@ export const glass = {
    */
   bg: '#FFFFFF',
   /** A hairline edge, not the rim the translucent border produced. */
-  border: '#EEF0FA',
+  border: '#E6E8EF',
   /**
    * Chips and tiles. Sampled from the template's own stat chip: they sit ON a
    * white card now, so 50% white over white would make them vanish.
    */
-  fill: '#F3F3FF',
+  fill: '#EEF0F7',
   fillStrong: '#FFFFFF',
-  fillLight: '#F7F8FE',
+  fillLight: '#F7F8FB',
 
-  btnDark: 'rgba(30,41,59,0.92)',
-  btnGhost: 'rgba(255,255,255,0.6)',
-  divider: 'rgba(30,41,59,0.1)',
-  dividerDashed: 'rgba(30,41,59,0.15)',
+  btnDark: '#1B2A4A',
+  btnGhost: '#FFFFFF',
+  divider: '#E6E8EF',
+  dividerDashed: '#D6D9E3',
 } as const;
 
 export const poppins = {
@@ -133,17 +140,27 @@ export type GlassBarState =
   | 'cancelled'
   | 'failed';
 
+/**
+ * Soft tints rather than solid blocks, and shorter labels.
+ *
+ * Every state used to be a saturated fill with white text, so a list of jobs
+ * was a column of shouting badges and none of them meant more than any other.
+ * Only the two that genuinely want attention keep a strong colour — a new
+ * offer, and a delivery in progress. The rest sit back as grey chips.
+ *
+ * Labels are cut to fit a chip: "GO TO THE SHOP" wrapped, "GO TO SHOP" does not.
+ */
 export const glassBand: Record<GlassBarState, { bg: string; fg: string; label: string }> = {
-  disconnected: { bg: '#6B7280', fg: glass.white, label: 'NOT CONNECTED' },
-  idle: { bg: glass.ink, fg: glass.white, label: 'NO JOBS RIGHT NOW' },
+  disconnected: { bg: glass.fill, fg: glass.inkSoft, label: 'NOT CONNECTED' },
+  idle: { bg: glass.fill, fg: glass.ink, label: 'NO JOBS' },
   offered: { bg: glass.orange, fg: glass.white, label: 'NEW JOB' },
-  accepted: { bg: glass.indigo, fg: glass.white, label: 'GO TO THE SHOP' },
-  picked: { bg: glass.indigo, fg: glass.white, label: 'PARCEL COLLECTED' },
-  dispatched: { bg: glass.indigo, fg: glass.white, label: 'LEFT THE SHOP' },
-  out_for_delivery: { bg: glass.green, fg: glass.white, label: 'DELIVERING' },
-  delivered: { bg: glass.green, fg: glass.white, label: 'DELIVERED' },
-  returning: { bg: glass.red, fg: glass.white, label: 'RETURNING TO SHOP' },
-  returned: { bg: '#6B7280', fg: glass.white, label: 'RETURNED' },
-  cancelled: { bg: '#6B7280', fg: glass.white, label: 'CANCELLED' },
-  failed: { bg: glass.red, fg: glass.white, label: 'FAILED' },
+  accepted: { bg: glass.fill, fg: glass.ink, label: 'GO TO SHOP' },
+  picked: { bg: glass.fill, fg: glass.ink, label: 'COLLECTED' },
+  dispatched: { bg: glass.fill, fg: glass.ink, label: 'LEFT SHOP' },
+  out_for_delivery: { bg: glass.greenSoft, fg: glass.green, label: 'DELIVERING' },
+  delivered: { bg: glass.greenSoft, fg: glass.green, label: 'DELIVERED' },
+  returning: { bg: glass.redSoft, fg: glass.red, label: 'RETURNING' },
+  returned: { bg: glass.fill, fg: glass.inkSoft, label: 'RETURNED' },
+  cancelled: { bg: glass.fill, fg: glass.inkSoft, label: 'CANCELLED' },
+  failed: { bg: glass.redSoft, fg: glass.red, label: 'FAILED' },
 };

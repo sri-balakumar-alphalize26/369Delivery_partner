@@ -24,6 +24,7 @@ export function GlassButton({
   onPress,
   disabled,
   loading,
+  size = 'md',
   style,
 }: {
   title: string;
@@ -32,6 +33,8 @@ export function GlassButton({
   onPress?: () => void;
   disabled?: boolean;
   loading?: boolean;
+  /** 'sm' for a button that sits inside a card, where 52 is too tall. */
+  size?: 'sm' | 'md';
   style?: ViewStyle;
 }) {
   const fg = kind === 'ghost' ? glass.ink : kind === 'danger' ? glass.red : glass.white;
@@ -48,7 +51,7 @@ export function GlassButton({
         {
           backgroundColor: BG[kind],
           borderRadius: gradius.button,
-          height: 52,
+          height: size === 'sm' ? 42 : 52,
           flexDirection: 'row',
           alignItems: 'center',
           justifyContent: 'center',
@@ -68,7 +71,7 @@ export function GlassButton({
               <GlassIcon name={icon} color={fg} size={16} />
             </View>
           ) : null}
-          <GlassText variant="button" style={{ color: fg }}>
+          <GlassText variant="button" style={{ color: fg, fontSize: size === 'sm' ? 14 : 15 }}>
             {title}
           </GlassText>
         </>

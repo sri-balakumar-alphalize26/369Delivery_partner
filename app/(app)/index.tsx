@@ -9,6 +9,7 @@ import { GlassButton } from '../../src/ui/glass/GlassButton';
 import { GlassCard } from '../../src/ui/glass/GlassCard';
 import { GlassIcon } from '../../src/ui/glass/GlassIcon';
 import { GlassJobCard } from '../../src/ui/glass/GlassJobCard';
+import { GlassPill } from '../../src/ui/glass/GlassPill';
 import { GlassScreen } from '../../src/ui/glass/GlassScreen';
 import { GlassText } from '../../src/ui/glass/GlassText';
 
@@ -109,6 +110,28 @@ export default function Home() {
             {counts?.delivered ?? 0}
           </GlassText>
 
+          {/* Cash rides in this card's corner rather than a card of its own at
+              the foot of the list: it is a figure about the day, like the ones
+              below it, and a rider wants it beside them rather than after two
+              screens of scrolling. Hidden at zero, where it is only noise. */}
+          {toCollect > 0 ? (
+            <View
+              style={{
+                position: 'absolute',
+                right: 18,
+                top: 18,
+                alignItems: 'flex-end',
+              }}
+            >
+              <GlassText variant="caption" tone="soft">
+                Cash to collect
+              </GlassText>
+              <GlassText variant="bodyStrong" tone="orange" nums>
+                {money(toCollect, currency)}
+              </GlassText>
+            </View>
+          ) : null}
+
           <View style={{ flexDirection: 'row', gap: gspace.sm, marginTop: gspace.lg }}>
             <Stat label="Assigned" value={counts?.assigned ?? 0} />
             <Stat label="Collected" value={counts?.picked_up ?? 0} />
@@ -128,9 +151,21 @@ export default function Home() {
           </GlassText>
         ) : null}
 
-        <GlassText variant="subtitle" style={{ marginTop: gspace.xxl }}>
-          {jobs.length > 1 ? `Active orders · ${jobs.length}` : 'Active order'}
-        </GlassText>
+        {/* The count as a chip rather than trailing the words, so the heading
+            stays one short phrase whatever the number is. */}
+        <View
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            marginTop: gspace.xxl,
+          }}
+        >
+          <GlassText variant="subtitle">
+            {jobs.length === 1 ? 'Active order' : 'Active orders'}
+          </GlassText>
+          {jobs.length ? <GlassPill label={String(jobs.length)} tone="soft" /> : null}
+        </View>
 
         {jobs.length ? (
           jobs.map((job) => (
@@ -163,24 +198,6 @@ export default function Home() {
           </GlassCard>
         )}
 
-        {/* Only when there is cash in hand — a zero tile is noise. The
-            template's "cash to deposit" would need finished orders, which
-            /orders does not return, so this is what the rider is carrying. */}
-        {toCollect > 0 ? (
-          <GlassCard padding={16} style={{ marginTop: gspace.lg }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-              <GlassIcon name="cash" color={glass.red} size={18} />
-              <View style={{ marginLeft: gspace.sm }}>
-                <GlassText variant="caption" tone="soft">
-                  Cash to collect
-                </GlassText>
-                <GlassText variant="subtitle" tone="red" nums>
-                  {money(toCollect, currency)}
-                </GlassText>
-              </View>
-            </View>
-          </GlassCard>
-        ) : null}
       </ScrollView>
     </GlassScreen>
   );

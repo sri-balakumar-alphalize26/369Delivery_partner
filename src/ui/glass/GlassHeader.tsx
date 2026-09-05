@@ -1,3 +1,4 @@
+import { ReactNode } from 'react';
 import { Pressable, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { glass, gradius, gspace } from '../../theme/glass';
@@ -9,10 +10,13 @@ export function GlassHeader({
   title,
   onBack,
   tone = 'ink',
+  right,
 }: {
   title: string;
   onBack?: () => void;
   tone?: 'ink' | 'white';
+  /** Right-hand slot: a status chip, a count pill. Keeps the title centred. */
+  right?: ReactNode;
 }) {
   const insets = useSafeAreaInsets();
   const fg = tone === 'white' ? glass.white : glass.ink;
@@ -56,8 +60,9 @@ export function GlassHeader({
         {title}
       </GlassText>
 
-      {/* Balances the back button so the title sits truly centred. */}
-      <View style={{ width: 40 }} />
+      {/* Balances the back button so the title sits truly centred, and holds
+          the right-hand chip when there is one. */}
+      <View style={{ minWidth: 40, alignItems: 'flex-end' }}>{right}</View>
     </View>
   );
 }

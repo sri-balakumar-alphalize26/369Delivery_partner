@@ -7,6 +7,7 @@ import { gcolumn, gspace } from '../../src/theme/glass';
 import { GlassCard } from '../../src/ui/glass/GlassCard';
 import { GlassHeader } from '../../src/ui/glass/GlassHeader';
 import { GlassJobCard } from '../../src/ui/glass/GlassJobCard';
+import { GlassPill } from '../../src/ui/glass/GlassPill';
 import { GlassScreen } from '../../src/ui/glass/GlassScreen';
 import { GlassText } from '../../src/ui/glass/GlassText';
 
@@ -28,7 +29,12 @@ export default function Orders() {
 
   return (
     <GlassScreen>
-      <GlassHeader title={jobs.length ? `Your jobs · ${jobs.length}` : 'Your jobs'} />
+      {/* The count as a chip in the header's right slot rather than trailing
+          the title, so the title stays two words however many jobs there are. */}
+      <GlassHeader
+        title="Your jobs"
+        right={jobs.length ? <GlassPill label={String(jobs.length)} tone="soft" /> : undefined}
+      />
 
       <ScrollView
         contentContainerStyle={{
