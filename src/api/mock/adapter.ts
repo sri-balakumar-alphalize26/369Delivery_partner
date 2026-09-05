@@ -157,7 +157,20 @@ export const mockAdapter: ApiAdapter = {
 
     if (!on) {
       // Going off duty never takes back a job already accepted — that would
-      // strand a parcel mid-route. It only stops new work being offered.
+      // strand a parcel mid-route.
+      //
+      // An un-accepted OFFER is the exception, and this is the half that was
+      // missing: `offer()` only hands a job to a rider who is on duty and
+      // otherwise leaves it waiting in To Dispatch, and clocking on moves that
+      // queue across. Clocking off has to move it back, or offers handed over
+      // during an on-duty spell sit on the rider's screen for the life of the
+      // session, badged NEW JOB, directly beneath a banner promising that no
+      // new jobs will be offered. Nothing is stranded by this: an offer
+      // carries no commitment, and the job returns to the pool for whoever
+      // clocks on next.
+      state.pending.push(...state.orders.filter((o) => o.delivery_status === 'offered'));
+      state.orders = state.orders.filter((o) => o.delivery_status !== 'offered');
+
       rider.duty_since = '';
       return {
         on_duty: false,

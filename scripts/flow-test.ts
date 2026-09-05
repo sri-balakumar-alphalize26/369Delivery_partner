@@ -11,7 +11,7 @@
 
 import { mockAdapter as api, mockFlags } from '../src/api/mock/adapter';
 import { MOCK_DELIVERY_OTP, MOCK_PICKUP_OTP, mockFailedId } from '../src/api/mock/fixtures';
-import { Action, ApiError } from '../src/api/types';
+import { Action, ApiError, headingFor } from '../src/api/types';
 import { coords, shopName } from '../src/lib/format';
 
 let passed = 0;
@@ -53,8 +53,13 @@ async function main() {
   check('/auth/me carries the currency', identity.currency.decimals === 3);
 
   const idle = await api.orders();
+  // Named for what it actually proves. It read "no jobs at all while off duty",
+  // which sounded like a duty gate but was vacuous: nothing has been offered
+  // yet, both jobs are still in To Dispatch, so the array is empty for a reason
+  // that has nothing to do with duty. It passed just as happily while the
+  // screen showed offers to an off-duty rider. Section 12 does the real work.
   check(
-    'no jobs at all while off duty',
+    'the list starts empty, before anything has been offered',
     idle.orders.length === 0,
     idle.orders.map((o) => o.delivery_status).join(',')
   );
@@ -117,10 +122,20 @@ async function main() {
   check('items_summary ships with it', typeof job.items_summary === 'string');
 
   // Neither null nor 0,0 is a place. 0,0 is the Atlantic; a map would pin it.
-  check('ungeocoded coords resolve to null', coords(job.latitude, job.longitude) === null,
-    JSON.stringify([job.latitude, job.longitude]));
+  check('null coords resolve to null', coords(null, null) === null);
   check('0,0 is rejected too', coords(0, 0) === null);
   check('a real fix survives', coords(23.588, 58.3829)?.latitude === 23.588);
+
+  // This line asserted the opposite until the demo was geocoded, because the
+  // fixture was null like every res-test1 row. It was checking the fixture,
+  // not the guard — the guard is covered by the three checks above. The demo
+  // now carries real Muscat coordinates so the map has something to draw, and
+  // both ends of the journey are needed for that.
+  check('demo delivery is geocoded, so the map can draw it',
+    coords(job.latitude, job.longitude) !== null,
+    JSON.stringify([job.latitude, job.longitude]));
+  check('demo shop is geocoded too, so the map has a from as well as a to',
+    typeof job.shop === 'object' && coords(job.shop.latitude, job.shop.longitude) !== null);
 
   // Terminal work belongs to /history. The server used to leak it into
   // /orders — a real bug, since fixed on their side and verified live — so
@@ -180,9 +195,12 @@ async function main() {
   check('GPS accepted during delivery', locDuring.stop === false);
 
   console.log('\n=== 9. Delivery code (from the customer) ===');
+  // '000000', as the pickup case uses, and never a literal that a demo code
+  // might one day become — this line read '111111' until that became the real
+  // code, at which point the check silently started proving the opposite.
   await expectError(
     'wrong delivery code -> bad_otp',
-    () => api.verifyDeliveryOtp(id, '111111'),
+    () => api.verifyDeliveryOtp(id, '000000'),
     'bad_otp'
   );
   const done = await api.verifyDeliveryOtp(id, MOCK_DELIVERY_OTP);
@@ -234,12 +252,67 @@ async function main() {
     );
   }
 
-  console.log('\n=== 12. Clocking off stops new work ===');
+  console.log('\n=== 12. Clocking off withdraws un-accepted offers ===');
+
+  // Section 11 stole the offer and scheduled its replacement six seconds out,
+  // so without this wait there is nothing offered to withdraw and the whole
+  // section proves nothing.
+  await new Promise((r) => setTimeout(r, 7000));
+
+  // Without this the rest proves nothing: an empty list after clocking off is
+  // only meaningful if something was there before it.
+  const beforeOff = await api.orders();
+  const offeredIds = beforeOff.orders
+    .filter((o) => o.delivery_status === 'offered')
+    .map((o) => o.delivery_order_id);
+  const keptIds = beforeOff.orders
+    .filter((o) => o.delivery_status !== 'offered')
+    .map((o) => o.delivery_order_id);
+  check('an offer is on the list before clocking off', offeredIds.length > 0,
+    beforeOff.orders.map((o) => o.delivery_status).join(','));
+
   const off = await api.duty(false);
   check('now off duty', off.on_duty === false);
   check('duty_since cleared', off.duty_since === '');
+
   const afterOff = await api.orders();
   check('response reports on_duty false', afterOff.on_duty === false);
+
+  const stillListed = afterOff.orders.map((o) => o.delivery_order_id);
+  // The bug this covers: offers handed over while on duty stayed on the rider's
+  // screen for the life of the session, badged NEW JOB, under a banner saying
+  // no new jobs would be offered.
+  check(
+    'every un-accepted offer is withdrawn',
+    offeredIds.every((id) => !stillListed.includes(id)),
+    `still listed: ${offeredIds.filter((id) => stillListed.includes(id)).join(',')}`
+  );
+  // Guards the opposite mistake. Work already accepted must survive clocking
+  // off, or a parcel is stranded mid-route.
+  check(
+    'work already in hand survives',
+    keptIds.every((id) => stillListed.includes(id)),
+    `lost: ${keptIds.filter((id) => !stillListed.includes(id)).join(',')}`
+  );
+
+  // Proves they went back to To Dispatch rather than being thrown away.
+  const backOn = await api.duty(true);
+  check(
+    'the withdrawn offers return on clocking back on',
+    backOn.jobs_picked_up >= offeredIds.length,
+    `picked up ${backOn.jobs_picked_up}, withdrew ${offeredIds.length}`
+  );
+
+  console.log('\n=== 12b. Which end of the job the rider is heading for ===');
+  // A delivery is two trips. Verified on screen for `accepted` and `picked`
+  // only, so the rest are covered here — `returning` most of all, since it is
+  // the one that flips back to the shop and is easiest to get wrong.
+  check('offered heads to the shop', headingFor('offered') === 'shop');
+  check('accepted heads to the shop', headingFor('accepted') === 'shop');
+  check('picked heads to the customer', headingFor('picked') === 'customer');
+  check('dispatched heads to the customer', headingFor('dispatched') === 'customer');
+  check('out_for_delivery heads to the customer', headingFor('out_for_delivery') === 'customer');
+  check('returning heads BACK to the shop', headingFor('returning') === 'shop');
 
   console.log('\n=== 13. No signal ===');
   mockFlags.offline = true;

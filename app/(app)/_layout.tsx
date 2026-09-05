@@ -1,4 +1,8 @@
 import { Ionicons } from '@expo/vector-icons';
+import {
+  Poppins_600SemiBold,
+  useFonts,
+} from '@expo-google-fonts/poppins';
 import { Tabs } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { glass, gradius, poppins } from '../../src/theme/glass';
@@ -19,6 +23,25 @@ export default function AppLayout() {
   // navigation bar. Without adding the inset the gesture bar sits on top of the
   // tabs and swallows taps on them.
   const insets = useSafeAreaInsets();
+
+  /**
+   * Wait for Poppins before drawing the bar, and this is load-bearing rather
+   * than tidiness.
+   *
+   * The root layout mounts the whole app tree on the first frame and hides it
+   * behind the splash, so without this the tab bar measures its labels while
+   * Poppins is still loading. Android measures them against the fallback face,
+   * gets a width that does not match what it later draws, and — because the
+   * label is numberOfLines={1} — ellipsizes "Earnings" to "Earnin…" and never
+   * measures again. It looked fixed under fast refresh only because the font
+   * was already loaded by then; every cold start still showed it.
+   *
+   * `useFonts` is shared and idempotent, so this resolves immediately once the
+   * root's call has finished. Rendering nothing meanwhile costs nothing: the
+   * splash is covering this.
+   */
+  const [fontsLoaded, fontError] = useFonts({ Poppins_600SemiBold });
+  if (!fontsLoaded && !fontError) return null;
 
   return (
     <Tabs
@@ -48,14 +71,11 @@ export default function AppLayout() {
         tabBarLabelStyle: {
           fontFamily: poppins.semibold,
           fontSize: 11,
-          // Both of these matter on Android. A custom font carries extra
-          // intrinsic padding, which in a tight tab bar clips the label; an
-          // explicit lineHeight plus includeFontPadding:false gives the text a
-          // box that fits what it actually draws.
-          lineHeight: 15,
-          includeFontPadding: false,
-          letterSpacing: 0.2,
-          paddingBottom: 2,
+          // Nothing else. The label is numberOfLines={1}, and every tab has
+          // flex:1 — about 300dp on this tablet — so there is ample room for
+          // "Earnings". It was still ellipsizing to "Earnin…", because on
+          // Android an explicit lineHeight and letterSpacing on a custom font
+          // make the text measure wider than it draws. Left to itself it fits.
         },
         tabBarIconStyle: { marginTop: 2 },
         tabBarItemStyle: { borderRadius: gradius.chip, paddingVertical: 2 },
