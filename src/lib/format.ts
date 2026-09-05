@@ -99,3 +99,31 @@ export function coords(
   if (lat === 0 && lng === 0) return null;
   return { latitude: lat, longitude: lng };
 }
+
+/**
+ * Just the clock time, for a step that has already happened.
+ *
+ * `promisedAt` carries the date because a promise can fall on another day. A
+ * timeline step cannot — it is always today's job — and the date there is
+ * noise between four dots. Same zone rule as everything else in this file:
+ * the shop's, never the phone's.
+ */
+export function timeOnly(raw: string | undefined, timeZone?: string): string {
+  if (!raw) return '';
+
+  const parsed = new Date(asUtc(raw));
+  if (Number.isNaN(parsed.getTime())) return '';
+
+  try {
+    return new Intl.DateTimeFormat('en-GB', {
+      timeZone,
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+    }).format(parsed);
+  } catch {
+    // As above: an unknown zone throws even with ICU present, and a missing
+    // time under a dot is a smaller failure than a screen that will not render.
+    return '';
+  }
+}

@@ -3,7 +3,7 @@ import { ScrollView, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { sortForRider, useOrders } from '../../src/hooks/useOrders';
 import { useSession } from '../../src/store/session';
-import { gspace } from '../../src/theme/glass';
+import { gcolumn, gspace } from '../../src/theme/glass';
 import { GlassCard } from '../../src/ui/glass/GlassCard';
 import { GlassHeader } from '../../src/ui/glass/GlassHeader';
 import { GlassJobCard } from '../../src/ui/glass/GlassJobCard';
@@ -34,6 +34,7 @@ export default function Orders() {
         contentContainerStyle={{
           paddingHorizontal: gspace.xl,
           paddingBottom: gspace.xxxl + insets.bottom,
+          ...gcolumn,
         }}
         showsVerticalScrollIndicator={false}
       >

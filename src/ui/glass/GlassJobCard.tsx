@@ -1,17 +1,26 @@
-import { View } from 'react-native';
+import { Pressable, View } from 'react-native';
 import { DeliveryOrder } from '../../api/types';
 import { money, promisedAt, shopName } from '../../lib/format';
 import { GlassBarState, glass, gradius, glassBand, gspace } from '../../theme/glass';
-import { GlassButton } from './GlassButton';
 import { GlassCard } from './GlassCard';
 import { GlassIcon } from './GlassIcon';
+import { GlassRoute } from './GlassRoute';
 import { GlassText } from './GlassText';
 
 /**
- * One job as a glass card: shop with its icon tile and a state chip, a dashed
- * rule, the drop address, then the button through.
+ * One job as a glass card: the shop with its state chip, the journey on a
+ * single rail, then what is owed.
+ *
+ * The card used to spell the same thing out as a heading, a dashed rule, an
+ * address and a full-width button — about 400px, so barely one job fitted on a
+ * screen. The rail says the same in half the height, and the whole card is the
+ * button now, which is both the standard pattern and the rest of the saving.
  *
  * Shared by Home and the Orders tab so the two lists cannot drift apart.
+ *
+ * No distance, no ETA and no fee, though every rival app shows all three: none
+ * of them exists anywhere in the contract, and a number on a card like this
+ * would be believed.
  */
 export function GlassJobCard({
   job,
@@ -26,87 +35,82 @@ export function GlassJobCard({
   // One source of truth for what each delivery state looks like.
   const band = glassBand[job.delivery_status as GlassBarState] ?? glassBand.idle;
 
+  /** Once the parcel is aboard, the shop is behind the rider. */
+  const collected = !['offered', 'accepted'].includes(job.delivery_status);
+
   return (
-    <GlassCard>
-      <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel={`Open the job for ${job.customer_name}`}
+      style={({ pressed }) => ({ opacity: pressed ? 0.85 : 1 })}
+    >
+      <GlassCard>
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <View
+            style={{
+              width: 34,
+              height: 34,
+              borderRadius: gradius.chip,
+              backgroundColor: glass.fill,
+              alignItems: 'center',
+              justifyContent: 'center',
+              marginRight: gspace.md,
+            }}
+          >
+            <GlassIcon name="store" color={glass.indigo} size={18} />
+          </View>
+
+          <View style={{ flex: 1, paddingRight: gspace.sm }}>
+            <GlassText variant="caption" tone="soft" numberOfLines={1}>
+              {job.job_code}
+              {job.products?.length ? ` · ${job.products.length} items` : ''}
+              {job.promised_by ? ` · ${promisedAt(job.promised_by, timezone)}` : ''}
+            </GlassText>
+          </View>
+
+          <View
+            style={{
+              backgroundColor: band.bg,
+              borderRadius: gradius.chip,
+              paddingHorizontal: gspace.sm,
+              paddingVertical: 4,
+            }}
+          >
+            <GlassText variant="label" upper style={{ color: band.fg, fontSize: 10 }}>
+              {band.label}
+            </GlassText>
+          </View>
+        </View>
+
+        <View style={{ marginTop: gspace.lg }}>
+          <GlassRoute
+            from={shopName(job.shop)}
+            to={job.customer_name}
+            toDetail={job.delivery_address}
+            done={collected ? 'from' : null}
+          />
+        </View>
+
         <View
           style={{
-            width: 38,
-            height: 38,
-            borderRadius: gradius.chip,
-            backgroundColor: glass.fillStrong,
+            flexDirection: 'row',
             alignItems: 'center',
-            justifyContent: 'center',
-            marginRight: gspace.md,
+            marginTop: gspace.lg,
+            paddingTop: gspace.md,
+            borderTopWidth: 1,
+            borderTopColor: glass.border,
           }}
         >
-          <GlassIcon name="store" color={glass.indigo} size={20} />
+          <GlassText variant="bodyStrong" tone={cod ? 'red' : 'green'} nums style={{ flex: 1 }}>
+            {cod ? money(job.amount_to_collect, job.currency) : 'Already paid'}
+          </GlassText>
+          <GlassText variant="caption" tone="soft" style={{ marginRight: 2 }}>
+            Open
+          </GlassText>
+          <GlassIcon name="chev" color={glass.inkFaint} size={16} />
         </View>
-
-        <View style={{ flex: 1, paddingRight: gspace.sm }}>
-          <GlassText variant="bodyStrong" numberOfLines={1}>
-            {shopName(job.shop)}
-          </GlassText>
-          <GlassText variant="caption" tone="soft" numberOfLines={1}>
-            {job.job_code}
-            {job.products?.length ? ` · ${job.products.length} items` : ''}
-          </GlassText>
-        </View>
-
-        <View
-          style={{
-            backgroundColor: band.bg,
-            borderRadius: gradius.chip,
-            paddingHorizontal: gspace.sm,
-            paddingVertical: 5,
-          }}
-        >
-          <GlassText variant="label" upper style={{ color: band.fg, fontSize: 10 }}>
-            {band.label}
-          </GlassText>
-        </View>
-      </View>
-
-      <View
-        style={{
-          borderBottomWidth: 1,
-          borderStyle: 'dashed',
-          borderColor: glass.dividerDashed,
-          marginVertical: gspace.lg,
-        }}
-      />
-
-      <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
-        <GlassIcon name="pin" color={glass.orange} size={18} />
-        <View style={{ flex: 1, marginLeft: gspace.sm }}>
-          <GlassText variant="body" numberOfLines={2}>
-            {job.delivery_address}
-          </GlassText>
-          <GlassText variant="caption" tone="soft" style={{ marginTop: 2 }}>
-            {job.customer_name}
-          </GlassText>
-        </View>
-        <GlassText variant="caption" tone="soft" nums>
-          {promisedAt(job.promised_by, timezone)}
-        </GlassText>
-      </View>
-
-      <GlassText
-        variant="bodyStrong"
-        tone={cod ? 'red' : 'green'}
-        nums
-        style={{ marginTop: gspace.md }}
-      >
-        {cod ? money(job.amount_to_collect, job.currency) : 'Already paid'}
-      </GlassText>
-
-      <GlassButton
-        title="Open order"
-        kind="dark"
-        icon="nav"
-        onPress={onPress}
-        style={{ marginTop: gspace.lg }}
-      />
-    </GlassCard>
+      </GlassCard>
+    </Pressable>
   );
 }

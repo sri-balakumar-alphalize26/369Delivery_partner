@@ -84,6 +84,20 @@ export const gradius = {
 
 export const gspace = { xs: 4, sm: 8, md: 12, lg: 16, xl: 20, xxl: 24, xxxl: 32 } as const;
 
+/**
+ * The widest a readable column gets, and the style that applies it.
+ *
+ * Phones are narrower than this, so nothing changes there. A tablet is not: at
+ * roughly 800dp the cards stretched edge to edge and read as pulled apart
+ * rather than designed. Capping and centring costs the phone nothing and gives
+ * the tablet a column instead of a spread.
+ */
+export const gcolumn = {
+  width: '100%',
+  maxWidth: 560,
+  alignSelf: 'center',
+} as const;
+
 export const gshadow = {
   glass: {
     shadowColor: '#1F294A',

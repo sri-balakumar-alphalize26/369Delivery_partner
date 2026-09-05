@@ -21,7 +21,7 @@ import {
   stopTracking,
 } from '../../../src/location/tracking';
 import { useSession } from '../../../src/store/session';
-import { glass, gradius, gshadow, gspace } from '../../../src/theme/glass';
+import { gcolumn, glass, gradius, gshadow, gspace } from '../../../src/theme/glass';
 import { Field } from '../../../src/ui/Field';
 import { LoadingArt } from '../../../src/ui/LoadingArt';
 import { LocationPrimer } from '../../../src/ui/LocationPrimer';
@@ -31,6 +31,7 @@ import { MAP_ENABLED, RouteMap } from '../../../src/ui/RouteMap';
 import { GlassButton } from '../../../src/ui/glass/GlassButton';
 import { GlassCard } from '../../../src/ui/glass/GlassCard';
 import { GlassIcon, GlassIconName } from '../../../src/ui/glass/GlassIcon';
+import { GlassProgress } from '../../../src/ui/glass/GlassProgress';
 import { GlassScreen } from '../../../src/ui/glass/GlassScreen';
 import { GlassText } from '../../../src/ui/glass/GlassText';
 
@@ -672,7 +673,7 @@ export default function Job() {
 
       <ScrollView
         style={{ marginTop: gspace.lg }}
-        contentContainerStyle={{ paddingBottom: gspace.xxxl + insets.bottom }}
+        contentContainerStyle={{ paddingBottom: gspace.xxxl + insets.bottom, ...gcolumn }}
         keyboardShouldPersistTaps="handled"
       >
         <View
@@ -688,6 +689,12 @@ export default function Job() {
             gshadow.glass,
           ]}
         >
+          {/* How far through the job, from the timestamps the contract has
+              been sending since N2 and the app ignored entirely. */}
+          <View style={{ marginBottom: gspace.xl }}>
+            <GlassProgress order={order} timezone={timezone} />
+          </View>
+
           <View style={{ flexDirection: 'row', alignItems: 'flex-start' }}>
             <View style={{ flex: 1, paddingRight: gspace.md }}>
               <GlassText variant="label" tone="faint" upper>

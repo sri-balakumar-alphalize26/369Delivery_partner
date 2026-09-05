@@ -4,7 +4,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { sortForRider, useDuty, useOrders } from '../../src/hooks/useOrders';
 import { money } from '../../src/lib/format';
 import { useSession } from '../../src/store/session';
-import { glass, gradius, gspace } from '../../src/theme/glass';
+import { gcolumn, glass, gradius, gspace } from '../../src/theme/glass';
 import { GlassButton } from '../../src/ui/glass/GlassButton';
 import { GlassCard } from '../../src/ui/glass/GlassCard';
 import { GlassIcon } from '../../src/ui/glass/GlassIcon';
@@ -53,6 +53,7 @@ export default function Home() {
           paddingTop: insets.top + gspace.lg,
           paddingHorizontal: gspace.xl,
           paddingBottom: gspace.xxxl + insets.bottom,
+          ...gcolumn,
         }}
         showsVerticalScrollIndicator={false}
       >

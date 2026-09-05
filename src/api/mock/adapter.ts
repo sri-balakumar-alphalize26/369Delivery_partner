@@ -9,6 +9,7 @@ import {
   Identity,
   LocationResult,
   OrdersResponse,
+  OrderTimestamps,
   Rider,
 } from '../types';
 import {
@@ -120,10 +121,41 @@ function requireAction(o: DeliveryOrder, action: Action) {
   }
 }
 
+/**
+ * Which `timestamps` field each status writes, where one exists.
+ *
+ * The names do not line up — status `picked`, field `picked_up` — which is
+ * exactly why this is a table rather than an index by status.
+ */
+const TIMESTAMP_FOR: Partial<Record<DeliveryStatus, keyof OrderTimestamps>> = {
+  offered: 'offered',
+  accepted: 'accepted',
+  picked: 'picked_up',
+  dispatched: 'dispatched',
+  out_for_delivery: 'out_for_delivery',
+  delivered: 'delivered',
+};
+
 function advance(o: DeliveryOrder, to: DeliveryStatus): ActionResult {
   o.delivery_status = to;
   o.allowed_actions = ACTIONS_FOR[to];
   o.tracking = { enabled: state.tracking };
+
+  /**
+   * Stamp the step, as res-test1 does.
+   *
+   * The mock advanced the status and left `timestamps` frozen at its fixture
+   * values, so a job could reach `delivered` with every field still ''. The
+   * server sets these, and the progress rail on the job screen reads them, so
+   * a mock that does not is hiding the difference rather than mirroring it.
+   *
+   * Mapped rather than indexed by status: the status is `picked` and the field
+   * is `picked_up`, so `to in o.timestamps` would quietly skip that one step
+   * and leave the rail short by a dot. States with no timestamp of their own —
+   * `returning`, `cancelled`, `failed` — stamp nothing.
+   */
+  const stamp = TIMESTAMP_FOR[to];
+  if (stamp && o.timestamps) o.timestamps[stamp] = utcNow();
   return {
     status: to,
     allowed_actions: o.allowed_actions,
