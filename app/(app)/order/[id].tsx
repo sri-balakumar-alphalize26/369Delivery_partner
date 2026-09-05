@@ -1,7 +1,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { Linking, Pressable, ScrollView, View } from 'react-native';
+import { Linking, Pressable, ScrollView, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { api } from '../../../src/api/endpoints';
 import {
@@ -21,6 +21,7 @@ import { Field } from '../../../src/ui/Field';
 import { LoadingArt } from '../../../src/ui/LoadingArt';
 import { OtpBoxes } from '../../../src/ui/OtpBoxes';
 import { OtpInput } from '../../../src/ui/OtpInput';
+import { MAP_ENABLED, RouteMap } from '../../../src/ui/RouteMap';
 import { GlassButton } from '../../../src/ui/glass/GlassButton';
 import { GlassCard } from '../../../src/ui/glass/GlassCard';
 import { GlassIcon, GlassIconName } from '../../../src/ui/glass/GlassIcon';
@@ -64,6 +65,7 @@ export default function Job() {
   const router = useRouter();
   const qc = useQueryClient();
   const insets = useSafeAreaInsets();
+  const { height: screenH } = useWindowDimensions();
   // The shop's zone, from /auth/me — never the phone's own.
   const timezone = useSession((s) => s.timezone);
 
@@ -561,14 +563,33 @@ export default function Job() {
   /* ----------------------------------------------------------------- *
    * En route.
    *
-   * There was a map behind this sheet. It is gone: the backend confirmed
-   * nothing geocodes an address, so it could only ever render its empty-state
-   * panel — 40% of the screen given to a grey rectangle for the life of the
-   * app. The sheet now starts below the header and gets the whole screen.
+   * A map sits behind this sheet again. The one deleted in b32f0b0 was a
+   * still image of the destination alone, so with `latitude` and `longitude`
+   * always null it could only draw a grey panel. `RouteMap` draws the rider
+   * instead, which the phone knows without asking Odoo anything, and adds the
+   * destination pin and the line to it if and when the backend starts
+   * geocoding. It is never the empty rectangle that one became.
+   *
+   * `RouteMap` returns null with no style URL configured, and the sheet then
+   * takes the whole screen exactly as it did before.
    * ----------------------------------------------------------------- */
   return (
     <GlassScreen>
-      <View style={{ paddingTop: insets.top + gspace.sm, paddingLeft: gspace.xl }}>
+      <RouteMap
+        latitude={order.latitude}
+        longitude={order.longitude}
+        height={Math.round(screenH * 0.4)}
+      />
+
+      {/* Over the map when there is one, in normal flow when there is not —
+          absolute against a missing map would drop it onto the sheet. */}
+      <View
+        style={
+          MAP_ENABLED
+            ? { position: 'absolute', top: insets.top + gspace.sm, left: gspace.xl }
+            : { paddingTop: insets.top + gspace.sm, paddingLeft: gspace.xl }
+        }
+      >
         <RoundButton icon="chev" mirrored onPress={() => router.back()} />
       </View>
 
