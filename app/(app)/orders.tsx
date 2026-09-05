@@ -3,7 +3,8 @@ import { ScrollView, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { sortForRider, useOrders } from '../../src/hooks/useOrders';
 import { useSession } from '../../src/store/session';
-import { gcolumn, gspace } from '../../src/theme/glass';
+import { gspace } from '../../src/theme/glass';
+import { useWide } from '../../src/ui/useWide';
 import { GlassCard } from '../../src/ui/glass/GlassCard';
 import { GlassHeader } from '../../src/ui/glass/GlassHeader';
 import { GlassJobCard } from '../../src/ui/glass/GlassJobCard';
@@ -24,6 +25,7 @@ export default function Orders() {
   const insets = useSafeAreaInsets();
   const timezone = useSession((s) => s.timezone);
   const { data, isLoading } = useOrders();
+  const wide = useWide();
 
   const jobs = sortForRider(data?.orders);
 
@@ -40,20 +42,27 @@ export default function Orders() {
         contentContainerStyle={{
           paddingHorizontal: gspace.xl,
           paddingBottom: gspace.xxxl + insets.bottom,
-          ...gcolumn,
         }}
         showsVerticalScrollIndicator={false}
       >
         {jobs.length ? (
-          jobs.map((job) => (
-            <View key={job.delivery_order_id} style={{ marginBottom: gspace.lg }}>
-              <GlassJobCard
-                job={job}
-                timezone={timezone}
-                onPress={() => router.push(`/order/${job.delivery_order_id}`)}
-              />
-            </View>
-          ))
+          /* Two across on a tablet, one on a phone — the same grid Home uses,
+             so the two lists cannot drift apart in shape any more than the
+             card they share can. */
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: gspace.md }}>
+            {jobs.map((job) => (
+              <View
+                key={job.delivery_order_id}
+                style={wide ? { flexBasis: 0, flexGrow: 1, minWidth: 320 } : { width: '100%' }}
+              >
+                <GlassJobCard
+                  job={job}
+                  timezone={timezone}
+                  onPress={() => router.push(`/order/${job.delivery_order_id}`)}
+                />
+              </View>
+            ))}
+          </View>
         ) : (
           <GlassCard>
             <GlassText variant="subtitle">

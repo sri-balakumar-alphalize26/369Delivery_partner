@@ -4,7 +4,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { sortForRider, useDuty, useOrders } from '../../src/hooks/useOrders';
 import { money } from '../../src/lib/format';
 import { useSession } from '../../src/store/session';
-import { gcolumn, glass, gradius, gspace } from '../../src/theme/glass';
+import { glass, gradius, gspace } from '../../src/theme/glass';
+import { useWide } from '../../src/ui/useWide';
 import { GlassButton } from '../../src/ui/glass/GlassButton';
 import { GlassCard } from '../../src/ui/glass/GlassCard';
 import { GlassIcon } from '../../src/ui/glass/GlassIcon';
@@ -33,6 +34,7 @@ export default function Home() {
   const timezone = useSession((s) => s.timezone);
   const { data, isLoading, refetch } = useOrders();
   const duty = useDuty();
+  const wide = useWide();
 
   // The server is the authority on duty; the stored rider is only the fallback
   // before the first /orders comes back.
@@ -54,7 +56,6 @@ export default function Home() {
           paddingTop: insets.top + gspace.lg,
           paddingHorizontal: gspace.xl,
           paddingBottom: gspace.xxxl + insets.bottom,
-          ...gcolumn,
         }}
         showsVerticalScrollIndicator={false}
       >
@@ -168,15 +169,30 @@ export default function Home() {
         </View>
 
         {jobs.length ? (
-          jobs.map((job) => (
-            <View key={job.delivery_order_id} style={{ marginTop: gspace.md }}>
-              <GlassJobCard
-                job={job}
-                timezone={timezone}
-                onPress={() => router.push(`/order/${job.delivery_order_id}`)}
-              />
-            </View>
-          ))
+          /* Two across on a tablet, one on a phone. A single column stretched
+             to 800dp wastes the width as surely as the centred column that was
+             here before did. */
+          <View
+            style={{
+              flexDirection: 'row',
+              flexWrap: 'wrap',
+              gap: gspace.md,
+              marginTop: gspace.md,
+            }}
+          >
+            {jobs.map((job) => (
+              <View
+                key={job.delivery_order_id}
+                style={wide ? { flexBasis: 0, flexGrow: 1, minWidth: 320 } : { width: '100%' }}
+              >
+                <GlassJobCard
+                  job={job}
+                  timezone={timezone}
+                  onPress={() => router.push(`/order/${job.delivery_order_id}`)}
+                />
+              </View>
+            ))}
+          </View>
         ) : (
           <GlassCard style={{ marginTop: gspace.md }}>
             <GlassText variant="subtitle">

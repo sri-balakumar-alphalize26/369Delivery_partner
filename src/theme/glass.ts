@@ -92,18 +92,18 @@ export const gradius = {
 export const gspace = { xs: 4, sm: 8, md: 12, lg: 16, xl: 20, xxl: 24, xxxl: 32 } as const;
 
 /**
- * The widest a readable column gets, and the style that applies it.
+ * Where a phone layout stops making sense and a tablet one starts.
  *
- * Phones are narrower than this, so nothing changes there. A tablet is not: at
- * roughly 800dp the cards stretched edge to edge and read as pulled apart
- * rather than designed. Capping and centring costs the phone nothing and gives
- * the tablet a column instead of a spread.
+ * This replaces a fixed 560dp centred column, which was the wrong fix for a
+ * stretched tablet: it traded a spread-out layout for a wasted one, leaving
+ * broad empty margins down both sides. A screen should use the width it has —
+ * a phone gets one full-width column, a tablet gets two.
+ *
+ * 768 rather than a number of our own: it is the line React Navigation already
+ * uses to decide the tab bar's layout, so the app changes shape once rather
+ * than twice at slightly different widths.
  */
-export const gcolumn = {
-  width: '100%',
-  maxWidth: 560,
-  alignSelf: 'center',
-} as const;
+export const TABLET_MIN_WIDTH = 768;
 
 export const gshadow = {
   glass: {
