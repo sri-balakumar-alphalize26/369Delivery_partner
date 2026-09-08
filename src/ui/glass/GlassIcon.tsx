@@ -20,6 +20,8 @@ const MAP = {
   pin: 'location',
   store: 'storefront-outline',
   check: 'checkmark',
+  checked: 'checkmark-circle',
+  unchecked: 'ellipse-outline',
   clock: 'time-outline',
   chev: 'chevron-forward',
   star: 'star-outline',

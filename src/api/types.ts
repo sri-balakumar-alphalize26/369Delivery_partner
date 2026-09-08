@@ -323,6 +323,13 @@ export interface ServerConfig {
   url: string;
   db: string;
   token: string;
+  /**
+   * Who a stuck rider calls. Optional — the button is hidden when unset.
+   *
+   * Here rather than in a constant for the same reason the server address is:
+   * ops will change it, and a rebuild to edit a phone number is a bad trade.
+   */
+  supportPhone: string;
   /** Run against the built-in simulation instead of the live server. */
   useMock: boolean;
 }

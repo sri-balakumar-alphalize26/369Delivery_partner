@@ -10,6 +10,8 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { peekServer } from '../../../src/api/config';
 import { api } from '../../../src/api/endpoints';
 import {
   ACTION_LABEL,
@@ -21,12 +23,13 @@ import {
   headingFor,
   PRIMARY_ACTIONS,
 } from '../../../src/api/types';
-import { money, promisedAt, shopName, timeOnly } from '../../../src/lib/format';
+import { money, promisedAt, shopName, shopPhone, timeOnly } from '../../../src/lib/format';
 import {
   hasLocationPermission,
   startTracking,
   stopTracking,
 } from '../../../src/location/tracking';
+import { stopOfferAlert } from '../../../src/hooks/useOfferAlert';
 import { useSession } from '../../../src/store/session';
 import {
   GlassBarState,
@@ -44,6 +47,7 @@ import { OtpInput } from '../../../src/ui/OtpInput';
 import { MAP_ENABLED, RouteMap } from '../../../src/ui/RouteMap';
 import { GlassButton } from '../../../src/ui/glass/GlassButton';
 import { GlassCard } from '../../../src/ui/glass/GlassCard';
+import { GlassCheckRow } from '../../../src/ui/glass/GlassCheckRow';
 import { GlassIcon, GlassIconName } from '../../../src/ui/glass/GlassIcon';
 import { GlassPill } from '../../../src/ui/glass/GlassPill';
 import { GlassProgress } from '../../../src/ui/glass/GlassProgress';
@@ -115,12 +119,43 @@ export default function Job() {
   /** Which action is waiting on the location explainer, if any. */
   const [primerFor, setPrimerFor] = useState<Action | null>(null);
   const [reasonNote, setReasonNote] = useState('');
+  /**
+   * Which items the rider has ticked off at the counter.
+   *
+   * Local to this phone and sent nowhere: no field on the contract carries it,
+   * and Odoo alone decides whether the pickup may go ahead. Persisted per job,
+   * so stepping out of the app at a busy counter does not lose the count.
+   * AsyncStorage rather than lib/storage — that one is the OS keystore, which is
+   * for the credential, not for a scratch list.
+   */
+  const [picked, setPicked] = useState<Set<number>>(new Set());
+  const pickKey = `d369.picklist.${orderId}`;
 
   useEffect(() => {
     if (cooldown <= 0) return;
     const t = setTimeout(() => setCooldown((s) => s - 1), 1000);
     return () => clearTimeout(t);
   }, [cooldown]);
+
+  useEffect(() => {
+    let live = true;
+    AsyncStorage.getItem(pickKey)
+      .then((raw) => {
+        if (!live || !raw) return;
+        setPicked(new Set(JSON.parse(raw) as number[]));
+      })
+      // An unreadable list is an empty one — never a screen that will not open.
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [pickKey]);
+
+  /**
+   * Leaving the job counts as having dealt with the offer, so anything still
+   * buzzing from `useOfferAlert` stops here.
+   */
+  useEffect(() => stopOfferAlert, []);
 
   /**
    * Expo Router reuses this component from one job to the next, so everything
@@ -137,6 +172,7 @@ export default function Job() {
     setError(null);
     setOtpError(null);
     setCooldown(0);
+    setPicked(new Set());
   }
 
   const { data: order, isLoading } = useQuery({
@@ -184,6 +220,24 @@ export default function Job() {
   const canSubmit = !needsOtp || otp.length === 6;
   const cod = order.payment_status === 'cod';
 
+  /** At the counter waiting on the pickup code — the moment to check the bag. */
+  const collecting = primary === 'verify_pickup_otp';
+
+  /**
+   * Tick one item off.
+   *
+   * Never sent anywhere, and deliberately never gates the button below: Odoo
+   * decides whether the pickup may go ahead, and a checklist able to block a
+   * server-permitted action would be the app inventing workflow of its own.
+   */
+  function togglePicked(i: number) {
+    const next = new Set(picked);
+    if (next.has(i)) next.delete(i);
+    else next.add(i);
+    setPicked(next);
+    AsyncStorage.setItem(pickKey, JSON.stringify([...next])).catch(() => {});
+  }
+
   /** Applies whatever Odoo says came back, including any tracking instruction. */
   async function applyResult(res: ActionResult) {
     setOverride(res.allowed_actions);
@@ -215,6 +269,9 @@ export default function Job() {
    * office nothing.
    */
   async function run(action: Action) {
+    // The rider is dealing with the job, so whatever is buzzing can stop.
+    stopOfferAlert();
+
     if (action === 'return_to_shop' || action === 'report_issue') {
       setError(null);
       setOtpError(null);
@@ -279,6 +336,10 @@ export default function Job() {
         default:
           return;
       }
+      if (action === 'verify_pickup_otp') {
+        setPicked(new Set());
+        AsyncStorage.removeItem(pickKey).catch(() => {});
+      }
       await applyResult(res);
     } catch (err) {
       if (err instanceof ApiError) {
@@ -300,7 +361,24 @@ export default function Job() {
     }
   }
 
-  const call = () => Linking.openURL(`tel:${order.customer_mobile}`).catch(() => {});
+  /**
+   * Three different people, and the screen has to be clear which it is dialling.
+   *
+   * There was one `call` here and it always reached the customer — including
+   * from the button beside the SHOP's name on the pickup sheet, while the rider
+   * was still on their way to collect. `shop.phone` has been in the contract
+   * since N2 and was read nowhere.
+   */
+  const dial = (number: string) => {
+    if (!number) return;
+    Linking.openURL(`tel:${number}`).catch(() => {});
+  };
+  const callCustomer = () => dial(order.customer_mobile);
+  const callShop = () => dial(shopPhone(order.shop));
+
+  /** Set on Connect. With no number the link is not drawn at all. */
+  const supportNumber = peekServer().supportPhone;
+  const callSupport = () => dial(supportNumber);
 
   /* ----------------------------------------------------------------- *
    * Why this app wants your location.
@@ -531,6 +609,11 @@ export default function Job() {
             {secondary.map((a) => (
               <GhostLink key={a} label={ACTION_LABEL[a]} onPress={() => run(a)} disabled={busy} />
             ))}
+            {/* Last, and only when a number is configured. A rider reaches for
+                this when the job itself has stopped working. */}
+            {supportNumber ? (
+              <GhostLink label="Call support" onPress={callSupport} disabled={busy} />
+            ) : null}
           </View>
         </ScrollView>
       </GlassScreen>
@@ -609,7 +692,7 @@ export default function Job() {
                 title="Call"
                 kind="ghost"
                 icon="phone"
-                onPress={call}
+                onPress={callCustomer}
                 style={{ flex: 1 }}
               />
             </View>
@@ -690,6 +773,11 @@ export default function Job() {
             {secondary.map((a) => (
               <GhostLink key={a} label={ACTION_LABEL[a]} onPress={() => run(a)} disabled={busy} />
             ))}
+            {/* Last, and only when a number is configured. A rider reaches for
+                this when the job itself has stopped working. */}
+            {supportNumber ? (
+              <GhostLink label="Call support" onPress={callSupport} disabled={busy} />
+            ) : null}
           </View>
         </ScrollView>
         </KeyboardAvoidingView>
@@ -788,7 +876,7 @@ export default function Job() {
               </GlassText>
             </View>
             <View style={{ flexDirection: 'row', gap: gspace.sm }}>
-              <RoundButton icon="phone" onPress={call} />
+              <RoundButton icon="phone" onPress={callShop} />
               <RoundButton icon="nav" filled onPress={() => navigateTo(order)} />
             </View>
           </View>
@@ -834,23 +922,36 @@ export default function Job() {
 
           {order.products?.length ? (
             <View style={{ marginTop: gspace.lg }}>
-              {order.products.map((p, i) => (
+              {/* At the counter this manifest becomes a checklist, so the rider
+                  can tick each line against what the shop is actually handing
+                  over. Everywhere else in the job it stays the plain list it
+                  was — there is nothing to check off once the bag is aboard. */}
+              {collecting ? (
                 <View
-                  key={`${p.name}-${i}`}
                   style={{
                     flexDirection: 'row',
-                    paddingVertical: gspace.sm,
-                    borderBottomWidth: 1,
-                    borderBottomColor: glass.divider,
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    marginBottom: gspace.xs,
                   }}
                 >
-                  <GlassText variant="body" style={{ flex: 1 }}>
-                    {p.name}
+                  <GlassText variant="label" tone="soft" upper>
+                    Check the bag
                   </GlassText>
-                  <GlassText variant="body" tone="soft" nums>
-                    x{p.quantity}
+                  <GlassText variant="caption" tone="soft" nums>
+                    {picked.size} of {order.products.length}
                   </GlassText>
                 </View>
+              ) : null}
+
+              {order.products.map((p, i) => (
+                <GlassCheckRow
+                  key={`${p.name}-${i}`}
+                  name={p.name}
+                  quantity={p.quantity}
+                  checked={collecting && picked.has(i)}
+                  onToggle={collecting ? () => togglePicked(i) : undefined}
+                />
               ))}
             </View>
           ) : null}
@@ -950,6 +1051,11 @@ export default function Job() {
             {secondary.map((a) => (
               <GhostLink key={a} label={ACTION_LABEL[a]} onPress={() => run(a)} disabled={busy} />
             ))}
+            {/* Last, and only when a number is configured. A rider reaches for
+                this when the job itself has stopped working. */}
+            {supportNumber ? (
+              <GhostLink label="Call support" onPress={callSupport} disabled={busy} />
+            ) : null}
           </View>
         </View>
       </ScrollView>

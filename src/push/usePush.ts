@@ -12,6 +12,19 @@ import { registerForPush } from './register';
  * every 10s regardless, so a dropped notification, a denied permission or a
  * missing Firebase config makes the app slower, never broken.
  */
+/**
+ * When a push last landed.
+ *
+ * The offer alert below polls as well as listening, so without this a live push
+ * and the refetch it triggers would both announce the same job — two banners for
+ * one offer. The alert checks this and stays quiet when the push has spoken.
+ */
+let lastPushAt = 0;
+
+export function pushArrivedRecently(withinMs = 8000): boolean {
+  return lastPushAt > 0 && Date.now() - lastPushAt < withinMs;
+}
+
 export function usePush(connected: boolean) {
   const qc = useQueryClient();
   const router = useRouter();
@@ -29,6 +42,7 @@ export function usePush(connected: boolean) {
     // A push means Odoo has something new. Refetch immediately rather than
     // leaving the rider on stale data for up to the next poll.
     const received = Notifications.addNotificationReceivedListener(() => {
+      lastPushAt = Date.now();
       qc.invalidateQueries({ queryKey: ['orders'] });
     });
 

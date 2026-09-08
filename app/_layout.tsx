@@ -16,6 +16,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { glass } from '../src/theme/glass';
 import { SplashAnimation } from '../src/ui/SplashAnimation';
 import * as Notifications from 'expo-notifications';
+import { useOfferAlert } from '../src/hooks/useOfferAlert';
 import { usePush } from '../src/push/usePush';
 import { useSession } from '../src/store/session';
 
@@ -82,6 +83,10 @@ function Gate({ children }: { children: ReactNode }) {
   // Registers the device with Odoo once connected, refreshes the job list the
   // moment a push lands, and opens the job when the banner is tapped.
   usePush(connected);
+
+  // And makes a new offer impossible to miss: the phone buzzes and the offer
+  // screen comes up, unless the rider is already inside another job.
+  useOfferAlert(connected);
 
   useEffect(() => {
     if (!ready) return;

@@ -35,21 +35,31 @@ function projectId(): string | null {
 }
 
 /**
+ * Create the channel a job alert is delivered on.
+ *
+ * Android needs the channel to exist BEFORE anything arrives, or the OS shows
+ * no heads-up banner however high the priority is — and the channel, not the
+ * notification, is what decides the sound and the vibration. Called from
+ * registration, from the test notification and from the offer alert, because a
+ * missing channel is silent in exactly the case that matters most.
+ */
+export async function ensureJobsChannel(): Promise<void> {
+  if (Platform.OS !== 'android') return;
+  await Notifications.setNotificationChannelAsync('jobs', {
+    name: 'New jobs',
+    importance: Notifications.AndroidImportance.MAX,
+    vibrationPattern: [0, 250, 250, 250],
+    lightColor: '#3730A3',
+  });
+}
+
+/**
  * Ask permission, ensure the Android channel exists, mint a token and hand it
  * to Odoo. Returns the token, or null with a logged reason.
  */
 export async function registerForPush(): Promise<string | null> {
   try {
-    // Android needs the channel to exist BEFORE anything arrives, or the OS
-    // shows no heads-up banner however high the priority is.
-    if (Platform.OS === 'android') {
-      await Notifications.setNotificationChannelAsync('jobs', {
-        name: 'New jobs',
-        importance: Notifications.AndroidImportance.MAX,
-        vibrationPattern: [0, 250, 250, 250],
-        lightColor: '#3730A3',
-      });
-    }
+    await ensureJobsChannel();
 
     // Only prompt if we do not already have it — repeatedly asking is how an
     // app gets permanently denied.
@@ -133,16 +143,9 @@ export function currentPushToken(): string | null {
  */
 export async function sendTestNotification(orderId?: number): Promise<void> {
   try {
-    if (Platform.OS === 'android') {
-      // The same channel a real push uses — if this is missing there is no
-      // heads-up banner, which is itself the thing being tested.
-      await Notifications.setNotificationChannelAsync('jobs', {
-        name: 'New jobs',
-        importance: Notifications.AndroidImportance.MAX,
-        vibrationPattern: [0, 250, 250, 250],
-        lightColor: '#3730A3',
-      });
-    }
+    // The same channel a real push uses — if this is missing there is no
+    // heads-up banner, which is itself the thing being tested.
+    await ensureJobsChannel();
 
     await Notifications.scheduleNotificationAsync({
       content: {

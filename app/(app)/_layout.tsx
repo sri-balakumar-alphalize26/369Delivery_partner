@@ -117,7 +117,13 @@ export default function AppLayout() {
           ),
         }}
       />
-      <Tabs.Screen name="order/[id]" options={{ href: null }} />
+      {/* href: null only hides it FROM the bar. A job — above all an offer that
+          has just taken over the screen — should own the whole screen rather
+          than sit above four tabs inviting the rider away mid-handover. */}
+      <Tabs.Screen
+        name="order/[id]"
+        options={{ href: null, tabBarStyle: { display: 'none' } }}
+      />
     </Tabs>
   );
 }

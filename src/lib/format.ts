@@ -127,3 +127,15 @@ export function timeOnly(raw: string | undefined, timeZone?: string): string {
     return '';
   }
 }
+
+/**
+ * The shop's phone, or empty when there is none to dial.
+ *
+ * Same reason `shopName` exists: `shop` is `Shop | string`, and the older bare
+ * string carries no phone at all. A caller that reached for `shop.phone`
+ * directly would get `undefined` on those captures and dial the string "tel:".
+ */
+export function shopPhone(shop: Shop | string | undefined): string {
+  if (!shop || typeof shop === 'string') return '';
+  return shop.phone ?? '';
+}
