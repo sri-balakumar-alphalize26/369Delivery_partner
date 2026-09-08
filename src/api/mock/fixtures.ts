@@ -56,6 +56,11 @@ export const MOCK_SHOP: Shop = {
 
 let seq = 524;
 
+/** A UTC timestamp `mins` from now, with the Z the contract says every datetime carries. */
+function minutesFromNow(mins: number): string {
+  return new Date(Date.now() + mins * 60_000).toISOString();
+}
+
 export function makeOffer(): DeliveryOrder {
   seq += 1;
   const cod = seq % 2 === 1;
@@ -81,8 +86,15 @@ export function makeOffer(): DeliveryOrder {
     currency: OMR,
     delivery_status: "offered",
     delivery_type: seq % 2 === 0 ? "quick" : "express",
-    // UTC, with the Z the contract says every datetime carries.
-    promised_by: "2026-09-05T12:48:26Z",
+    /**
+     * Relative to now, not a fixed date.
+     *
+     * This was pinned to 2026-09-05, so once the countdown landed every demo job
+     * read as days overdue and the label was useless. The offsets show both
+     * states: one comfortably ahead, one tight, one already late, so the red
+     * case is visible without waiting for a promise to expire.
+     */
+    promised_by: minutesFromNow([12, 35, -6][seq % 3]),
     allowed_actions: ["accept"],
     products: [
       { name: "Amul Gold Milk 500ml", quantity: 2, uom: "Units" },

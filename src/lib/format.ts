@@ -165,3 +165,61 @@ export function routeSummary(distanceM: number, durationS: number): string {
 
   return `${distance} · ${time}`;
 }
+
+/**
+ * How long is left, as a rider reads it: "12 min left", "5 min late".
+ *
+ * The card used to show `05 Sep · 16:48`, which is a fact rather than a
+ * pressure. Every quick-commerce app counts down instead, because a rider
+ * glancing at a phone on a bike needs to know whether they are behind, not what
+ * o'clock the promise was made for.
+ *
+ * `now` is passed in rather than read here, and it should come from
+ * `serverNow()` in `lib/clock` — see that file for why the phone's own clock
+ * cannot be trusted with this.
+ *
+ * Returns null when there is no promise to count against, so callers can leave
+ * the space empty rather than print a placeholder.
+ */
+export function dueIn(
+  raw: string | undefined,
+  now: number
+): { text: string; late: boolean } | null {
+  if (!raw) return null;
+
+  const at = Date.parse(asUtc(raw));
+  if (Number.isNaN(at)) return null;
+
+  const diffMs = at - now;
+  const late = diffMs < 0;
+  const mins = Math.max(0, Math.round(Math.abs(diffMs) / 60_000));
+
+  // Under a minute either way is "now" — counting seconds on a card would
+  // change on every render and read as broken.
+  if (mins === 0) return { text: 'due now', late };
+
+  const hrs = Math.floor(mins / 60);
+  const rem = mins % 60;
+  const span = hrs > 0 ? `${hrs}h ${rem}m` : `${mins} min`;
+
+  return { text: late ? `${span} late` : `${span} left`, late };
+}
+
+/**
+ * How long the rider has been on duty: "2h 15m".
+ *
+ * `duty_since` has been on the rider object all along and shown nowhere, so a
+ * rider had no way to see their own shift. Empty while off duty, which the
+ * contract states explicitly, and null then rather than "0m".
+ */
+export function onDutyFor(raw: string | undefined, now: number): string | null {
+  if (!raw) return null;
+
+  const since = Date.parse(asUtc(raw));
+  if (Number.isNaN(since) || since > now) return null;
+
+  const mins = Math.floor((now - since) / 60_000);
+  const hrs = Math.floor(mins / 60);
+
+  return hrs > 0 ? `${hrs}h ${mins % 60}m` : `${mins}m`;
+}

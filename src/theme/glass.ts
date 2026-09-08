@@ -105,6 +105,15 @@ export const gspace = { xs: 4, sm: 8, md: 12, lg: 16, xl: 20, xxl: 24, xxxl: 32 
  */
 export const TABLET_MIN_WIDTH = 768;
 
+/**
+ * How wide a column of text may get.
+ *
+ * A map wants the whole screen; a sentence does not. Unbounded on a 1200px
+ * tablet an item name and its quantity ended up a metre apart. Only binds above
+ * this width, so a phone is untouched.
+ */
+export const CONTENT_MAX_W = 720;
+
 export const gshadow = {
   glass: {
     shadowColor: '#1F294A',

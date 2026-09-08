@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/endpoints';
+import { syncClock } from '../lib/clock';
 import { DeliveryOrder, DutyResult, OrdersResponse } from '../api/types';
 import { useSession } from '../store/session';
 
@@ -16,7 +17,16 @@ export function useOrders() {
 
   return useQuery<OrdersResponse>({
     queryKey: ['orders'],
-    queryFn: () => api.orders(),
+    /**
+     * Every response carries `server_time`, so the offset between the server's
+     * clock and this phone's is taken here — free, and refreshed with the poll.
+     * Countdowns read from it rather than from the device; see lib/clock.
+     */
+    queryFn: async () => {
+      const res = await api.orders();
+      syncClock(res.server_time);
+      return res;
+    },
     enabled: connected,
     refetchInterval: connected ? 10_000 : false,
     refetchIntervalInBackground: false,

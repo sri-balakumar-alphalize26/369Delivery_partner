@@ -1,6 +1,8 @@
 import { View } from 'react-native';
+import { Image } from 'expo-image';
 import { DeliveryOrder } from '../../api/types';
-import { money, promisedAt, shopName } from '../../lib/format';
+import { dueIn, money, shopName } from '../../lib/format';
+import { useNow } from '../../hooks/useNow';
 import { GlassBarState, glass, glassBand, gspace } from '../../theme/glass';
 import { GlassButton } from './GlassButton';
 import { GlassCard } from './GlassCard';
@@ -32,9 +34,21 @@ export function GlassJobCard({
   onPress: () => void;
 }) {
   const cod = job.payment_status === 'cod';
+
+  /**
+   * The promise as a countdown rather than a clock reading.
+   *
+   * This showed `05 Sep · 16:48`, which is a fact and not a pressure. A rider
+   * glancing at a phone needs to know whether they are behind, and every
+   * quick-commerce app counts down for exactly that reason. Counted against the
+   * server's clock, not this phone's — see lib/clock.
+   */
+  const due = dueIn(job.promised_by, useNow());
+
+  /** Only the object form carries an image; older captures send a bare string. */
+  const logo = typeof job.shop === 'object' ? job.shop.image_url : null;
   // One source of truth for what each delivery state looks like.
   const band = glassBand[job.delivery_status as GlassBarState] ?? glassBand.idle;
-  const when = promisedAt(job.promised_by, timezone);
 
   /** Once the parcel is aboard, the shop is behind the rider. */
   const collected = !['offered', 'accepted'].includes(job.delivery_status);
@@ -53,21 +67,44 @@ export function GlassJobCard({
             marginRight: gspace.md,
           }}
         >
-          <GlassIcon name="store" color={glass.ink} size={18} />
+          {logo ? (
+            <Image
+              source={{ uri: logo }}
+              style={{ width: 36, height: 36, borderRadius: 18 }}
+              contentFit="cover"
+            />
+          ) : (
+            <GlassIcon name="store" color={glass.ink} size={18} />
+          )}
         </View>
 
         <View style={{ flex: 1, paddingRight: gspace.sm }}>
           <GlassText variant="bodyStrong" numberOfLines={1}>
             {shopName(job.shop)}
           </GlassText>
-          <GlassText variant="caption" tone="soft" numberOfLines={1}>
-            {job.job_code}
-            {job.products?.length ? ` · ${job.products.length} items` : ''}
-            {when ? ` · ${when}` : ''}
-          </GlassText>
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: 1 }}>
+            {/* The countdown leads. `job_code` used to sit here reading "DEL ·",
+                which is a warehouse's word for it and means nothing to a rider. */}
+            {due ? (
+              <GlassText variant="caption" tone={due.late ? 'red' : 'soft'} nums>
+                {due.text}
+              </GlassText>
+            ) : null}
+            <GlassText variant="caption" tone="soft" numberOfLines={1}>
+              {due && job.products?.length ? ' · ' : ''}
+              {job.products?.length ? `${job.products.length} items` : ''}
+            </GlassText>
+          </View>
         </View>
 
-        <GlassPill label={band.label} bg={band.bg} fg={band.fg} />
+        <View style={{ alignItems: 'flex-end', gap: gspace.xs }}>
+          <GlassPill label={band.label} bg={band.bg} fg={band.fg} />
+          {/* Quick or express. It ships on every order and was drawn nowhere —
+              Instamart's whole card hierarchy rests on this distinction. */}
+          {job.delivery_type ? (
+            <GlassPill label={job.delivery_type} tone="soft" />
+          ) : null}
+        </View>
       </View>
 
       <View style={{ height: 1, backgroundColor: glass.divider }} />

@@ -13,7 +13,7 @@ import {
 } from '../../src/push/register';
 import { sortForRider, useOrders } from '../../src/hooks/useOrders';
 import { useSession } from '../../src/store/session';
-import { glass, gradius, gspace } from '../../src/theme/glass';
+import { CONTENT_MAX_W, glass, gradius, gspace } from '../../src/theme/glass';
 import { GlassButton } from '../../src/ui/glass/GlassButton';
 import { GlassCard } from '../../src/ui/glass/GlassCard';
 import { GlassScreen } from '../../src/ui/glass/GlassScreen';
@@ -46,6 +46,10 @@ export default function Profile() {
         contentContainerStyle={{
           paddingTop: insets.top + gspace.xl,
           paddingHorizontal: gspace.xl,
+          // A column, not a full-width sprawl. Binds only above CONTENT_MAX_W.
+          width: '100%',
+          maxWidth: CONTENT_MAX_W,
+          alignSelf: 'center',
           paddingBottom: gspace.xxxl + insets.bottom,
         }}
         showsVerticalScrollIndicator={false}

@@ -2,9 +2,10 @@ import { useRouter } from 'expo-router';
 import { ScrollView, Switch, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { sortForRider, useDuty, useOrders } from '../../src/hooks/useOrders';
-import { money } from '../../src/lib/format';
+import { money, onDutyFor } from '../../src/lib/format';
+import { useNow } from '../../src/hooks/useNow';
 import { useSession } from '../../src/store/session';
-import { glass, gradius, gspace } from '../../src/theme/glass';
+import { CONTENT_MAX_W, glass, gradius, gspace } from '../../src/theme/glass';
 import { useWide } from '../../src/ui/useWide';
 import { GlassButton } from '../../src/ui/glass/GlassButton';
 import { GlassCard } from '../../src/ui/glass/GlassCard';
@@ -40,6 +41,16 @@ export default function Home() {
   // before the first /orders comes back.
   const onDuty = data?.on_duty ?? rider?.on_duty ?? false;
 
+  /**
+   * How long this shift has been running.
+   *
+   * `duty_since` has been on the rider object all along and shown nowhere, so a
+   * rider had no way to see their own shift from inside the app. Counted against
+   * the server's clock, so a phone set wrong does not invent hours.
+   */
+  const now = useNow();
+  const shift = onDuty ? onDutyFor(rider?.duty_since, now) : null;
+
   const jobs = sortForRider(data?.orders);
   const counts = data?.counts;
 
@@ -55,6 +66,10 @@ export default function Home() {
         contentContainerStyle={{
           paddingTop: insets.top + gspace.lg,
           paddingHorizontal: gspace.xl,
+          // A column, not a full-width sprawl. Binds only above CONTENT_MAX_W.
+          width: '100%',
+          maxWidth: CONTENT_MAX_W,
+          alignSelf: 'center',
           paddingBottom: gspace.xxxl + insets.bottom,
         }}
         showsVerticalScrollIndicator={false}
@@ -90,9 +105,16 @@ export default function Home() {
                   marginRight: gspace.sm,
                 }}
               />
-              <GlassText variant="bodyStrong">
-                {onDuty ? 'You are online' : 'You are off duty'}
-              </GlassText>
+              <View style={{ flex: 1 }}>
+                <GlassText variant="bodyStrong">
+                  {onDuty ? 'You are online' : 'You are off duty'}
+                </GlassText>
+                {shift ? (
+                  <GlassText variant="caption" tone="soft" nums>
+                    {shift} on duty
+                  </GlassText>
+                ) : null}
+              </View>
             </View>
             <Switch
               value={onDuty}

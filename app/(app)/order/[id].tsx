@@ -23,7 +23,16 @@ import {
   headingFor,
   PRIMARY_ACTIONS,
 } from '../../../src/api/types';
-import { money, promisedAt, routeSummary, shopName, shopPhone, timeOnly } from '../../../src/lib/format';
+import {
+  dueIn,
+  money,
+  promisedAt,
+  routeSummary,
+  shopName,
+  shopPhone,
+  timeOnly,
+} from '../../../src/lib/format';
+import { useNow } from '../../../src/hooks/useNow';
 import {
   hasLocationPermission,
   startTracking,
@@ -141,6 +150,13 @@ export default function Job() {
   const [reasonNote, setReasonNote] = useState('');
   /** Whether the code panel is up. The code itself still lives in `otp`. */
   const [codeOpen, setCodeOpen] = useState(false);
+
+  /**
+   * Ticks the countdown. Called up here with the other hooks because the
+   * layouts below return early, and a hook after a return runs on some renders
+   * and not others.
+   */
+  const now = useNow();
   /**
    * Which items the rider has ticked off at the counter.
    *
@@ -255,6 +271,10 @@ export default function Job() {
    */
   const needsOtp = primary === 'verify_pickup_otp' || primary === 'verify_delivery_otp';
   const cod = order.payment_status === 'cod';
+
+  /** The promise as pressure, counted against the server's clock. */
+  const due = dueIn(order.promised_by, now);
+
 
   /** At the counter waiting on the pickup code — the moment to check the bag. */
   const collecting = primary === 'verify_pickup_otp';
@@ -1013,7 +1033,13 @@ export default function Job() {
               tone={cod ? glass.red : glass.green}
             />
             <Tile label="Items" value={String(order.products?.length ?? 0)} />
-            <Tile label="Due" value={timeOnly(order.promised_by, timezone) || '—'} />
+            {/* Counting down rather than a clock reading — the same label the
+                cards carry, so one job cannot read two ways. */}
+            <Tile
+              label="Due"
+              value={due?.text ?? (timeOnly(order.promised_by, timezone) || '—')}
+              tone={due?.late ? glass.red : undefined}
+            />
           </View>
 
           {order.products?.length ? (
