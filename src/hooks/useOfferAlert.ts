@@ -105,6 +105,17 @@ export function useOfferAlert(connected: boolean): void {
   const seeded = useRef(false);
 
   /**
+   * Duty as it was on the previous list.
+   *
+   * Clocking on is its own kind of baseline. `POST /duty` exists to collect the
+   * jobs confirmed while nobody was available, so the batch that lands the
+   * moment a rider goes on duty is a backlog, not news — and taking the screen
+   * for it drops a rider into the first of five jobs without ever letting them
+   * see that there are five.
+   */
+  const wasOnDuty = useRef<boolean | null>(null);
+
+  /**
    * Whether it is safe to put the offer screen up.
    *
    * Read through a ref so that changing tab does not re-run the detection
@@ -133,11 +144,22 @@ export function useOfferAlert(connected: boolean): void {
       if (!live.has(id)) announced.current.delete(id);
     }
 
-    // Taken before the early return below: a first list that happens to be empty
-    // is still a baseline, and without this the next job to arrive would be
-    // swallowed as one.
-    const baseline = !seeded.current;
+    /**
+     * Two ways a list counts as a baseline rather than as news: it is the first
+     * one this session, or it is the one that arrived because the rider just
+     * clocked on. The first alone was not enough — off duty the app is already
+     * holding an empty list, which quietly consumed the baseline, so the
+     * backlog that followed read as a fresh offer and took over the screen.
+     *
+     * Taken before the early return below, so a first list that happens to be
+     * empty is still a baseline and the next job to arrive is not swallowed.
+     */
+    const onDuty = data.on_duty;
+    const justClockedOn = wasOnDuty.current === false && onDuty === true;
+
+    const baseline = !seeded.current || justClockedOn;
     seeded.current = true;
+    if (typeof onDuty === 'boolean') wasOnDuty.current = onDuty;
 
     const fresh = offered.filter((o) => !announced.current.has(o.delivery_order_id));
     if (!fresh.length) return;

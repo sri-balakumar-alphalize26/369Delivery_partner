@@ -330,6 +330,13 @@ export interface ServerConfig {
    * ops will change it, and a rebuild to edit a phone number is a bad trade.
    */
   supportPhone: string;
+  /**
+   * OpenRouteService key, for the road-following route line and a real ETA.
+   *
+   * Optional in the same way the support number is: with none, the map falls
+   * back to the straight dashed leg it drew before, and no ETA is claimed.
+   */
+  orsKey: string;
   /** Run against the built-in simulation instead of the live server. */
   useMock: boolean;
 }

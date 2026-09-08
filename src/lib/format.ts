@@ -139,3 +139,29 @@ export function shopPhone(shop: Shop | string | undefined): string {
   if (!shop || typeof shop === 'string') return '';
   return shop.phone ?? '';
 }
+
+/**
+ * A route as a rider reads it off a moving map: "3.2 km · 8 min".
+ *
+ * The first honest distance and time this app has shown. Both were refused
+ * everywhere until now — "no distance, no ETA and no fee, though every rival app
+ * shows all three: none of them exists anywhere in the contract" — and that was
+ * right while the only way to produce one was to invent it. These come from the
+ * routing service that draws the line, so they describe the road actually drawn.
+ *
+ * Still not a promise. It is a car's time on an empty road, with no traffic and
+ * no allowance for finding the door, which is why the screen puts it beside the
+ * state chip rather than anywhere a rider might be held to it.
+ */
+export function routeSummary(distanceM: number, durationS: number): string {
+  const distance =
+    distanceM >= 1000
+      ? `${(distanceM / 1000).toFixed(1)} km`
+      : `${Math.round(distanceM)} m`;
+
+  // Never "0 min": a rider round the corner is a minute away, not no time away.
+  const mins = Math.max(1, Math.round(durationS / 60));
+  const time = mins >= 60 ? `${Math.floor(mins / 60)}h ${mins % 60}m` : `${mins} min`;
+
+  return `${distance} · ${time}`;
+}

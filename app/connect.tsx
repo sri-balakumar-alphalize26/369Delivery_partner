@@ -42,6 +42,7 @@ export default function Connect() {
   const [db, setDb] = useState('');
   const [token, setToken] = useState('');
   const [supportPhone, setSupportPhone] = useState('');
+  const [orsKey, setOrsKey] = useState('');
   const [useMock, setUseMock] = useState(true);
 
   const [busy, setBusy] = useState(false);
@@ -53,6 +54,7 @@ export default function Connect() {
     setDb(server?.db ?? ENV_DEFAULTS.db);
     setToken(server?.token ?? '');
     setSupportPhone(server?.supportPhone ?? ENV_DEFAULTS.supportPhone);
+    setOrsKey(server?.orsKey ?? ENV_DEFAULTS.orsKey);
     setUseMock(server?.useMock ?? true);
   }, [server]);
 
@@ -61,7 +63,7 @@ export default function Connect() {
     setError(null);
     setOk(null);
     try {
-      const rider = await connect({ url, db, token, supportPhone, useMock });
+      const rider = await connect({ url, db, token, supportPhone, orsKey, useMock });
       setOk(`Connected as ${rider.name}`);
     } catch (err) {
       // The server writes its own messages for riders — show them unchanged.
@@ -75,7 +77,7 @@ export default function Connect() {
     setBusy(true);
     setError(null);
     try {
-      await connect({ url, db, token, supportPhone, useMock });
+      await connect({ url, db, token, supportPhone, orsKey, useMock });
       router.replace('/');
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not connect.');
@@ -208,6 +210,14 @@ export default function Connect() {
               autoCorrect={false}
               keyboardType="phone-pad"
               placeholder="Leave empty to hide the button"
+            />
+            <Field
+              label="Route key"
+              value={orsKey}
+              onChangeText={setOrsKey}
+              autoCapitalize="none"
+              autoCorrect={false}
+              placeholder="openrouteservice.org key, for the map route"
             />
           </GlassCard>
 

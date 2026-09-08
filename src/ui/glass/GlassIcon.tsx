@@ -28,6 +28,7 @@ const MAP = {
   box: 'cube-outline',
   cash: 'cash-outline',
   compass: 'compass-outline',
+  bike: 'bicycle',
   eye: 'eye-outline',
 } as const;
 

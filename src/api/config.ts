@@ -20,6 +20,7 @@ const FROM_ENV: ServerConfig = {
   db: process.env.EXPO_PUBLIC_ODOO_DB ?? '',
   token: '',
   supportPhone: process.env.EXPO_PUBLIC_SUPPORT_PHONE ?? '',
+  orsKey: process.env.EXPO_PUBLIC_ORS_KEY ?? '',
   // Demo data until someone pastes a real token, so a fresh install is never
   // a dead screen.
   useMock: process.env.EXPO_PUBLIC_API_MODE !== 'real',
@@ -35,6 +36,7 @@ function normalise(cfg: ServerConfig): ServerConfig {
     token: cfg.token.trim(),
     // Optional and absent from every config saved before it existed.
     supportPhone: cfg.supportPhone?.trim() ?? '',
+    orsKey: cfg.orsKey?.trim() ?? '',
     useMock: cfg.useMock,
   };
 }

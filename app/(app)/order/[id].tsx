@@ -23,7 +23,7 @@ import {
   headingFor,
   PRIMARY_ACTIONS,
 } from '../../../src/api/types';
-import { money, promisedAt, shopName, shopPhone, timeOnly } from '../../../src/lib/format';
+import { money, promisedAt, routeSummary, shopName, shopPhone, timeOnly } from '../../../src/lib/format';
 import {
   hasLocationPermission,
   startTracking,
@@ -128,6 +128,13 @@ export default function Job() {
    * AsyncStorage rather than lib/storage — that one is the OS keystore, which is
    * for the credential, not for a scratch list.
    */
+  /**
+   * Real distance and time, handed up by the map once the routing service
+   * answers. Null whenever there is no route — no key, no signal, or no
+   * coordinates to route to — and the screen then claims nothing, as it did
+   * before there was any source for these at all.
+   */
+  const [leg, setLeg] = useState<{ distanceM: number; durationS: number } | null>(null);
   const [picked, setPicked] = useState<Set<number>>(new Set());
   const pickKey = `d369.picklist.${orderId}`;
 
@@ -173,6 +180,7 @@ export default function Job() {
     setOtpError(null);
     setCooldown(0);
     setPicked(new Set());
+    setLeg(null);
   }
 
   const { data: order, isLoading } = useQuery({
@@ -656,6 +664,7 @@ export default function Job() {
           shopLatitude={typeof order.shop === 'object' ? order.shop.latitude : null}
           shopLongitude={typeof order.shop === 'object' ? order.shop.longitude : null}
           heading={headingFor(order.delivery_status)}
+          onRoute={setLeg}
           height={Math.round(screenH * 0.32)}
         />
 
@@ -679,6 +688,15 @@ export default function Job() {
             <GlassText variant="body" tone="soft" style={{ marginTop: 2 }}>
               {order.delivery_address}
             </GlassText>
+
+            {/* How far the door still is, from the road the map drew rather
+                than from a straight line across the city. Absent unless there
+                is a route behind it. */}
+            {leg && leg.distanceM > 0 ? (
+              <GlassText variant="bodyStrong" tone="indigo" nums style={{ marginTop: gspace.sm }}>
+                {routeSummary(leg.distanceM, leg.durationS)} away
+              </GlassText>
+            ) : null}
 
             <View style={{ flexDirection: 'row', gap: gspace.md, marginTop: gspace.lg }}>
               <GlassButton
@@ -808,6 +826,7 @@ export default function Job() {
         shopLatitude={typeof order.shop === 'object' ? order.shop.latitude : null}
         shopLongitude={typeof order.shop === 'object' ? order.shop.longitude : null}
         heading={headingFor(order.delivery_status)}
+        onRoute={setLeg}
         height={Math.round(screenH * 0.4)}
       />
 
@@ -830,7 +849,19 @@ export default function Job() {
         ]}
       >
         <RoundButton icon="chev" mirrored onPress={() => router.back()} />
-        <GlassPill label={band.label} bg={band.bg} fg={band.fg} />
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: gspace.sm }}>
+          {/* Only with a route behind it. Guarded on the distance rather than
+              on the object: a response that arrived without a summary would
+              otherwise read "0 m", which is worse than saying nothing. */}
+          {leg && leg.distanceM > 0 ? (
+            <GlassPill
+              label={routeSummary(leg.distanceM, leg.durationS)}
+              bg={glass.white}
+              fg={glass.ink}
+            />
+          ) : null}
+          <GlassPill label={band.label} bg={band.bg} fg={band.fg} />
+        </View>
       </View>
 
       {/* The code boxes sit low on this screen, so the keyboard covered them
