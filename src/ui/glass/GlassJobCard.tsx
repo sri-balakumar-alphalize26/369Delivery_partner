@@ -3,6 +3,7 @@ import { Image } from 'expo-image';
 import { DeliveryOrder } from '../../api/types';
 import { dueIn, money, shopName } from '../../lib/format';
 import { useNow } from '../../hooks/useNow';
+import { useJobDistance } from '../../hooks/useJobDistance';
 import { GlassBarState, glass, glassBand, gspace } from '../../theme/glass';
 import { GlassButton } from './GlassButton';
 import { GlassCard } from './GlassCard';
@@ -44,6 +45,9 @@ export function GlassJobCard({
    * server's clock, not this phone's — see lib/clock.
    */
   const due = dueIn(job.promised_by, useNow());
+
+  /** How far this job is by road. Null until it resolves, and null without coordinates. */
+  const metres = useJobDistance(job);
 
   /** Only the object form carries an image; older captures send a bare string. */
   const logo = typeof job.shop === 'object' ? job.shop.image_url : null;
@@ -93,6 +97,7 @@ export function GlassJobCard({
             <GlassText variant="caption" tone="soft" numberOfLines={1}>
               {due && job.products?.length ? ' · ' : ''}
               {job.products?.length ? `${job.products.length} items` : ''}
+              {metres ? ` · ${(metres / 1000).toFixed(1)} km` : ''}
             </GlassText>
           </View>
         </View>

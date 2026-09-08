@@ -1,6 +1,6 @@
 import { useRouter } from 'expo-router';
 import { useState } from 'react';
-import { ScrollView, Switch, View } from 'react-native';
+import { RefreshControl, ScrollView, Switch, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { isMock } from '../../src/api/endpoints';
 import { mockFlags } from '../../src/api/mock/adapter';
@@ -33,7 +33,7 @@ export default function Profile() {
   const insets = useSafeAreaInsets();
   const { rider, server, connected, disconnect } = useSession();
   // Only to give the test notification a real job to open.
-  const { data: orders } = useOrders();
+  const { data: orders, isRefetching, refetch } = useOrders();
 
   const [steal, setSteal] = useState(mockFlags.stealNextOrder);
   const [offline, setOffline] = useState(mockFlags.offline);
@@ -53,6 +53,9 @@ export default function Profile() {
           paddingBottom: gspace.xxxl + insets.bottom,
         }}
         showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl refreshing={isRefetching} onRefresh={() => refetch()} />
+        }
       >
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
           <View

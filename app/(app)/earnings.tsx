@@ -1,4 +1,4 @@
-import { ScrollView, View } from 'react-native';
+import { RefreshControl, ScrollView, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNow } from '../../src/hooks/useNow';
 import { sortForRider, useOrders } from '../../src/hooks/useOrders';
@@ -7,6 +7,7 @@ import { useSession } from '../../src/store/session';
 import { CONTENT_MAX_W, glass, gradius, gspace } from '../../src/theme/glass';
 import { GlassCard } from '../../src/ui/glass/GlassCard';
 import { GlassHeader } from '../../src/ui/glass/GlassHeader';
+import { GlassProblem } from '../../src/ui/glass/GlassProblem';
 import { GlassScreen } from '../../src/ui/glass/GlassScreen';
 import { GlassText } from '../../src/ui/glass/GlassText';
 
@@ -29,7 +30,7 @@ import { GlassText } from '../../src/ui/glass/GlassText';
  */
 export default function Earnings() {
   const insets = useSafeAreaInsets();
-  const { data } = useOrders();
+  const { data, isError, error, isRefetching, refetch } = useOrders();
   const rider = useSession((s) => s.rider);
   const now = useNow();
 
@@ -62,7 +63,30 @@ export default function Earnings() {
           paddingBottom: gspace.xxxl + insets.bottom,
         }}
         showsVerticalScrollIndicator={false}
+        refreshControl={
+          <RefreshControl refreshing={isRefetching} onRefresh={() => refetch()} />
+        }
       >
+        {/**
+         * A dead server used to produce a confident zero here — `counts?.delivered
+         * ?? 0` cannot tell "you have delivered nothing" from "nobody answered".
+         * Of the two, a rider is far better served by being told which.
+         */}
+        {isError && !data ? (
+          <GlassProblem
+            message={error.message}
+            onRetry={() => refetch()}
+            retrying={isRefetching}
+          />
+        ) : null}
+
+        {isError && data ? (
+          <GlassProblem
+            tone="quiet"
+            message="Could not refresh just now. These are the last figures received."
+          />
+        ) : null}
+
         <GlassCard>
           <GlassText variant="caption" tone="soft">
             Delivered today

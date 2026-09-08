@@ -1,5 +1,5 @@
 import { useRouter } from 'expo-router';
-import { ScrollView, Switch, View } from 'react-native';
+import { RefreshControl, ScrollView, Switch, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { sortForRider, useDuty, useOrders } from '../../src/hooks/useOrders';
 import { money, onDutyFor } from '../../src/lib/format';
@@ -12,6 +12,7 @@ import { GlassCard } from '../../src/ui/glass/GlassCard';
 import { GlassIcon } from '../../src/ui/glass/GlassIcon';
 import { GlassJobCard } from '../../src/ui/glass/GlassJobCard';
 import { GlassPill } from '../../src/ui/glass/GlassPill';
+import { GlassProblem } from '../../src/ui/glass/GlassProblem';
 import { GlassScreen } from '../../src/ui/glass/GlassScreen';
 import { GlassText } from '../../src/ui/glass/GlassText';
 
@@ -33,7 +34,7 @@ export default function Home() {
   const insets = useSafeAreaInsets();
   const rider = useSession((s) => s.rider);
   const timezone = useSession((s) => s.timezone);
-  const { data, isLoading, refetch } = useOrders();
+  const { data, isLoading, isError, error, isRefetching, refetch } = useOrders();
   const duty = useDuty();
   const wide = useWide();
 
@@ -73,6 +74,10 @@ export default function Home() {
           paddingBottom: gspace.xxxl + insets.bottom,
         }}
         showsVerticalScrollIndicator={false}
+        /* A rider's first instinct is to pull. Until now that did nothing. */
+        refreshControl={
+          <RefreshControl refreshing={isRefetching} onRefresh={() => refetch()} />
+        }
       >
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>
           <View style={{ flex: 1, paddingRight: gspace.md }}>
@@ -190,6 +195,15 @@ export default function Home() {
           {jobs.length ? <GlassPill label={String(jobs.length)} tone="soft" /> : null}
         </View>
 
+        {/* A failed refresh with jobs already on screen keeps the jobs. Losing
+            a rider's list to one dropped poll is worse than the dropped poll. */}
+        {isError && data ? (
+          <GlassProblem
+            tone="quiet"
+            message="Could not refresh just now. Showing the last jobs received."
+          />
+        ) : null}
+
         {jobs.length ? (
           /* Two across on a tablet, one on a phone. A single column stretched
              to 800dp wastes the width as surely as the centred column that was
@@ -215,6 +229,13 @@ export default function Home() {
               </View>
             ))}
           </View>
+        ) : isError ? (
+          /* Never "Nothing to deliver" when the truth is that nobody asked. */
+          <GlassProblem
+            message={error.message}
+            onRetry={() => refetch()}
+            retrying={isRefetching}
+          />
         ) : (
           <GlassCard style={{ marginTop: gspace.md }}>
             <GlassText variant="subtitle">
