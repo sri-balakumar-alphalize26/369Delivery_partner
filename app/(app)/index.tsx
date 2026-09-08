@@ -1,5 +1,5 @@
 import { useRouter } from 'expo-router';
-import { RefreshControl, ScrollView, Switch, View } from 'react-native';
+import { Pressable, RefreshControl, ScrollView, Switch, View, ViewStyle } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { sortForRider, useDuty, useOrders } from '../../src/hooks/useOrders';
 import { money, onDutyFor } from '../../src/lib/format';
@@ -131,6 +131,9 @@ export default function Home() {
         </GlassCard>
 
         <GlassCard style={{ marginTop: gspace.lg }}>
+          {/* Alone among the four, this one does not open anything: delivered
+              rows are dropped from /orders and there is no history call to ask
+              for them, so there is no list behind the number to show. */}
           <GlassText variant="caption" tone="soft">
             Delivered today
           </GlassText>
@@ -161,9 +164,21 @@ export default function Home() {
           ) : null}
 
           <View style={{ flexDirection: 'row', gap: gspace.sm, marginTop: gspace.lg }}>
-            <Stat label="Assigned" value={counts?.assigned ?? 0} />
-            <Stat label="Collected" value={counts?.picked_up ?? 0} />
-            <Stat label="On road" value={counts?.out_for_delivery ?? 0} />
+            <Stat
+              label="Assigned"
+              value={counts?.assigned ?? 0}
+              onPress={() => router.push('/orders?bucket=assigned')}
+            />
+            <Stat
+              label="Collected"
+              value={counts?.picked_up ?? 0}
+              onPress={() => router.push('/orders?bucket=picked_up')}
+            />
+            <Stat
+              label="On road"
+              value={counts?.out_for_delivery ?? 0}
+              onPress={() => router.push('/orders?bucket=out_for_delivery')}
+            />
           </View>
         </GlassCard>
 
@@ -270,25 +285,59 @@ function greeting(): string {
   return 'Good evening';
 }
 
-function Stat({ label, value }: { label: string; value: string | number }) {
-  return (
-    <View
-      style={{
-        flex: 1,
-        backgroundColor: glass.fill,
-        borderRadius: gradius.chip,
-        borderWidth: 1,
-        borderColor: glass.border,
-        paddingVertical: gspace.md,
-        paddingHorizontal: gspace.md,
-      }}
-    >
+/**
+ * One of the three figures under the day's total.
+ *
+ * A number a rider cannot open is half an answer: "On road 2" invites the
+ * question "which two?", and until now nothing happened. Tapping carries the
+ * bucket to the jobs screen, which filters to it.
+ *
+ * A tile reading zero stays inert. There is nothing behind it, and an empty
+ * list is a worse answer to a tap than no response at all.
+ */
+function Stat({
+  label,
+  value,
+  onPress,
+}: {
+  label: string;
+  value: string | number;
+  onPress?: () => void;
+}) {
+  const box: ViewStyle = {
+    flex: 1,
+    backgroundColor: glass.fill,
+    borderRadius: gradius.chip,
+    borderWidth: 1,
+    borderColor: glass.border,
+    paddingVertical: gspace.md,
+    paddingHorizontal: gspace.md,
+  };
+
+  const body = (
+    <>
       <GlassText variant="subtitle" nums>
         {value}
       </GlassText>
       <GlassText variant="caption" tone="soft" style={{ marginTop: 2 }}>
         {label}
       </GlassText>
-    </View>
+    </>
+  );
+
+  if (!onPress || Number(value) < 1) return <View style={box}>{body}</View>;
+
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      /* Number and label in one phrase. The two Texts are otherwise announced
+         as loose fragments — "3", then "Assigned" — which is not a sentence. */
+      accessibilityLabel={`${label}, ${value} ${Number(value) === 1 ? 'job' : 'jobs'}. Opens the list.`}
+      hitSlop={6}
+      style={({ pressed }) => ({ ...box, opacity: pressed ? 0.7 : 1 })}
+    >
+      {body}
+    </Pressable>
   );
 }

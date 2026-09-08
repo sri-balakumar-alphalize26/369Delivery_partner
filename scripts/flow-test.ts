@@ -11,7 +11,15 @@
 
 import { mockAdapter as api, mockFlags } from '../src/api/mock/adapter';
 import { MOCK_DELIVERY_OTP, MOCK_PICKUP_OTP, mockFailedId } from '../src/api/mock/fixtures';
-import { Action, ApiError, headingFor } from '../src/api/types';
+import {
+  Action,
+  ApiError,
+  COUNT_BUCKET,
+  CountBucket,
+  DeliveryStatus,
+  headingFor,
+  inBucket,
+} from '../src/api/types';
 import { coords, shopName } from '../src/lib/format';
 
 let passed = 0;
@@ -313,6 +321,48 @@ async function main() {
   check('dispatched heads to the customer', headingFor('dispatched') === 'customer');
   check('out_for_delivery heads to the customer', headingFor('out_for_delivery') === 'customer');
   check('returning heads BACK to the shop', headingFor('returning') === 'shop');
+
+  console.log('\n=== 12c. The counts and the jobs behind them ===');
+  // Home's tiles open the jobs behind their own number, so the grouping a count
+  // is tallied with and the grouping a list is filtered with have to be the same
+  // one. They are: COUNT_BUCKET, read by both.
+
+  const owner = new Map<DeliveryStatus, CountBucket>();
+  let overlap = '';
+  for (const key of Object.keys(COUNT_BUCKET) as CountBucket[]) {
+    for (const st of COUNT_BUCKET[key]) {
+      if (owner.has(st)) overlap += `${st} in ${owner.get(st)} and ${key}; `;
+      owner.set(st, key);
+    }
+  }
+  check('no status falls in two buckets', overlap === '', overlap);
+
+  // Not an oversight. Odoo lists a returning job and counts it nowhere, which is
+  // the reason the jobs screen keeps an unfiltered "All".
+  check('returning is counted in no bucket, by design', !owner.has('returning'));
+
+  const snap = await api.orders();
+
+  // The three linked tiles hold no terminal status, so every row they count is
+  // also a row they list. This is the equality a rider sees: tap "2", get two.
+  for (const key of ['assigned', 'picked_up', 'out_for_delivery'] as CountBucket[]) {
+    const listed = snap.orders.filter((o) => inBucket(o.delivery_status, key)).length;
+    check(
+      `${key}: the tile's number is exactly what the filter shows`,
+      listed === snap.counts[key],
+      `counted ${snap.counts[key]}, listed ${listed}`
+    );
+  }
+
+  // And the reason the fourth tile is not a link.
+  const listedDelivered = snap.orders.filter((o) =>
+    inBucket(o.delivery_status, 'delivered')
+  ).length;
+  check(
+    'delivered is counted but never listed, so it cannot be opened',
+    listedDelivered === 0,
+    `${listedDelivered} delivered row(s) in the list`
+  );
 
   console.log('\n=== 13. No signal ===');
   mockFlags.offline = true;

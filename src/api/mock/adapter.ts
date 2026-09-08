@@ -7,6 +7,7 @@ import {
   DeliveryStatus,
   DutyResult,
   Identity,
+  inBucket,
   LocationResult,
   OrdersResponse,
   OrderTimestamps,
@@ -61,7 +62,9 @@ const ACTIONS_FOR: Record<DeliveryStatus, Action[]> = {
 };
 
 /**
- * Finished work. Dropped from `/orders` and found in `/history` instead.
+ * Finished work. Dropped from `/orders`, and nowhere else to be found: the app
+ * has no history call — `ApiAdapter` declares none and neither adapter answers
+ * one — so a delivered job leaves the phone entirely.
  *
  * `failed` is legacy: nothing has set it since Odoo module 19.0.6.0.0, where a
  * failed WhatsApp nudge stopped being treated as a failed delivery. Old rows
@@ -231,14 +234,17 @@ export const mockAdapter: ApiAdapter = {
     guard();
     const live = [...state.orders, ...state.finished];
     return {
+      // Tallied through COUNT_BUCKET rather than a grouping written out again
+      // here. Home's tiles open the jobs behind their own number using that same
+      // table, and a tile that disagreed with the list it opened would be worse
+      // than no tile at all.
       counts: {
-        assigned: live.filter((o) => ['offered', 'accepted'].includes(o.delivery_status))
-          .length,
-        picked_up: live.filter((o) => ['picked', 'dispatched'].includes(o.delivery_status))
-          .length,
-        out_for_delivery: live.filter((o) => o.delivery_status === 'out_for_delivery')
-          .length,
-        delivered: live.filter((o) => o.delivery_status === 'delivered').length,
+        assigned: live.filter((o) => inBucket(o.delivery_status, 'assigned')).length,
+        picked_up: live.filter((o) => inBucket(o.delivery_status, 'picked_up')).length,
+        out_for_delivery: live.filter((o) =>
+          inBucket(o.delivery_status, 'out_for_delivery')
+        ).length,
+        delivered: live.filter((o) => inBucket(o.delivery_status, 'delivered')).length,
       },
       // All four terminal states are dropped, matching the server again.
       //

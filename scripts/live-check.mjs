@@ -85,6 +85,65 @@ check('orders is an array', Array.isArray(list.orders), typeof list.orders);
 const orders = list.orders ?? [];
 console.log(`        ${orders.length} order(s) returned`);
 
+// === Does Odoo bucket its counts the way the app assumes? ===
+//
+// The app's table lives in src/api/types.ts as COUNT_BUCKET, and Home's tiles
+// open the jobs behind their own number with it. That table is the app's mirror
+// of a grouping Odoo computes server-side — a guess until something asks the
+// server. This is that something.
+//
+// Transcribed rather than imported: this file is plain .mjs against a live
+// server, and the point of the exercise is to compare the app's assumption with
+// Odoo's behaviour, so a second copy here is the instrument, not a duplicate.
+const BUCKET = {
+  assigned: ['offered', 'accepted'],
+  picked_up: ['picked', 'dispatched'],
+  out_for_delivery: ['out_for_delivery'],
+  delivered: ['delivered'],
+};
+
+const tally = {};
+for (const o of orders) tally[o.delivery_status] = (tally[o.delivery_status] ?? 0) + 1;
+
+console.log('\n        counts returned:');
+for (const [k, v] of Object.entries(list.counts ?? {})) {
+  console.log(`          ${k.padEnd(18)} ${v}`);
+}
+console.log('        statuses in orders[]:');
+for (const [k, v] of Object.entries(tally)) {
+  console.log(`          ${k.padEnd(18)} ${v}`);
+}
+
+// The three linked buckets hold no terminal status, so every row Odoo counts
+// into them it must also return. Equality is what makes a tile openable: tap
+// "2", get two. A failure here is not a broken server — it means Odoo groups
+// differently and COUNT_BUCKET is the thing to change.
+for (const key of ['assigned', 'picked_up', 'out_for_delivery']) {
+  const listed = orders.filter((o) => BUCKET[key].includes(o.delivery_status)).length;
+  check(
+    `counts.${key} matches the rows behind it`,
+    listed === (list.counts?.[key] ?? 0),
+    `Odoo counted ${list.counts?.[key]}, but ${listed} row(s) are in [${BUCKET[key].join(', ')}]`
+  );
+}
+
+// Not a failure, and the reason the Delivered tile opens nothing: those rows
+// are counted and then dropped from the list.
+const listedDelivered = orders.filter((o) => o.delivery_status === 'delivered').length;
+console.log(
+  `        delivered: counted ${list.counts?.delivered ?? 0}, listed ${listedDelivered}` +
+    (listedDelivered === 0 ? '  (as expected — no history call to open them)' : '')
+);
+
+// Anything Odoo returns that no bucket covers. `returning` is the known one and
+// is deliberate; a new name here is a status the app has not been told about.
+const uncounted = Object.keys(tally).filter(
+  (st) => !Object.values(BUCKET).some((list_) => list_.includes(st))
+);
+if (uncounted.length) {
+  console.log(`        listed but in no bucket: ${uncounted.join(', ')}`);
+}
+
 for (const o of orders) {
   const tag = `order ${o.delivery_order_id} (${o.delivery_status})`;
 

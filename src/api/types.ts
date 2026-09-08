@@ -218,6 +218,35 @@ export interface OrderCounts {
   delivered: number;
 }
 
+/** The bucket behind each of those figures. */
+export type CountBucket = keyof OrderCounts;
+
+/**
+ * Which statuses each of the four counts covers.
+ *
+ * Odoo computes `counts` server-side, so this is the app's mirror of that
+ * grouping rather than its source. It earns its place by having two readers:
+ * the mock tallies with it, and a tapped tile on Home opens the jobs behind its
+ * own number with it. Written once, they cannot disagree.
+ *
+ * `returning` is deliberately in no bucket — Odoo lists such a job but counts
+ * it nowhere, which is why the jobs screen keeps an unfiltered view.
+ *
+ * Lives here, beside `headingFor()`, for the same reason: pure status logic
+ * that wants testing, and a Node test cannot import a file full of React Native
+ * components.
+ */
+export const COUNT_BUCKET: Record<CountBucket, DeliveryStatus[]> = {
+  assigned: ['offered', 'accepted'],
+  picked_up: ['picked', 'dispatched'],
+  out_for_delivery: ['out_for_delivery'],
+  delivered: ['delivered'],
+};
+
+export function inBucket(status: DeliveryStatus, bucket: CountBucket): boolean {
+  return COUNT_BUCKET[bucket].includes(status);
+}
+
 export interface OrdersResponse {
   counts: OrderCounts;
   orders: DeliveryOrder[];
