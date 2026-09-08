@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { forwardRef, useImperativeHandle, useRef, useState } from 'react';
 import { Pressable, TextInput, View } from 'react-native';
 import { glass, gradius, gspace } from '../theme/glass';
 import { GlassText } from './glass/GlassText';
@@ -20,18 +20,31 @@ const BOX_H = 54;
  * Same value/onChange/error contract as `OtpInput`, so screens can swap between
  * them without touching their logic.
  */
-export function OtpBoxes({
-  value,
-  onChange,
-  error,
-  autoFocus,
-}: {
+/** What a parent can do to these boxes from outside. */
+export type OtpBoxesHandle = { focus: () => void };
+
+type OtpBoxesProps = {
   value: string;
   onChange: (v: string) => void;
   error?: string | null;
   autoFocus?: boolean;
-}) {
+};
+
+export const OtpBoxes = forwardRef<OtpBoxesHandle, OtpBoxesProps>(function OtpBoxes(
+  { value, onChange, error, autoFocus },
+  ref
+) {
   const input = useRef<TextInput>(null);
+
+  /**
+   * Focus from outside, for a caller that knows when the keyboard may open.
+   *
+   * `autoFocus` fires as this mounts, which inside a modal on Android is often
+   * before the window is actually on screen — the request is then dropped and
+   * the keyboard never appears, which is exactly what a rider reported. A parent
+   * that can wait for the modal to be shown calls this instead.
+   */
+  useImperativeHandle(ref, () => ({ focus: () => input.current?.focus() }), []);
   const [focused, setFocused] = useState(false);
 
   const digits = value.split('');
@@ -95,4 +108,4 @@ export function OtpBoxes({
       ) : null}
     </View>
   );
-}
+});

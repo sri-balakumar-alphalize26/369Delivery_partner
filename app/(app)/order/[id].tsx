@@ -9,7 +9,7 @@ import {
   useWindowDimensions,
   View,
 } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { initialWindowMetrics, useSafeAreaInsets } from 'react-native-safe-area-context';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { peekServer } from '../../../src/api/config';
 import { api } from '../../../src/api/endpoints';
@@ -42,7 +42,7 @@ import {
 import { Field } from '../../../src/ui/Field';
 import { LoadingArt } from '../../../src/ui/LoadingArt';
 import { LocationPrimer } from '../../../src/ui/LocationPrimer';
-import { OtpBoxes } from '../../../src/ui/OtpBoxes';
+import { CodeSheet } from '../../../src/ui/CodeSheet';
 import { OtpInput } from '../../../src/ui/OtpInput';
 import { MAP_ENABLED, RouteMap } from '../../../src/ui/RouteMap';
 import { GlassButton } from '../../../src/ui/glass/GlassButton';
@@ -85,6 +85,14 @@ function navigateTo(order: DeliveryOrder) {
   Linking.openURL(url).catch(() => {});
 }
 
+/**
+ * How wide the reading column may get.
+ *
+ * The map wants the whole width; text does not. Only binds on a tablet — a phone
+ * is narrower than this and is unaffected.
+ */
+const SHEET_MAX_W = 720;
+
 /** Why tracking would not start, in words a rider can act on. */
 const TRACKING_ERROR: Record<
   Exclude<Awaited<ReturnType<typeof startTracking>>, { ok: true }>['reason'],
@@ -102,6 +110,18 @@ export default function Job() {
   const router = useRouter();
   const qc = useQueryClient();
   const insets = useSafeAreaInsets();
+
+  /**
+   * The real distance to the bottom of the screen.
+   *
+   * `useSafeAreaInsets` is reduced by whatever the navigator thinks is sitting
+   * down there, and this route hides the tab bar — so the bar stopped occupying
+   * the strip while the inset stayed spent on it, and the secondary actions were
+   * drawn inside Android's navigation bar. Measured on a screenshot: ink at
+   * y=1890-1908 on a 1920-tall screen. `initialWindowMetrics` reports the window
+   * as the OS sees it, unadjusted, so the larger of the two is always safe.
+   */
+  const bottomInset = Math.max(insets.bottom, initialWindowMetrics?.insets.bottom ?? 0);
   const { height: screenH } = useWindowDimensions();
   // The shop's zone, from /auth/me — never the phone's own.
   const timezone = useSession((s) => s.timezone);
@@ -119,6 +139,8 @@ export default function Job() {
   /** Which action is waiting on the location explainer, if any. */
   const [primerFor, setPrimerFor] = useState<Action | null>(null);
   const [reasonNote, setReasonNote] = useState('');
+  /** Whether the code panel is up. The code itself still lives in `otp`. */
+  const [codeOpen, setCodeOpen] = useState(false);
   /**
    * Which items the rider has ticked off at the counter.
    *
@@ -179,6 +201,7 @@ export default function Job() {
     setError(null);
     setOtpError(null);
     setCooldown(0);
+    setCodeOpen(false);
     setPicked(new Set());
     setLeg(null);
   }
@@ -224,8 +247,13 @@ export default function Job() {
   // header and a badge on a card can never disagree.
   const band = glassBand[order.delivery_status as GlassBarState] ?? glassBand.idle;
 
+  /**
+   * Whether this step wants a code. Decides only whether the primary button
+   * opens the code panel or fires the action; the panel gates its own submit on
+   * six digits, which is why no flag out here greys out the very button a rider
+   * taps in order to enter the code.
+   */
   const needsOtp = primary === 'verify_pickup_otp' || primary === 'verify_delivery_otp';
-  const canSubmit = !needsOtp || otp.length === 6;
   const cod = order.payment_status === 'cod';
 
   /** At the counter waiting on the pickup code — the moment to check the bag. */
@@ -348,6 +376,9 @@ export default function Job() {
         setPicked(new Set());
         AsyncStorage.removeItem(pickKey).catch(() => {});
       }
+      // The panel has done its job. A wrong code keeps it open, showing the
+      // server's message against the boxes.
+      setCodeOpen(false);
       await applyResult(res);
     } catch (err) {
       if (err instanceof ApiError) {
@@ -366,6 +397,32 @@ export default function Job() {
       }
     } finally {
       setBusy(false);
+    }
+  }
+
+  /**
+   * Ask the shop to send the pickup code again.
+   *
+   * Verified on res-test1: with no WhatsApp session this answers success:false
+   * — "Could not send the pickup code." — while still issuing the code.
+   * Swallowing that left the button doing nothing visible, so the server's own
+   * wording is shown.
+   */
+  async function requestOtp() {
+    setError(null);
+    setOtpError(null);
+    try {
+      const res = await api.requestPickupOtp(orderId);
+      if (res.message) setError(res.message);
+      // The server enforces the window; obey the number it sends rather than a
+      // constant of our own.
+      setCooldown(res.retry_after_seconds ?? 0);
+    } catch (err) {
+      setError(
+        err instanceof ApiError
+          ? err.message
+          : 'Could not reach the shop. Ask them to read the code out.'
+      );
     }
   }
 
@@ -429,7 +486,7 @@ export default function Job() {
           contentContainerStyle={{
             paddingTop: insets.top + gspace.xxl,
             paddingHorizontal: gspace.xl,
-            paddingBottom: gspace.xxxl + insets.bottom,
+            paddingBottom: gspace.xxxl + bottomInset,
           }}
           keyboardShouldPersistTaps="handled"
         >
@@ -526,7 +583,7 @@ export default function Job() {
           contentContainerStyle={{
             paddingTop: insets.top + gspace.md,
             paddingHorizontal: gspace.xl,
-            paddingBottom: gspace.xxxl + insets.bottom,
+            paddingBottom: gspace.xxxl + bottomInset,
           }}
         >
           <View style={{ flexDirection: 'row', alignItems: 'center' }}>
@@ -674,12 +731,12 @@ export default function Job() {
         <KeyboardAvoidingView
           style={{ flex: 1 }}
           behavior="padding"
-          keyboardVerticalOffset={insets.bottom}
+          keyboardVerticalOffset={bottomInset}
         >
         <ScrollView
           contentContainerStyle={{
             padding: gspace.xl,
-            paddingBottom: gspace.xxxl + insets.bottom,
+            paddingBottom: gspace.xxxl + bottomInset,
           }}
           keyboardShouldPersistTaps="handled"
         >
@@ -746,21 +803,22 @@ export default function Job() {
             ) : null}
           </View>
 
-          <GlassCard style={{ marginTop: gspace.xxl }}>
-            <GlassText variant="label" tone="soft" upper>
-              Delivery code
-            </GlassText>
-            <GlassText
-              variant="body"
-              tone="soft"
-              style={{ marginTop: gspace.xs, marginBottom: gspace.lg }}
-            >
-              {/* WhatsApp, not SMS: the backend confirmed there is no SMS
-                  gateway configured and no plan to add one. */}
-              Ask the customer for the 6-digit code Odoo sent them on WhatsApp.
-            </GlassText>
-            <OtpBoxes value={otp} onChange={setOtp} error={otpError} />
-          </GlassCard>
+          {/* The same panel as the pickup code, so two codes in one flow cannot
+              end up looking like different controls. */}
+          <CodeSheet
+            visible={codeOpen && primary === 'verify_delivery_otp'}
+            title="Delivery code"
+            hint="Ask the customer for the 6-digit code Odoo sent them on WhatsApp."
+            value={otp}
+            onChange={setOtp}
+            error={otpError}
+            busy={busy}
+            canSubmit={otp.length === 6}
+            submitLabel={ACTION_LABEL.verify_delivery_otp}
+            submitKind="green"
+            onSubmit={() => run('verify_delivery_otp')}
+            onClose={() => setCodeOpen(false)}
+          />
 
           {error ? (
             <GlassText variant="bodyStrong" tone="red" style={{ marginTop: gspace.lg }}>
@@ -772,9 +830,8 @@ export default function Job() {
             title={ACTION_LABEL[primary]}
             kind="green"
             icon="check"
-            onPress={() => run(primary)}
+            onPress={() => (needsOtp ? setCodeOpen(true) : run(primary))}
             loading={busy}
-            disabled={!canSubmit}
             style={{ marginTop: gspace.xxl }}
           />
 
@@ -827,7 +884,10 @@ export default function Job() {
         shopLongitude={typeof order.shop === 'object' ? order.shop.longitude : null}
         heading={headingFor(order.delivery_status)}
         onRoute={setLeg}
-        height={Math.round(screenH * 0.4)}
+        /* Smaller at the counter: a rider entering the pickup code is standing
+           at the shop, so a map half the screen tall is showing them where they
+           already are. */
+        height={Math.round(screenH * (collecting ? 0.28 : 0.4))}
       />
 
       {/* Over the map when there is one, in normal flow when there is not —
@@ -871,11 +931,11 @@ export default function Job() {
       <KeyboardAvoidingView
         style={{ flex: 1 }}
         behavior="padding"
-        keyboardVerticalOffset={insets.bottom}
+        keyboardVerticalOffset={bottomInset}
       >
       <ScrollView
         style={{ marginTop: gspace.lg }}
-        contentContainerStyle={{ paddingBottom: gspace.xxxl + insets.bottom }}
+        contentContainerStyle={{ paddingBottom: gspace.xxxl + bottomInset }}
         keyboardShouldPersistTaps="handled"
       >
         <View
@@ -887,6 +947,11 @@ export default function Job() {
               borderWidth: 1,
               borderColor: glass.border,
               padding: gspace.xl,
+              /* Full width on a phone, a centred column on a tablet. Unbounded,
+                 an item name and its "x2" ended up a metre apart. */
+              width: '100%',
+              maxWidth: SHEET_MAX_W,
+              alignSelf: 'center',
             },
             gshadow.glass,
           ]}
@@ -987,64 +1052,28 @@ export default function Job() {
             </View>
           ) : null}
 
-          {primary === 'verify_pickup_otp' ? (
-            <View style={{ marginTop: gspace.lg }}>
-              {/* The label row carries the resend, right-aligned. Below the
-                  boxes it read as a second action of equal weight to entering
-                  the code, which it is not. */}
-              <View
-                style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                }}
-              >
-                <GlassText variant="label" tone="soft" upper>
-                  Pickup code
-                </GlassText>
-                {/* Verified on res-test1: with no WhatsApp session this answers
-                    success:false — "Could not send the pickup code." — while
-                    still issuing it. Swallowing that left the button doing
-                    nothing visible, so the server's own wording is shown. */}
-                <ResendLink
-                  label={
-                    cooldown > 0
-                      ? `Ask shop to resend (${cooldown}s)`
-                      : 'Ask shop to resend'
-                  }
-                  disabled={busy || cooldown > 0}
-                  onPress={async () => {
-                  setError(null);
-                  setOtpError(null);
-                  try {
-                    const res = await api.requestPickupOtp(orderId);
-                    if (res.message) setError(res.message);
-                    // The server enforces the window; obey the number it sends
-                    // rather than a constant of our own.
-                    setCooldown(res.retry_after_seconds ?? 0);
-                  } catch (err) {
-                    setError(
-                      err instanceof ApiError
-                        ? err.message
-                        : 'Could not reach the shop. Ask them to read the code out.'
-                      );
-                    }
-                  }}
-                />
-              </View>
-
-              <GlassText variant="body" tone="soft" style={{ marginTop: gspace.xs }}>
-                The shop staff will read this out when they hand the parcel over.
-              </GlassText>
-
-              {/* Six bordered squares, the same component the delivery code
-                  uses. This was OtpInput, which draws bare digits on a rule —
-                  so the two codes in one flow looked like different controls. */}
-              <View style={{ marginTop: gspace.lg }}>
-                <OtpBoxes value={otp} onChange={setOtp} error={otpError} />
-              </View>
-            </View>
-          ) : null}
+          {/* The code has its own panel now. See src/ui/CodeSheet.tsx for why it
+              stopped living at the foot of this sheet, under everything else. */}
+          <CodeSheet
+            visible={codeOpen && primary === 'verify_pickup_otp'}
+            title="Pickup code"
+            hint="The shop staff will read this out when they hand the parcel over."
+            value={otp}
+            onChange={setOtp}
+            error={otpError}
+            busy={busy}
+            canSubmit={otp.length === 6}
+            submitLabel={ACTION_LABEL.verify_pickup_otp}
+            onSubmit={() => run('verify_pickup_otp')}
+            onClose={() => setCodeOpen(false)}
+            right={
+              <ResendLink
+                label={cooldown > 0 ? `Ask shop to resend (${cooldown}s)` : 'Ask shop to resend'}
+                disabled={busy || cooldown > 0}
+                onPress={requestOtp}
+              />
+            }
+          />
 
           {error ? (
             <GlassText variant="bodyStrong" tone="red" style={{ marginTop: gspace.lg }}>
@@ -1058,9 +1087,8 @@ export default function Job() {
               title={ACTION_LABEL[primary]}
               kind="indigo"
               icon="check"
-              onPress={() => run(primary)}
+              onPress={() => (needsOtp ? setCodeOpen(true) : run(primary))}
               loading={busy}
-              disabled={!canSubmit}
               style={{ marginTop: gspace.xl }}
             />
           ) : (

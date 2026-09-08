@@ -31,6 +31,19 @@ const STEPS: { key: keyof NonNullable<DeliveryOrder['timestamps']>; label: strin
 ];
 
 /**
+ * Dot sizes, named because the rail's alignment depends on the larger one.
+ *
+ * The row holding [line][dot][line] centres its children, so a row only as tall
+ * as its own dot puts the 2px connector at half of 14 in the current column and
+ * half of 10 everywhere else. That drew the rail with a 3px step in it, right at
+ * the step the rider is on — measured off a screenshot at rows 805-807 beside
+ * "Accepted" against 802-804 for every other segment. Giving every row the
+ * height of the largest dot puts one connector at one height.
+ */
+const DOT_CURRENT = 14;
+const DOT_PLAIN = 10;
+
+/**
  * How many steps are done when there are no timestamps to read.
  *
  * The list endpoint does not always carry them, and a status is always
@@ -76,7 +89,15 @@ export function GlassProgress({
 
         return (
           <View key={step.key} style={{ flex: 1, alignItems: 'center' }}>
-            <View style={{ flexDirection: 'row', alignItems: 'center', width: '100%' }}>
+            <View
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                width: '100%',
+                // Not the dot's own height — see DOT_CURRENT above.
+                height: DOT_CURRENT,
+              }}
+            >
               {/* Half-width connectors either side of the dot, so the line
                   meets the dots rather than running under the labels. */}
               <Line filled={i > 0 && done} hidden={i === 0} />
@@ -105,7 +126,7 @@ export function GlassProgress({
 }
 
 function Dot({ done, current }: { done: boolean; current: boolean }) {
-  const size = current ? 14 : 10;
+  const size = current ? DOT_CURRENT : DOT_PLAIN;
 
   return (
     <View
