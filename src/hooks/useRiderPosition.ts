@@ -2,7 +2,7 @@ import * as Location from 'expo-location';
 import { useEffect, useRef, useState } from 'react';
 import { Platform } from 'react-native';
 import { peekServer } from '../api/config';
-import { LatLng, Leg, pointAtDistance } from '../lib/routeGeometry';
+import { bearingBetween, LatLng, Leg, metresBetween, pointAtDistance } from '../lib/routeGeometry';
 
 /**
  * Where the rider is, once per second, from whichever source this build has.
@@ -46,7 +46,11 @@ const WATCH_DISTANCE_M = 5;
  * in. Giving the simulated rider somewhere to stand breaks it at the rider, so
  * the route is fetched from a position exactly as it is on a real phone.
  */
-export function useRiderPosition(leg: Leg | null, start: LatLng | null): Fix | null {
+export function useRiderPosition(
+  leg: Leg | null,
+  start: LatLng | null,
+  target: LatLng | null
+): Fix | null {
   const [fix, setFix] = useState<Fix | null>(null);
 
   /**
@@ -112,30 +116,68 @@ export function useRiderPosition(leg: Leg | null, start: LatLng | null): Fix | n
 
   /* ----------------------------------------------------------------- *
    * The demo ride.
+   *
+   * One walk, whether or not a route has arrived.
+   *
+   * This used to wait for a route before moving at all — and since the map
+   * stopped fetching a route from anywhere but the rider's own position, the two
+   * waited on each other and nothing ever moved. A separate effect stood the
+   * rider up at a start point to break the circle, and it was too fragile: it
+   * fired once, and any render where the fetch did not follow left the demo dead.
+   *
+   * So the walk does not depend on the route. Without one he heads straight for
+   * the target; with one he follows the road. Either way he is a position, which
+   * is all the map needs to fetch a route from — exactly the order a real phone
+   * does it in.
    * ----------------------------------------------------------------- */
   const along = useRef(0);
 
-  // Stand the demo rider up before there is anywhere to walk.
-  useEffect(() => {
-    if (!simulated || !start || leg) return;
-    setFix({ coordinate: start, heading: null, at: Date.now() });
-  }, [simulated, start, leg]);
+  // Restart the walk when the road under it changes, not on every tick.
+  const legKey = leg ? `${leg.points.length}:${Math.round(leg.length)}` : 'none';
 
   useEffect(() => {
-    if (!simulated || !leg || leg.length === 0) return;
+    if (!simulated) return;
+    if (!leg && !start) return;
 
     along.current = 0;
 
     const timer = setInterval(() => {
-      along.current = Math.min(leg.length, along.current + SIM_SPEED_MPS * (SIM_TICK_MS / 1000));
-      const { coordinate, bearing } = pointAtDistance(leg, along.current);
-      setFix({ coordinate, heading: bearing, at: Date.now() });
-      // Holds at the door rather than looping. A rider who has arrived has
-      // arrived; restarting the run would misrepresent the state of the job.
+      const step = SIM_SPEED_MPS * (SIM_TICK_MS / 1000);
+
+      if (leg && leg.length > 0) {
+        along.current = Math.min(leg.length, along.current + step);
+        const { coordinate, bearing } = pointAtDistance(leg, along.current);
+        setFix({ coordinate, heading: bearing, at: Date.now() });
+        // Holds at the door rather than looping. A rider who has arrived has
+        // arrived; restarting the run would misrepresent the state of the job.
+        return;
+      }
+
+      /**
+       * No road yet, so walk the straight line toward the target.
+       *
+       * Deliberately crude — it exists only for the seconds before the first
+       * route lands, and it is what gives the map a position to ask for that
+       * route from. The moment one arrives the branch above takes over and he
+       * snaps to the tarmac.
+       */
+      if (!start || !target) return;
+      const total = metresBetween(start, target);
+      if (total === 0) return;
+      along.current = Math.min(total, along.current + step);
+      const t = along.current / total;
+      setFix({
+        coordinate: {
+          latitude: start.latitude + (target.latitude - start.latitude) * t,
+          longitude: start.longitude + (target.longitude - start.longitude) * t,
+        },
+        heading: bearingBetween(start, target),
+        at: Date.now(),
+      });
     }, SIM_TICK_MS);
 
     return () => clearInterval(timer);
-  }, [simulated, leg]);
+  }, [simulated, leg, legKey, start, target]);
 
   return fix;
 }

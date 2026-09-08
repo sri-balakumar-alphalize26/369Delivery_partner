@@ -45,10 +45,47 @@ export function useDuty() {
   const qc = useQueryClient();
   const applyDuty = useSession((s) => s.applyDuty);
 
-  return useMutation<DutyResult, Error, boolean>({
+  return useMutation<DutyResult, Error, boolean, { previous?: OrdersResponse }>({
     mutationFn: (on) => api.duty(on),
+
+    /**
+     * Show the tap at once, by patching the cached orders response.
+     *
+     * The switch reads `data.on_duty` from that cache, so without this it went
+     * on, off, then on again: the native control animated across, React
+     * re-rendered it from a cache still saying `false` and it snapped back, and
+     * only the refetch a moment later flipped it a second time. Three states for
+     * one tap, and the middle one a lie.
+     */
+    onMutate: async (next) => {
+      // Stop a poll landing mid-flight and overwriting this with stale truth.
+      await qc.cancelQueries({ queryKey: ['orders'] });
+      const previous = qc.getQueryData<OrdersResponse>(['orders']);
+      qc.setQueryData<OrdersResponse>(['orders'], (old) =>
+        old ? { ...old, on_duty: next } : old
+      );
+      return { previous };
+    },
+
+    /** The server refused, so put back what was there rather than leave a guess. */
+    onError: (_err, _next, context) => {
+      if (context?.previous) qc.setQueryData(['orders'], context.previous);
+    },
+
     onSuccess: (result) => {
       applyDuty(result);
+      // The server's answer, not the guess — they agree in practice, but this
+      // is the one that is true.
+      qc.setQueryData<OrdersResponse>(['orders'], (old) =>
+        old ? { ...old, on_duty: result.on_duty } : old
+      );
+    },
+
+    /**
+     * Reconcile either way. Clocking on collects whatever was confirmed while
+     * nobody was on duty, so the list that follows is genuinely different.
+     */
+    onSettled: () => {
       qc.invalidateQueries({ queryKey: ['orders'] });
     },
   });

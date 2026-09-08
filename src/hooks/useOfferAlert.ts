@@ -116,6 +116,23 @@ export function useOfferAlert(connected: boolean): void {
   const wasOnDuty = useRef<boolean | null>(null);
 
   /**
+   * How long after clocking on a list still counts as the backlog.
+   *
+   * Keying the baseline on the duty transition alone worked until the duty
+   * switch became optimistic: the cache is now patched with `on_duty: true` the
+   * instant the rider taps, several hundred milliseconds before the jobs
+   * themselves arrive. The transition was therefore spent on an empty list, and
+   * the backlog that followed looked like news and took the screen — the exact
+   * fault the baseline exists to prevent.
+   *
+   * So the transition opens a window instead of consuming an event. Anything
+   * arriving inside it is the backlog; a genuine offer minted a minute later
+   * still alarms.
+   */
+  const backlogUntil = useRef(0);
+  const BACKLOG_WINDOW_MS = 15_000;
+
+  /**
    * Whether it is safe to put the offer screen up.
    *
    * Read through a ref so that changing tab does not re-run the detection
@@ -155,9 +172,12 @@ export function useOfferAlert(connected: boolean): void {
      * empty is still a baseline and the next job to arrive is not swallowed.
      */
     const onDuty = data.on_duty;
-    const justClockedOn = wasOnDuty.current === false && onDuty === true;
+    if (wasOnDuty.current === false && onDuty === true) {
+      backlogUntil.current = Date.now() + BACKLOG_WINDOW_MS;
+    }
+    const inBacklogWindow = Date.now() < backlogUntil.current;
 
-    const baseline = !seeded.current || justClockedOn;
+    const baseline = !seeded.current || inBacklogWindow;
     seeded.current = true;
     if (typeof onDuty === 'boolean') wasOnDuty.current = onDuty;
 

@@ -137,7 +137,7 @@ export function RouteMapView({
 
   // `behind` is only somewhere for the DEMO rider to stand before a route
   // exists — see the hook. The route itself is never fetched from it.
-  const fix = useRiderPosition(route?.leg ?? null, behind);
+  const fix = useRiderPosition(route?.leg ?? null, behind, target);
   const rider = fix?.coordinate ?? null;
 
   /**
