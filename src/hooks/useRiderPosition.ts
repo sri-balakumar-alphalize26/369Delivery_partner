@@ -36,7 +36,17 @@ const SIM_TICK_MS = 1000;
 const WATCH_INTERVAL_MS = 1000;
 const WATCH_DISTANCE_M = 5;
 
-export function useRiderPosition(leg: Leg | null): Fix | null {
+/**
+ * `start` is where the demo rider stands before any route exists.
+ *
+ * Production has no such problem — GPS answers whether or not a route has been
+ * drawn. The simulation used to walk the fetched route, which was fine until the
+ * map stopped fetching a route without a rider: no rider without a route, no
+ * route without a rider, and nothing on screen in the one mode this is watched
+ * in. Giving the simulated rider somewhere to stand breaks it at the rider, so
+ * the route is fetched from a position exactly as it is on a real phone.
+ */
+export function useRiderPosition(leg: Leg | null, start: LatLng | null): Fix | null {
   const [fix, setFix] = useState<Fix | null>(null);
 
   /**
@@ -104,6 +114,12 @@ export function useRiderPosition(leg: Leg | null): Fix | null {
    * The demo ride.
    * ----------------------------------------------------------------- */
   const along = useRef(0);
+
+  // Stand the demo rider up before there is anywhere to walk.
+  useEffect(() => {
+    if (!simulated || !start || leg) return;
+    setFix({ coordinate: start, heading: null, at: Date.now() });
+  }, [simulated, start, leg]);
 
   useEffect(() => {
     if (!simulated || !leg || leg.length === 0) return;

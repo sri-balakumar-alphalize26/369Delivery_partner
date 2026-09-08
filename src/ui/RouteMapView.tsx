@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, View, ViewStyle } from 'react-native';
+import { Image } from 'expo-image';
 import MapView, { LatLng, Marker, Polyline, Region } from 'react-native-maps';
 import { peekServer } from '../api/config';
 import { useRiderPosition } from '../hooks/useRiderPosition';
@@ -67,6 +68,27 @@ const FRAME_MS = 33;
 /** The gap between fixes, and so the time a step has to cover the ground. */
 const STEP_MS = 1000;
 
+/**
+ * The rider on screen, in points.
+ *
+ * Matches the artwork's 132x256 proportions. A scooter seen from above is long
+ * and narrow, so this is taller than it is wide — and small enough that it sits
+ * on the streets rather than over them.
+ */
+const RIDER_H = 52;
+const RIDER_W = 27;
+
+/**
+ * The marker view is square, and that is not cosmetic.
+ *
+ * Rotating a 27x52 view swings its bounding box to 52x27, and the anchor is
+ * resolved against those bounds — so the sprite drifted off the road by up to
+ * half the difference, to the left or the right depending on which way it was
+ * pointing. A square box has the same bounds at every angle, so the anchor
+ * cannot move. The scooter is centred inside it.
+ */
+const RIDER_BOX = RIDER_H;
+
 /** Re-split the polyline every 25 metres rather than every frame. */
 const SPLIT_GRAIN_M = 25;
 
@@ -113,10 +135,9 @@ export function RouteMapView({
   const [along, setAlong] = useState(0);
   const [following, setFollowing] = useState(true);
 
-  // The route is what the demo rider walks, so it has to be fetched before
-  // there is any rider at all — which is why the origin below falls back to the
-  // fixed pin rather than waiting for a position.
-  const fix = useRiderPosition(route?.leg ?? null);
+  // `behind` is only somewhere for the DEMO rider to stand before a route
+  // exists — see the hook. The route itself is never fetched from it.
+  const fix = useRiderPosition(route?.leg ?? null, behind);
   const rider = fix?.coordinate ?? null;
 
   /**
@@ -136,6 +157,9 @@ export function RouteMapView({
    */
   const riderRef = useRef<LatLng | null>(null);
   riderRef.current = riderIsOnThisJob ? rider : null;
+
+  /** Whether there is a position at all — a boolean, so it changes once. */
+  const riderFound = riderRef.current != null;
 
   /** Bumped to ask for a fresh route once the rider has left the drawn one. */
   const [refetchTick, setRefetchTick] = useState(0);
@@ -160,11 +184,17 @@ export function RouteMapView({
     }
     if (fetchedFor.current === legKey) return;
 
-    // Whichever end the rider is at. Before the first fix that is the pin
-    // behind them — and on the collection leg the rider is standing near it
-    // anyway, so the line is close enough to draw while the drift check below
-    // corrects anything worse.
-    const origin = riderRef.current ?? behind;
+    /**
+     * Only ever from where the rider actually is.
+     *
+     * This used to fall back to the pin behind them, and on the collection leg
+     * that pin is the customer's house — so the map drew twenty kilometres of
+     * real road from a door the rider has never been to, and put a distance and
+     * an ETA on it. Correct geometry describing a journey nobody was making.
+     * With no position there is nothing true to draw, so the pins stand alone
+     * until there is.
+     */
+    const origin = riderRef.current;
     if (!origin) return;
 
     fetchedFor.current = legKey;
@@ -188,7 +218,12 @@ export function RouteMapView({
    * appeared and nothing was logged. `target` and `behind` are memoised above;
    * the rider is read through a ref.
    */
-  }, [legKey, target, behind, refetchTick]);
+  /**
+   * `riderFound` is in the deps because the origin now comes from the rider: the
+   * effect has to run again on the fix that first gives it one, and only that
+   * one. The position itself stays behind a ref, or every fix would re-fetch.
+   */
+  }, [legKey, target, riderFound, refetchTick]);
 
   /** Hand the real distance and time up, so the screen can show an honest ETA. */
   useEffect(() => {
@@ -328,13 +363,47 @@ export function RouteMapView({
    * invisible rider on a working map.
    */
   const hasRider = riderPoint != null;
+
+  /**
+   * The disc never turns; the cone under it does.
+   *
+   * A side-view scooter cannot be rotated — heading north or west it lies on its
+   * back — so rotating the whole marker was wrong, and mirroring it only ever
+   * bought left and right. Seen from above there is no such problem: the cone is
+   * a shape with no up or down, so it can point at the exact bearing from the
+   * road at every angle. That is the turning, and the rider above it stays
+   * upright and legible whichever way the road goes.
+   *
+   * Two markers rather than one, because they need different rotations — and it
+   * keeps the disc's snapshot stable, since only the cone's view changes as the
+   * heading changes.
+   */
+  /** Set once the rider artwork has decoded — see the note on `Rider`. */
+  const [riderDrawn, setRiderDrawn] = useState(false);
+
+  /**
+   * Heading in coarse buckets, for the snapshot.
+   *
+   * Android captures a custom marker's view once and reuses that bitmap, and the
+   * rotated sprite IS the view — so without re-arming, the rider keeps pointing
+   * whichever way he faced when first drawn. That is exactly the complaint this
+   * artwork was fetched to answer, so it would be a poor place to reintroduce it.
+   *
+   * Bucketed at 10 degrees rather than driven by the raw bearing: recapturing on
+   * every degree of a sweeping turn would snapshot the view thirty times a
+   * second, which is what `tracksViewChanges` exists to avoid.
+   */
+  const headingStep = Math.round(riderBearing / 10);
+
   const [tracksView, setTracksView] = useState(true);
   useEffect(() => {
-    if (!hasRider) return;
+    // Snapshotting before the image has decoded is how a marker ends up frozen
+    // as an empty view, so this waits for the artwork rather than for a clock.
+    if (!hasRider || !riderDrawn) return;
     setTracksView(true);
-    const t = setTimeout(() => setTracksView(false), 1200);
+    const t = setTimeout(() => setTracksView(false), 350);
     return () => clearTimeout(t);
-  }, [hasRider]);
+  }, [hasRider, riderDrawn, headingStep]);
 
   const initialRegion: Region = target
     ? { ...target, latitudeDelta: 0.04, longitudeDelta: 0.04 }
@@ -404,18 +473,32 @@ export function RouteMapView({
           />
         ) : null}
 
+        {/* The shadow first, under everything, unrotated — a blob on the road
+            does not need to know which way the scooter faces. */}
         {riderPoint ? (
           <Marker
             coordinate={riderPoint}
             anchor={{ x: 0.5, y: 0.5 }}
-            // `flat` pins it to the ground so it turns with the map rather than
-            // standing up like a pin.
+            flat
+            tracksViewChanges={tracksView}
+            zIndex={9}
+          >
+            <RiderShadow />
+          </Marker>
+        ) : null}
+
+        {/* Centred and turned to the road. Seen from above there is no foot to
+            stand on the tarmac — the whole sprite sits over the route point. */}
+        {riderPoint ? (
+          <Marker
+            coordinate={riderPoint}
+            anchor={{ x: 0.5, y: 0.5 }}
             flat
             rotation={riderBearing}
             tracksViewChanges={tracksView}
             zIndex={10}
           >
-            <Rider />
+            <Rider onReady={() => setRiderDrawn(true)} />
           </Marker>
         ) : null}
       </MapView>
@@ -461,24 +544,119 @@ export function RouteMapView({
  * Rotated by the Marker rather than by a transform here, so the rotation is the
  * map's own and stays correct when the map itself is turned.
  */
-function Rider() {
+/**
+ * The rider, as a delivery rider rather than a dot.
+ *
+ * This was a solid navy disc with a small white bicycle glyph, which at map
+ * scale read as a black blob with something indistinct inside — measured off a
+ * screenshot as rgb(27,42,74) edge to edge, the glyph carrying no meaning at
+ * 20px. Inverted: a white disc reads as an object sitting ON the map instead of
+ * a hole punched in it, and the rider inside is legible because it is drawn dark
+ * on light and given room.
+ *
+ * `delivery-dining` is a rider on a scooter with a delivery box, which is the
+ * shape Flipkart Minutes, JioMart and Blinkit all use.
+ *
+ * Nothing in here animates, and nothing can: Android snapshots a custom marker
+ * view once and reuses the bitmap as it moves, which is what made this marker
+ * invisible entirely on the first attempt. The movement a rider reads is the
+ * marker gliding along the road, which is the same thing those apps do.
+ */
+/**
+ * The rider, seen from above and always the right way up.
+ *
+ * This was a solid navy disc with a small white bicycle glyph, which at map
+ * scale read as a black blob with something indistinct inside — measured off a
+ * screenshot as rgb(27,42,74) edge to edge, the glyph carrying no meaning at
+ * 20px. Inverted: a white disc reads as an object sitting ON the map rather than
+ * a hole punched in it, and the rider inside is legible because it is dark on
+ * light and given room.
+ *
+ * It never rotates. Direction is the cone's job, and a scooter drawn from the
+ * side cannot be turned to face north without lying on its back.
+ *
+ * Nothing in here animates, and nothing can: Android snapshots a custom marker
+ * view once and reuses the bitmap as it moves, which is what made this marker
+ * invisible entirely on the first attempt. The movement a rider reads is the
+ * marker gliding along the road, which is what the real apps do too.
+ */
+/**
+ * The rider: the supplied 3D artwork, standing on the road.
+ *
+ * A vector glyph was never going to be this. What came before was a navy disc
+ * with a bicycle in it, then a white disc with a scooter glyph — flat, mono, and
+ * unmistakably an icon. This is a render, so it reads as a render.
+ *
+ * No disc behind it. A plate under a 3D figure makes it look like a sticker
+ * pressed onto the map; the artwork carries itself.
+ *
+ * Anchored at its foot by the Marker, so the wheels land on the snapped route
+ * point rather than the middle of the rider's back.
+ *
+ * `onLoad` matters more than it looks. `expo-image` decodes asynchronously, and
+ * Android snapshots this view once and then reuses the bitmap — so releasing the
+ * snapshot before the image arrives freezes an empty marker forever. That is
+ * exactly how the font produced an empty white circle. Tracking is held until
+ * this fires.
+ */
+function Rider({ onReady }: { onReady: () => void }) {
   return (
+    /**
+     * A wrapper of a known size.
+     *
+     * Android measures the marker view to work out where the anchor sits, and a
+     * measurement taken before the image has sized itself puts the sprite beside
+     * the point rather than on it. Fixing the box removes the guess.
+     */
     <View
       style={{
-        width: 34,
-        height: 34,
-        borderRadius: 17,
-        backgroundColor: glass.indigo,
-        borderWidth: 3,
-        borderColor: glass.white,
+        width: RIDER_BOX,
+        height: RIDER_BOX,
         alignItems: 'center',
         justifyContent: 'center',
       }}
     >
-      <GlassIcon name="bike" color={glass.white} size={17} />
+    <Image
+      source={require('../../assets/images/rider-top.png')}
+      style={{ width: RIDER_W, height: RIDER_H }}
+      contentFit="contain"
+      // Nothing to fade: a marker snapshot would capture the middle of it.
+      transition={0}
+      onLoad={onReady}
+    />
     </View>
   );
 }
+
+/**
+ * The shadow the scooter casts on the road.
+ *
+ * Grounds it: without one a top-down sprite floats above the map rather than
+ * riding on it. Its own marker, centred on the route point, so it also shows
+ * exactly where the line believes the rider is.
+ */
+function RiderShadow() {
+  return (
+    <View
+      style={{
+        width: RIDER_BOX,
+        height: RIDER_BOX,
+        alignItems: 'center',
+        justifyContent: 'center',
+      }}
+    >
+      <View
+        style={{
+          width: RIDER_W * 0.7,
+          height: RIDER_H * 0.62,
+          borderRadius: RIDER_W,
+          backgroundColor: 'rgba(15,23,42,0.22)',
+        }}
+      />
+    </View>
+  );
+}
+
 
 /**
  * A pin, in the job screen's own palette rather than the library's default red.
