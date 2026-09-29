@@ -2,7 +2,7 @@ import * as SecureStore from 'expo-secure-store';
 import { Platform } from 'react-native';
 
 /**
- * Storage for the access token and server settings.
+ * Storage for the server settings.
  *
  * On a phone this is the OS keystore, which is where a credential belongs.
  * `expo-secure-store` has no web implementation at all, so the browser — used

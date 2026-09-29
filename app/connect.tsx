@@ -14,21 +14,16 @@ import { GlassScreen } from '../src/ui/glass/GlassScreen';
 import { GlassText } from '../src/ui/glass/GlassText';
 
 /**
- * There is no login screen.
+ * Sign-in and server settings on one screen.
  *
- * The WhatsApp code flow is the production login, but WhatsApp is not confirmed
- * working on the test database yet — so rather than block every other screen
- * behind something untestable, the rider identity comes from a bearer token
- * generated in Odoo and pasted here.
+ * A rider signs in with their mobile number and the password the office set
+ * with "Create app login" on their rider record in Odoo. The server answers
+ * with a session cookie the phone keeps, so the password is typed here and
+ * nowhere else — it is never stored.
  *
- * This screen doubles as the server config. The test host is a Cloudflare quick
+ * The screen doubles as the server config. The test host is a Cloudflare quick
  * tunnel whose address changes on restart; being able to paste the new one here
  * is what stops that costing a rebuild every time.
- *
- * The template draws a mobile-number and one-time-code sign-in. That flow does
- * not exist yet, so this is its *styling* over the fields that are actually
- * wired up. Drawing the OTP form would be drawing a login that cannot log
- * anyone in.
  *
  * It stays outside the tabs group, so it is not a tab — reached only from
  * Profile or by the Gate redirect.
@@ -40,7 +35,8 @@ export default function Connect() {
 
   const [url, setUrl] = useState('');
   const [db, setDb] = useState('');
-  const [token, setToken] = useState('');
+  const [login, setLogin] = useState('');
+  const [password, setPassword] = useState('');
   const [supportPhone, setSupportPhone] = useState('');
   const [orsKey, setOrsKey] = useState('');
   const [useMock, setUseMock] = useState(true);
@@ -52,18 +48,29 @@ export default function Connect() {
   useEffect(() => {
     setUrl(server?.url ?? ENV_DEFAULTS.url);
     setDb(server?.db ?? ENV_DEFAULTS.db);
-    setToken(server?.token ?? '');
+    setLogin(server?.login ?? '');
     setSupportPhone(server?.supportPhone ?? ENV_DEFAULTS.supportPhone);
     setOrsKey(server?.orsKey ?? ENV_DEFAULTS.orsKey);
     setUseMock(server?.useMock ?? true);
   }, [server]);
 
+  const config = () => ({ url, db, login, supportPhone, orsKey, useMock });
+
+  // The server would refuse an empty login too, but with a message about a
+  // wrong password, which sends the rider looking in the wrong place.
+  function missingLogin(): boolean {
+    if (useMock || (login.trim() && password)) return false;
+    setError('Enter your mobile number and password.');
+    return true;
+  }
+
   async function test() {
-    setBusy(true);
     setError(null);
     setOk(null);
+    if (missingLogin()) return;
+    setBusy(true);
     try {
-      const rider = await connect({ url, db, token, supportPhone, orsKey, useMock });
+      const rider = await connect(config(), password);
       setOk(`Connected as ${rider.name}`);
     } catch (err) {
       // The server writes its own messages for riders — show them unchanged.
@@ -74,10 +81,11 @@ export default function Connect() {
   }
 
   async function save() {
-    setBusy(true);
     setError(null);
+    if (missingLogin()) return;
+    setBusy(true);
     try {
-      await connect({ url, db, token, supportPhone, orsKey, useMock });
+      await connect(config(), password);
       router.replace('/');
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not connect.');
@@ -182,12 +190,26 @@ export default function Connect() {
                   placeholder="res-test1"
                 />
                 <Field
-                  label="Access token"
-                  value={token}
-                  onChangeText={setToken}
+                  label="Mobile number"
+                  value={login}
+                  onChangeText={setLogin}
                   autoCapitalize="none"
                   autoCorrect={false}
-                  placeholder="Paste the token from Odoo"
+                  keyboardType="phone-pad"
+                  autoComplete="tel"
+                  textContentType="username"
+                  placeholder="The number on your rider record"
+                />
+                <Field
+                  label="Password"
+                  value={password}
+                  onChangeText={setPassword}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  secureTextEntry
+                  autoComplete="password"
+                  textContentType="password"
+                  placeholder="Set by the office in Odoo"
                 />
               </>
             )}

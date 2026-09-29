@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_sa_delivery_partner_form_rider_rpc" model="ir.ui.view">
+        <field name="name">sa.delivery.partner.form.rider_rpc</field>
+        <field name="model">sa.delivery.partner</field>
+        <field name="inherit_id"
+               ref="sales_automation_delivery.view_sa_delivery_partner_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//sheet" position="before">
+                <header>
+                    <button name="action_rider_rpc_create_login" type="object"
+                            string="Create app login" class="btn-primary"
+                            invisible="user_id"
+                            groups="sales_automation_delivery.group_sa_delivery_manager"/>
+                    <button name="action_rider_rpc_create_login" type="object"
+                            string="Set app password"
+                            invisible="not user_id"
+                            groups="sales_automation_delivery.group_sa_delivery_manager"/>
+                </header>
+            </xpath>
+            <xpath expr="//field[@name='partner_id']" position="after">
+                <field name="user_id" string="App Login"/>
+            </xpath>
+            <xpath expr="//notebook" position="inside">
+                <page string="App Devices" name="rider_rpc_devices">
+                    <field name="rider_rpc_device_ids"
+                           context="{'active_test': False}">
+                        <list create="false" editable="bottom">
+                            <field name="platform"/>
+                            <field name="token"/>
+                            <field name="last_seen"/>
+                            <field name="active" widget="boolean_toggle"/>
+                        </list>
+                    </field>
+                </page>
+            </xpath>
+        </field>
+    </record>
+</odoo>

@@ -5,7 +5,9 @@ store, and deliver with an OTP.
 
 - **Stack:** React Native + Expo **SDK 54**, TypeScript, Expo Router
 - **Package:** `com.alphalize.deliverypartner`
-- **Backend:** none yet — the app ships with a full in-memory simulation
+- **Backend:** Odoo 19 with the `delivery_rider_rpc` module, over Odoo's own JSON-RPC.
+  A copy of the module is in [`odoo_modules/delivery_rider_rpc`](odoo_modules/delivery_rider_rpc).
+  Demo mode ships a full in-memory simulation.
 
 ---
 
@@ -50,16 +52,26 @@ The app talks to exactly one interface, `ApiAdapter` in
 [`src/api/types.ts`](src/api/types.ts). Two implementations satisfy it:
 
 ```
-src/api/mock/adapter.ts    in-memory simulation   (default)
-src/api/real/adapter.ts    REST over HTTP         (for Odoo)
+src/api/mock/adapter.ts    in-memory simulation                 (default)
+src/api/rpc/adapter.ts     JSON-RPC to the Odoo model sa.rider.rpc
 ```
+
+The live adapter signs in at `/web/session/authenticate` with the database, the
+rider's mobile number and a password, keeps the session cookie, and calls every
+method of `sa.rider.rpc` through `/web/dataset/call_kw`
+([`src/api/rpc/client.ts`](src/api/rpc/client.ts)). The rider's login is created
+in Odoo: Delivery → Configuration → Riders → **Create app login**.
 
 Switch with environment variables — no screen code changes:
 
 ```bash
 EXPO_PUBLIC_API_MODE=real
 EXPO_PUBLIC_API_URL=https://your-odoo-host
+EXPO_PUBLIC_ODOO_DB=your-database
 ```
+
+The address and database can also be changed in the app (Profile → Change
+connection), and the sign-in happens there.
 
 Because both adapters are typed against `ApiAdapter`, any drift between the app
 and the backend contract is a **compile error**, not a bug on a rider's phone.
@@ -137,8 +149,7 @@ background is lost, the wordmark and rider survive intact on 16:9, 19.5:9 and
 
 ## Not built yet (deliberate)
 
-Odoo login and integration, document-upload onboarding, embedded maps, order
-batching, wallet and payouts, COD reconciliation, shift slots, support chat,
+Document-upload onboarding, embedded maps, order batching, wallet and payouts, COD reconciliation, shift slots, support chat,
 ratings and penalties, iOS build, multi-language.
 
 The adapter interface, the `RiderConfig` object and the order status machine are

@@ -1,4 +1,4 @@
-import { getItem, removeItem, setItem } from '../lib/storage';
+import { getItem, setItem } from '../lib/storage';
 import { ServerConfig } from './types';
 
 /**
@@ -9,8 +9,9 @@ import { ServerConfig } from './types';
  * a reinstall each time it bounces. A saved value therefore beats the build-time
  * default, and is edited on the Connect screen.
  *
- * The token is a credential, so all of this lives in SecureStore rather than
- * AsyncStorage.
+ * Nothing here is secret any more — the password is never stored, and the
+ * session lives in the phone's cookie jar — but SecureStore costs nothing and
+ * keeps the door shut should a credential ever come back.
  */
 
 const KEY = 'd369.server';
@@ -18,11 +19,11 @@ const KEY = 'd369.server';
 const FROM_ENV: ServerConfig = {
   url: process.env.EXPO_PUBLIC_API_URL ?? '',
   db: process.env.EXPO_PUBLIC_ODOO_DB ?? '',
-  token: '',
+  login: '',
   supportPhone: process.env.EXPO_PUBLIC_SUPPORT_PHONE ?? '',
   orsKey: process.env.EXPO_PUBLIC_ORS_KEY ?? '',
-  // Demo data until someone pastes a real token, so a fresh install is never
-  // a dead screen.
+  // Demo data until someone signs in to a real server, so a fresh install is
+  // never a dead screen.
   useMock: process.env.EXPO_PUBLIC_API_MODE !== 'real',
 };
 
@@ -33,7 +34,8 @@ function normalise(cfg: ServerConfig): ServerConfig {
     // A trailing slash would produce `//api/delivery/...` and a confusing 404.
     url: cfg.url.trim().replace(/\/+$/, ''),
     db: cfg.db.trim(),
-    token: cfg.token.trim(),
+    // Absent from a config saved when the app still pasted a token.
+    login: cfg.login?.trim() ?? '',
     // Optional and absent from every config saved before it existed.
     supportPhone: cfg.supportPhone?.trim() ?? '',
     orsKey: cfg.orsKey?.trim() ?? '',
@@ -64,11 +66,6 @@ export async function saveServer(cfg: ServerConfig): Promise<ServerConfig> {
   cached = next;
   await setItem(KEY, JSON.stringify(next));
   return next;
-}
-
-export async function clearServer(): Promise<void> {
-  cached = null;
-  await removeItem(KEY);
 }
 
 /** Synchronous read for code paths that cannot await. May be stale before first load. */

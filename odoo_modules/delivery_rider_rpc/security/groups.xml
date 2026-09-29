@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!--
+        A marker, not a key: the app is gated on the user being linked to a
+        rider (sa.delivery.partner.user_id), and this grants no model rights.
+        It is here so the office can find every app login in one list, and so
+        "Create app login" has something to put portal riders in.
+    -->
+    <record id="group_rider_app" model="res.groups">
+        <field name="name">Delivery Rider (App)</field>
+        <field name="comment">Signs in to the rider app over JSON-RPC. Sees only the jobs offered to their own rider record.</field>
+    </record>
+</odoo>

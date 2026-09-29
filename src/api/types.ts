@@ -320,7 +320,7 @@ export type ApiErrorCode =
  * `message` is written by Odoo for the rider to read. The contract says to show
  * it unchanged, so never substitute our own wording.
  *
- * A `wrong_state` error also carries `status_name` and `allowed_actions`, which
+ * A `wrong_state` refusal also carries `status` and `allowed_actions`, which
  * is enough to re-render a stale screen correctly without reloading.
  */
 export class ApiError extends Error {
@@ -347,11 +347,16 @@ export class ApiError extends Error {
   }
 }
 
-/** Server connection, pasted on the Connect screen. */
+/** Server connection, entered on the Connect screen. */
 export interface ServerConfig {
   url: string;
   db: string;
-  token: string;
+  /**
+   * The rider's mobile number, which is their Odoo login. The password is
+   * never stored: the session cookie the phone keeps is the credential, and
+   * signing in again is the only way to get a new one.
+   */
+  login: string;
   /**
    * Who a stuck rider calls. Optional — the button is hidden when unset.
    *
@@ -382,6 +387,11 @@ export interface Identity {
  * rather than as a blank screen on a rider's phone.
  */
 export interface ApiAdapter {
+  /** Sign in with the rider's number and password. Resolves once the server accepted them. */
+  login(mobile: string, password: string): Promise<void>;
+  /** End the session on the server. Best effort: a failure must never block signing out. */
+  logout(): Promise<void>;
+
   me(): Promise<Identity>;
 
   duty(on: boolean): Promise<DutyResult>;
@@ -404,9 +414,9 @@ export interface ApiAdapter {
   /**
    * Hand Odoo a push token so it can wake this phone when a job is offered.
    *
-   * `projectId` is sent because Expo rejects a send whose messages span two
-   * EAS projects — and rejects the whole request, so one stale token can
-   * silence every other rider. The server groups its sends by it.
+   * `projectId` is the EAS project that minted the token. It is carried here
+   * because Expo rejects a send whose messages span two projects; the current
+   * backend has one project and no parameter for it, so its adapter drops it.
    */
   registerPush(input: {
     token: string;

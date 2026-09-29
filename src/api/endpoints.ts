@@ -1,6 +1,6 @@
 import { peekServer } from './config';
 import { mockAdapter } from './mock/adapter';
-import { realAdapter } from './real/adapter';
+import { rpcAdapter } from './rpc/adapter';
 import { ApiAdapter } from './types';
 
 /**
@@ -13,7 +13,7 @@ import { ApiAdapter } from './types';
  */
 export const api: ApiAdapter = new Proxy({} as ApiAdapter, {
   get(_target, prop: string) {
-    const adapter = peekServer().useMock ? mockAdapter : realAdapter;
+    const adapter = peekServer().useMock ? mockAdapter : rpcAdapter;
     return (adapter as unknown as Record<string, unknown>)[prop];
   },
 });

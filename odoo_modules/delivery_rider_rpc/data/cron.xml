@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!--
+        Runs every minute as a safety net; a rider's step also triggers it
+        immediately, so messages normally leave within seconds.
+    -->
+    <record id="cron_rider_outbox_send" model="ir.cron">
+        <field name="name">Rider app: send queued WhatsApp and push</field>
+        <field name="model_id" ref="model_sa_rider_outbox"/>
+        <field name="state">code</field>
+        <field name="code">model._cron_send()</field>
+        <field name="interval_number">1</field>
+        <field name="interval_type">minutes</field>
+        <field name="active" eval="True"/>
+    </record>
+</odoo>

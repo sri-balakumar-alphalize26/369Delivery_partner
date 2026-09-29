@@ -1,0 +1,6 @@
+id,name,model_id:id,group_id:id,perm_read,perm_write,perm_create,perm_unlink
+access_sa_rider_outbox_user,sa.rider.outbox.user,model_sa_rider_outbox,sales_automation_delivery.group_sa_delivery_user,1,0,0,0
+access_sa_rider_outbox_manager,sa.rider.outbox.manager,model_sa_rider_outbox,sales_automation_delivery.group_sa_delivery_manager,1,1,0,1
+access_sa_rider_rpc_log_manager,sa.rider.rpc.log.manager,model_sa_rider_rpc_log,sales_automation_delivery.group_sa_delivery_manager,1,0,0,1
+access_sa_rider_device_user,sa.rider.device.user,model_sa_rider_device,sales_automation_delivery.group_sa_delivery_user,1,0,0,0
+access_sa_rider_device_manager,sa.rider.device.manager,model_sa_rider_device,sales_automation_delivery.group_sa_delivery_manager,1,1,1,1

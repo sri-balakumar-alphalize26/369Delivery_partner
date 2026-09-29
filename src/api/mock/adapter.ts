@@ -178,6 +178,10 @@ function offer() {
 }
 
 export const mockAdapter: ApiAdapter = {
+  // Demo mode has no server to sign in to: any number and password work.
+  async login() {},
+  async logout() {},
+
   async me(): Promise<Identity> {
     await wait(200);
     guard();
