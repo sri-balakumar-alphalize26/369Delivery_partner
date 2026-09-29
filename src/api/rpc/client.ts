@@ -54,6 +54,12 @@ const KNOWN_CODES: ApiErrorCode[] = [
   'wrong_state',
   'bad_otp',
   'otp_required',
+  'bad_point',
+  'off_duty',
+  'no_file',
+  'too_large',
+  'no_token',
+  'uuid_reused',
 ];
 
 function toCode(raw: unknown): ApiErrorCode {
@@ -142,27 +148,76 @@ async function post<T>(
 }
 
 /**
+ * The databases a server offers, for the Connect screen to pick from. Takes the
+ * address as typed, since nothing is saved until the rider signs in.
+ *
+ * `null` means the server will not say — `list_db = False` in odoo.conf answers
+ * with a JSON-RPC error — and the rider has to type the name. No cookie is
+ * involved, so this cannot disturb a session.
+ */
+export async function listDatabases(rawUrl: string): Promise<string[] | null> {
+  const url = rawUrl.trim().replace(/\/+$/, '');
+  if (!url) return null;
+  console.log(`[login] listing databases at ${url}`);
+  let envelope: Envelope<string[]>;
+  try {
+    envelope = await post<string[]>(url, '/web/database/list', {}, 8000);
+  } catch (err) {
+    console.warn(`[login] database list failed at ${url}:`, (err as Error)?.message);
+    throw err;
+  }
+  if (envelope.error || !Array.isArray(envelope.result)) {
+    console.warn(
+      '[login] server will not list its databases:',
+      envelope.error?.data?.name ?? envelope.error?.message ?? 'no list in the answer'
+    );
+    return null;
+  }
+  console.log(`[login] ${envelope.result.length} database(s):`, envelope.result.join(', '));
+  return envelope.result;
+}
+
+/**
  * Sign in. On success Odoo has set the session cookie; nothing is returned
  * because nothing needs keeping.
+ *
+ * Every outcome is logged under `[login]` — the server, database and username,
+ * never the password — so a failed sign-in on a rider's phone can be read out
+ * of `adb logcat` rather than guessed at from the message on screen.
  */
-export async function login(mobile: string, password: string): Promise<void> {
+export async function login(username: string, password: string): Promise<void> {
   const { url, db } = await requireServer();
   if (!db) {
+    console.warn('[login] no database chosen');
     throw new ApiError('no_database', 'No database set. Open Connect and enter one.');
   }
 
-  const envelope = await post<{ uid?: number | null }>(
-    url,
-    '/web/session/authenticate',
-    { db, login: mobile, password },
-    DEFAULT_TIMEOUT_MS
-  );
+  console.log(`[login] signing in as "${username}" to ${db} at ${url}`);
+  const started = Date.now();
+  let envelope: Envelope<{ uid?: number | null }>;
+  try {
+    envelope = await post<{ uid?: number | null }>(
+      url,
+      '/web/session/authenticate',
+      { db, login: username, password },
+      DEFAULT_TIMEOUT_MS
+    );
+  } catch (err) {
+    console.warn(
+      `[login] request failed after ${Date.now() - started}ms:`,
+      (err as Error)?.message
+    );
+    throw err;
+  }
 
   if (envelope.error) {
     const name = envelope.error.data?.name ?? '';
     const message = serverMessage(envelope.error, '');
+    console.warn(
+      `[login] refused after ${Date.now() - started}ms: ${name || 'no error name'} — ${message}`
+    );
     if (name === 'odoo.exceptions.AccessDenied') {
-      throw new ApiError('unauthorized', 'Wrong mobile number or password.');
+      throw new ApiError('unauthorized', 'Wrong username or password.');
     }
     // "Database not found." from Odoo, or Postgres saying it does not exist.
     if (/database/i.test(message) && /not found|does not exist/i.test(message)) {
@@ -176,11 +231,13 @@ export async function login(mobile: string, password: string): Promise<void> {
 
   // Odoo answers {uid: null} when the account needs a second factor.
   if (!envelope.result?.uid) {
+    console.warn('[login] signed in but no uid — the account needs two-step sign-in');
     throw new ApiError(
       'unauthorized',
       'This account needs two-step sign-in, which the app does not support. Ask the office.'
     );
   }
+  console.log(`[login] signed in, uid ${envelope.result.uid} (${Date.now() - started}ms)`);
 }
 
 /** End the session on the server. Best effort: signing out must never be blocked. */
@@ -189,8 +246,10 @@ export async function logout(): Promise<void> {
     const { url } = await getServer();
     if (!url) return;
     await post(url, '/web/session/destroy', {}, 5000);
-  } catch {
+    console.log('[login] signed out on the server');
+  } catch (err) {
     // Already gone, or no signal. Either way the rider is signed out here.
+    console.warn('[login] server sign-out failed, signed out here anyway:', (err as Error)?.message);
   }
 }
 
@@ -222,11 +281,13 @@ export async function call<T>(
   if (envelope.error) {
     const name = envelope.error.data?.name ?? '';
     if (EXPIRED.has(name)) {
+      console.warn(`[login] session expired (${name}) on ${method}`);
       onExpired?.();
       throw new ApiError('unauthorized', EXPIRED_MESSAGE);
     }
     // Signed in, but the user is not linked to a rider. The module explains how to fix it.
     if (name === 'odoo.exceptions.AccessError') {
+      console.warn(`[login] signed in but not a rider (${method}):`, serverMessage(envelope.error, ''));
       throw new ApiError(
         'unauthorized',
         serverMessage(envelope.error, 'This login is not linked to a rider.')

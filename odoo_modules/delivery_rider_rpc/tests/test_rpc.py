@@ -24,7 +24,8 @@ class TestRiderRpc(RiderRpcCase):
         self.assertEqual([o['delivery_order_id'] for o in listed['orders']],
                          [job.id])
         self.assertEqual(listed['counts']['assigned'], 1)
-        self.assertEqual(listed['orders'][0]['allowed_actions'], ['accept'])
+        self.assertEqual(listed['orders'][0]['allowed_actions'],
+                         ['accept', 'decline'])
 
         detail = rpc.order(job.id)['order']
         self.assertTrue(APP_ORDER_KEYS <= set(detail), APP_ORDER_KEYS - set(detail))
@@ -93,7 +94,7 @@ class TestRiderRpc(RiderRpcCase):
         self.assertFalse(wrong['success'])
         self.assertEqual(wrong['code'], 'wrong_state')
         self.assertEqual(wrong['status'], 'offered')
-        self.assertEqual(wrong['allowed_actions'], ['accept'])
+        self.assertEqual(wrong['allowed_actions'], ['accept', 'decline'])
 
         rpc.accept(job.id)
         rpc.arrived(job.id, 'shop')
@@ -173,7 +174,11 @@ class TestRiderRpc(RiderRpcCase):
         answer = rpc.return_to_shop(job.id, 'nobody home')
         self.assertEqual(answer['status'], 'returning')
         self.assertEqual(job.sa_cancel_reason, 'nobody home')
-        self.assertEqual(rpc.confirm_return(job.id)['status'], 'returned')
+        self.assertNotIn('confirm_return', answer['allowed_actions'],
+                         "Only the shop closes a return.")
+        refused = rpc.confirm_return(job.id)
+        self.assertEqual(refused['code'], 'wrong_state')
+        self.assertEqual(job.sa_delivery_state, 'returning')
 
     def test_proof_and_issue(self):
         job = self._new_job(state='out_for_delivery')

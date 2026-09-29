@@ -26,6 +26,9 @@ them while the rider waits.
 
 import base64
 import logging
+from datetime import datetime
+
+import pytz
 
 from odoo import _, api, fields, models
 from odoo.exceptions import AccessError
@@ -35,6 +38,10 @@ _logger = logging.getLogger(__name__)
 # Nothing a rider can still act on; these belong in history().
 _TERMINAL = ('delivered', 'returned', 'cancelled', 'failed')
 _HELD = ('accepted', 'picked', 'dispatched', 'out_for_delivery')
+# The job is the rider's but not yet theirs to collect: the shop is on it.
+_AT_SHOP = ('awaiting_shop', 'preparing', 'ready')
+# How long the shop's pickup code stands before the rider may ask again.
+_PICKUP_RESEND_SECONDS = 60
 
 
 def _dt(value):
@@ -86,11 +93,29 @@ class SaRiderRpc(models.AbstractModel):
                                 rider_rpc_picking_id=job.id)
 
     @api.model
+    def _actions(self, job):
+        """The delivery module's actions, as the rider app is allowed them.
+
+        Two departures from `_SA_FLOW`, both on purpose:
+
+        * `decline` on an offer - the flow has no way to say no, so an offer
+          sat with a rider who would never take it.
+        * no `confirm_return`. The flow's own comment says only the shop
+          closes a return, yet offers it to the rider; closing it cancels the
+          picking and puts the stock back, which must wait until the parcel
+          is actually on the counter. The shop confirms it in Odoo.
+        """
+        actions = [a for a in job.sa_allowed_actions() if a != 'confirm_return']
+        if job.sa_delivery_state == 'offered':
+            actions.append('decline')
+        return actions
+
+    @api.model
     def _refuse(self, code, message, job=None, **extra):
         out = {'success': False, 'code': code, 'message': message}
         if job:
             out['status'] = job.sa_delivery_state
-            out['allowed_actions'] = job.sa_allowed_actions()
+            out['allowed_actions'] = self._actions(job)
         out.update(extra)
         return out
 
@@ -191,7 +216,7 @@ class SaRiderRpc(models.AbstractModel):
             'delivery_status': job.sa_delivery_state,
             'delivery_type': job.sa_delivery_kind or '',
             'promised_by': _dt(job.sa_promised_on),
-            'allowed_actions': job.sa_allowed_actions(),
+            'allowed_actions': self._actions(job),
         }
 
     @api.model
@@ -218,7 +243,7 @@ class SaRiderRpc(models.AbstractModel):
     @api.model
     def _step_answer(self, job, **extra):
         out = {'success': True, 'status': job.sa_delivery_state,
-               'allowed_actions': job.sa_allowed_actions(),
+               'allowed_actions': self._actions(job),
                'tracking': {'enabled': job.sa_tracking_enabled()},
                'message': _("Done.")}
         out.update(extra)
@@ -241,31 +266,48 @@ class SaRiderRpc(models.AbstractModel):
     @api.model
     def _jobs(self, rider, states=None):
         domain = [('sa_delivery_partner_id', '=', rider.id),
-                  ('sa_delivery_state', 'not in', ('none', False))]
+                  ('sa_delivery_state', 'not in', ('none', False) + _TERMINAL)]
         if states:
             domain.append(('sa_delivery_state', 'in', list(states)))
         return self.env['stock.picking'].sudo().search(
             domain, order='sa_offered_on desc, id desc')
 
     @api.model
+    def _today_start(self, rider):
+        """Midnight in the rider's zone, as the naive UTC Odoo stores."""
+        try:
+            zone = pytz.timezone(rider.tz or 'UTC')
+        except pytz.UnknownTimeZoneError:
+            zone = pytz.utc
+        midnight = datetime.now(zone).replace(hour=0, minute=0, second=0,
+                                              microsecond=0)
+        return midnight.astimezone(pytz.utc).replace(tzinfo=None)
+
+    @api.model
     def orders(self):
-        """Open work, plus the four counters on the home screen."""
+        """Open work, plus the four counters on the home screen.
+
+        Only open jobs are read. `delivered` is today's, from midnight where
+        the rider is - the home screen says "Delivered today", and this used
+        to count every job the rider ever finished, on every ten-second poll.
+        """
         rider = self._rider()
-        jobs = self._jobs(rider)
+        open_jobs = self._jobs(rider)
         counts = {'assigned': 0, 'picked_up': 0, 'out_for_delivery': 0,
                   'delivered': 0}
-        for job in jobs:
+        for job in open_jobs:
             state = job.sa_delivery_state
-            if state in ('offered', 'accepted'):
+            if state in ('offered', 'accepted') + _AT_SHOP:
                 counts['assigned'] += 1
             elif state in ('picked', 'dispatched'):
                 counts['picked_up'] += 1
             elif state == 'out_for_delivery':
                 counts['out_for_delivery'] += 1
-            elif state == 'delivered':
-                counts['delivered'] += 1
-        open_jobs = jobs.filtered(
-            lambda p: p.sa_delivery_state not in _TERMINAL)
+        counts['delivered'] = self.env['stock.picking'].sudo().search_count([
+            ('sa_delivery_partner_id', '=', rider.id),
+            ('sa_delivery_state', '=', 'delivered'),
+            ('sa_delivered_on', '>=', self._today_start(rider)),
+        ])
         return {
             'success': True,
             'counts': counts,
@@ -291,15 +333,16 @@ class SaRiderRpc(models.AbstractModel):
         except (TypeError, ValueError):
             limit, offset = 20, 0
         limit, offset = max(1, min(limit, 100)), max(0, offset)
+        # `failed` too: it was left out of both lists, so a failed job
+        # vanished from the rider's phone with no word of what became of it.
         domain = [('sa_delivery_partner_id', '=', rider.id),
-                  ('sa_delivery_state', 'in',
-                   ('delivered', 'returned', 'cancelled'))]
+                  ('sa_delivery_state', 'in', _TERMINAL)]
         Picking = self.env['stock.picking'].sudo()
         rows = []
         for job in Picking.search(domain, order='id desc', limit=limit,
                                   offset=offset):
             finished = (job.sa_delivered_on or job.sa_returned_on
-                        or job.sa_cancelled_on)
+                        or job.sa_cancelled_on or job.write_date)
             delivered = job.sa_delivery_state == 'delivered'
             rows.append({
                 'delivery_order_id': job.id,
@@ -426,6 +469,10 @@ class SaRiderRpc(models.AbstractModel):
             stamp = fields.Datetime.now()
             if point == 'shop':
                 job.write({'sa_arrived_shop_on': stamp})
+                wait = self._pickup_wait(job)
+                if wait:
+                    return self._pickup_too_soon(job, wait,
+                                                 arrived_at=_dt(stamp))
                 ok, message, code = job.sa_issue_pickup_otp()
             else:
                 job.write({'sa_arrived_customer_on': stamp})
@@ -438,20 +485,54 @@ class SaRiderRpc(models.AbstractModel):
                           'arrived:%s:%s' % (job_id, point), work)
 
     @api.model
+    def _pickup_wait(self, job):
+        """Seconds until the shop may be sent a new pickup code, or 0.
+
+        Each new code voids the last, so a rider tapping "resend" twice made
+        the code the shop had just read out useless. Inactive codes count:
+        the one voided by a resend was still *sent*.
+        """
+        last = self.env['sa.delivery.otp'].sudo().with_context(
+            active_test=False).search(
+            [('picking_id', '=', job.id), ('kind', '=', 'pickup')],
+            order='create_date desc, id desc', limit=1)
+        if not last:
+            return 0
+        age = (fields.Datetime.now() - last.create_date).total_seconds()
+        return max(0, int(_PICKUP_RESEND_SECONDS - age))
+
+    @api.model
+    def _pickup_too_soon(self, job, wait, **extra):
+        """The shop already has a fresh code: say so, and when to ask again.
+
+        A success, not a refusal - the rider's aim, a code at the counter,
+        is met - so the app shows the words and starts its countdown.
+        """
+        return self._step_answer(
+            job, otp_sent=True, resent=False, retry_after_seconds=wait,
+            message=_("The shop already has a fresh code. You can ask again "
+                      "in %s seconds.", wait), **extra)
+
+    @api.model
     def request_pickup_otp(self, job_id):
         """Send (again) the pickup code to the shop's WhatsApp.
 
-        `success` is True when a code was issued. The WhatsApp message itself
-        is queued; `otp_sent` says whether the shop could be reached at all.
+        `success` is True when the shop has a code: a new one, or - within a
+        minute of the last - the one it was just sent. The WhatsApp message
+        itself is queued; `otp_sent` says whether the shop could be reached.
         """
         job = self._job(self._rider(), job_id)
         if not job:
             return self._not_found()
         if job.sa_delivery_state != 'accepted':
             return self._refuse('wrong_state', _("Not ready for pickup."), job)
+        wait = self._pickup_wait(job)
+        if wait:
+            return self._pickup_too_soon(job, wait)
         ok, message, code = job.sa_issue_pickup_otp()
         out = self._step_answer(job, success=bool(code), otp_sent=bool(ok),
-                                message=message, retry_after_seconds=60)
+                                resent=True, message=message,
+                                retry_after_seconds=_PICKUP_RESEND_SECONDS)
         return self._test_otp(out, code, job, 'pickup')
 
     @api.model
@@ -494,7 +575,42 @@ class SaRiderRpc(models.AbstractModel):
 
     @api.model
     def confirm_return(self, job_id, client_uuid=None):
-        return self._advance(job_id, 'confirm_return', client_uuid)
+        """Not the rider's to do - see `_actions`. Kept so an older app that
+        still shows the button gets words instead of a crash."""
+        job = self._job(self._rider(), job_id)
+        if not job:
+            return self._not_found()
+        return self._refuse('wrong_state', _(
+            "The shop confirms a return once the parcel is back on the "
+            "counter."), job)
+
+    @api.model
+    def decline(self, job_id, reason='', client_uuid=None):
+        """Say no to an offer. It goes to the next rider on duty, or back to
+        To Dispatch when there is nobody, and is never offered back to you."""
+        rider = self._rider()
+
+        def work():
+            job = self._job(rider, job_id)
+            if not job:
+                return self._not_found()
+            if job.sa_delivery_state != 'offered':
+                return self._refuse(
+                    'wrong_state',
+                    _("Only a new offer can be declined - this delivery is "
+                      "%(state)s.", state=job.sa_delivery_state), job)
+            text = (reason or '').strip()[:250]
+            if text:
+                job.message_post(body=_("Rider %(rider)s declined: %(reason)s",
+                                        rider=rider.name, reason=text))
+            job._rider_rpc_pass_on('declined')
+            # `removed`: the job is no longer this rider's, whatever its
+            # state now says - the app leaves the screen on it.
+            return {'success': True, 'status': job.sa_delivery_state,
+                    'allowed_actions': [], 'removed': True,
+                    'tracking': {'enabled': False},
+                    'message': _("Declined. The job was passed on.")}
+        return self._once(rider, client_uuid, 'decline:%s' % job_id, work)
 
     @api.model
     def report_issue(self, job_id, reason='', client_uuid=None):

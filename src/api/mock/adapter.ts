@@ -48,13 +48,19 @@ export const mockFlags = {
  * never in the app, because the app must render `allowed_actions` and nothing else.
  */
 const ACTIONS_FOR: Record<DeliveryStatus, Action[]> = {
-  offered: ['accept'],
+  // The shop is still on it: the rider waits to be called.
+  awaiting_shop: [],
+  preparing: [],
+  ready: [],
+  to_assign: [],
+  offered: ['accept', 'decline'],
   accepted: ['verify_pickup_otp', 'report_issue'],
   picked: ['dispatch', 'return_to_shop', 'report_issue'],
   dispatched: ['start_delivery', 'return_to_shop', 'report_issue'],
   out_for_delivery: ['verify_delivery_otp', 'return_to_shop', 'report_issue'],
   delivered: [],
-  returning: ['confirm_return'],
+  // Only the shop confirms a return, in Odoo — nothing for the rider to do.
+  returning: [],
   returned: [],
   cancelled: [],
   // Undocumented but live on res-test1, and terminal like the rest.
@@ -289,6 +295,38 @@ export const mockAdapter: ApiAdapter = {
     }
 
     return advance(o, 'accepted');
+  },
+
+  async decline(id) {
+    await wait(400);
+    guard();
+    const o = find(id);
+    requireAction(o, 'decline');
+    // Passed to "another rider": gone from this one's list, and a fresh offer
+    // turns up a little later so the demo never runs dry.
+    state.orders = state.orders.filter((x) => x.delivery_order_id !== id);
+    setTimeout(offer, 8000);
+    return {
+      status: 'offered',
+      allowed_actions: [],
+      removed: true,
+      message: 'Declined. The job was passed on.',
+    };
+  },
+
+  async arrivedAtShop(id) {
+    await wait(300);
+    guard();
+    const o = find(id);
+    requireAction(o, 'verify_pickup_otp');
+    state.pickupAttempts = 0;
+    return {
+      status: o.delivery_status,
+      allowed_actions: o.allowed_actions,
+      message: 'The shop has been sent the pickup code.',
+      retry_after_seconds: 60,
+      resent: true,
+    };
   },
 
   async requestPickupOtp(id) {

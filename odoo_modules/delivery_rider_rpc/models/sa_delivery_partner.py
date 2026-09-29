@@ -13,7 +13,8 @@ class SaDeliveryPartner(models.Model):
 
         Portal, not internal: the app needs `call_kw` and nothing else, and a
         portal user cannot open the backend even with the password in hand.
-        An existing user with that login is linked rather than duplicated.
+        An existing portal user with that login is linked rather than
+        duplicated; an office user, or another rider's login, is refused.
         Ends on Odoo's own Change Password dialog, so the password is typed
         once by whoever hands the phone over and never stored anywhere else.
         """
@@ -28,6 +29,20 @@ class SaDeliveryPartner(models.Model):
             Users = self.env['res.users'].sudo().with_context(
                 active_test=False)
             user = Users.search([('login', '=', login)], limit=1)
+            # Linking an office user would hand the rider a backend login, and
+            # this button ends on Change Password - the office would reset a
+            # colleague's password without knowing it.
+            if user and not user.share:
+                raise UserError(_(
+                    "The login %(login)s already belongs to an office user "
+                    "(%(user)s). Give the rider a different WhatsApp number, "
+                    "or change that user's login first.",
+                    login=login, user=user.name))
+            if user and self.search([('user_id', '=', user.id),
+                                     ('id', '!=', self.id)], limit=1):
+                raise UserError(_(
+                    "The login %s is already another rider's app login.",
+                    login))
             if not user:
                 vals = {
                     'name': self.name,

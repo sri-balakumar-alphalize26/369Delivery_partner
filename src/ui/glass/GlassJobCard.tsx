@@ -1,6 +1,6 @@
 import { View } from 'react-native';
 import { Image } from 'expo-image';
-import { DeliveryOrder } from '../../api/types';
+import { DeliveryOrder, isAtShop } from '../../api/types';
 import { dueIn, money, shopName } from '../../lib/format';
 import { useNow } from '../../hooks/useNow';
 import { useJobDistance } from '../../hooks/useJobDistance';
@@ -54,8 +54,13 @@ export function GlassJobCard({
   // One source of truth for what each delivery state looks like.
   const band = glassBand[job.delivery_status as GlassBarState] ?? glassBand.idle;
 
-  /** Once the parcel is aboard, the shop is behind the rider. */
-  const collected = !['offered', 'accepted'].includes(job.delivery_status);
+  /**
+   * Once the parcel is aboard, the shop is behind the rider. A job the shop is
+   * still packing is not collected either — this read every state but two as
+   * "collected", so a parcel still on the shelf drew as already picked up.
+   */
+  const collected =
+    !['offered', 'accepted'].includes(job.delivery_status) && !isAtShop(job.delivery_status);
 
   return (
     <GlassCard padding={0}>

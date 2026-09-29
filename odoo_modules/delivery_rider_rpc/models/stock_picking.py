@@ -46,10 +46,38 @@ class StockPicking(models.Model):
             body = (_("Cancelled - bring the parcel back to the shop.")
                     if state == 'returning'
                     else _("Cancelled - no need to collect it."))
+        self._rider_rpc_push_devices(devices, title, body, state)
+
+    def _rider_rpc_push_gone(self, rider):
+        """The offer left this rider - they declined, or it ran out."""
+        self.ensure_one()
+        devices = rider.sudo().rider_rpc_device_ids if rider else False
+        if not devices:
+            return
+        ref = self.sa_ref_code or self.name
+        self._rider_rpc_push_devices(
+            devices, _("Delivery #%s moved on", ref),
+            _("It was offered to another rider."), 'passed')
+
+    def _rider_rpc_push_devices(self, devices, title, body, status):
         payload = json.dumps({'title': title, 'delivery_order_id': self.id,
-                              'status': state})
+                              'status': status})
         Outbox = self.env['sa.rider.outbox']
         for device in devices:
             Outbox._enqueue({'channel': 'push', 'picking_id': self.id,
                              'recipient': device.token, 'body': body,
                              'payload': payload})
+
+    def _sa_job_body(self):
+        """The rider's WhatsApp job message, without the reply command.
+
+        The parent ends with "(or reply *#CODE ACCEPT*)", but nothing reads a
+        rider's reply - a rider who trusted it was left waiting on an offer
+        they believed they had taken. The link and the app are the two ways
+        in, so the message says so.
+        """
+        body = super()._sa_job_body()
+        dead = _("(or reply *#%(code)s ACCEPT*)", code=self.sa_ref_code or '')
+        if dead in body:
+            body = body.replace(dead, _("(or open it in the rider app)"))
+        return body

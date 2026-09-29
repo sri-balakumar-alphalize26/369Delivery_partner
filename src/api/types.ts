@@ -20,12 +20,19 @@ export type Action =
   | 'start_delivery'
   | 'verify_delivery_otp'
   | 'return_to_shop'
+  /**
+   * No longer offered: only the shop confirms a return, in Odoo. Kept so an
+   * answer from an older server still renders rather than crashing.
+   */
   | 'confirm_return'
-  | 'report_issue';
+  | 'report_issue'
+  /** Say no to an offer; Odoo passes it to the next rider on duty. */
+  | 'decline';
 
 /** Button labels. A lookup for rendering only — it confers no permission. */
 export const ACTION_LABEL: Record<Action, string> = {
   accept: 'Accept this job',
+  decline: 'Decline',
   verify_pickup_otp: 'Enter pickup code',
   dispatch: 'Leaving the shop',
   start_delivery: 'Start delivery',
@@ -64,12 +71,41 @@ export const PRIMARY_ACTIONS: Action[] = [
  * components.
  */
 export function headingFor(status: DeliveryStatus): 'shop' | 'customer' {
-  return status === 'offered' || status === 'accepted' || status === 'returning'
+  return status === 'offered' ||
+    status === 'accepted' ||
+    status === 'returning' ||
+    isAtShop(status)
     ? 'shop'
     : 'customer';
 }
 
+/**
+ * The job is this rider's, but the parcel is not ready to collect: the shop is
+ * still taking it on or packing it, or nobody could be offered it yet. No
+ * actions, and nothing collected — the rider waits to be called.
+ */
+export const AT_SHOP_STATES: readonly DeliveryStatus[] = [
+  'awaiting_shop',
+  'preparing',
+  'ready',
+  'to_assign',
+];
+
+export function isAtShop(status: DeliveryStatus): boolean {
+  return AT_SHOP_STATES.includes(status);
+}
+
 export type DeliveryStatus =
+  /**
+   * The store flow's three steps before a rider is called — the rider is
+   * chosen when the order is confirmed, then waits while the shop accepts
+   * (`awaiting_shop`), packs (`preparing`) and marks it packed (`ready`).
+   */
+  | 'awaiting_shop'
+  | 'preparing'
+  | 'ready'
+  /** Nobody could be offered it yet (no WhatsApp session, say). */
+  | 'to_assign'
   | 'offered'
   | 'accepted'
   | 'picked'
@@ -237,7 +273,9 @@ export type CountBucket = keyof OrderCounts;
  * components.
  */
 export const COUNT_BUCKET: Record<CountBucket, DeliveryStatus[]> = {
-  assigned: ['offered', 'accepted'],
+  // The shop's three steps count as assigned: the job is this rider's, it is
+  // just not packed yet. `to_assign` is counted nowhere, like `returning`.
+  assigned: ['offered', 'accepted', 'awaiting_shop', 'preparing', 'ready'],
   picked_up: ['picked', 'dispatched'],
   out_for_delivery: ['out_for_delivery'],
   delivered: ['delivered'],
@@ -283,6 +321,13 @@ export interface ActionResult {
    * timed rather than left looking broken.
    */
   retry_after_seconds?: number;
+  /**
+   * On a pickup-code request: false when the shop was sent a code under a
+   * minute ago and keeps it, rather than a new one voiding it.
+   */
+  resent?: boolean;
+  /** On `decline`: the job is no longer this rider's. Leave its screen. */
+  removed?: boolean;
 }
 
 /**
@@ -312,6 +357,13 @@ export type ApiErrorCode =
   | 'wrong_state'
   | 'bad_otp'
   | 'otp_required'
+  // The module's other refusals, named so code can tell them apart.
+  | 'bad_point'
+  | 'off_duty'
+  | 'no_file'
+  | 'too_large'
+  | 'no_token'
+  | 'uuid_reused'
   | 'no_database'
   | 'network'
   | 'unknown';
@@ -352,7 +404,7 @@ export interface ServerConfig {
   url: string;
   db: string;
   /**
-   * The rider's mobile number, which is their Odoo login. The password is
+   * The Odoo username — for a rider, their mobile number. The password is
    * never stored: the session cookie the phone keeps is the credential, and
    * signing in again is the only way to get a new one.
    */
@@ -400,6 +452,13 @@ export interface ApiAdapter {
   order(id: number): Promise<DeliveryOrder>;
 
   accept(id: number): Promise<ActionResult>;
+  /** Say no to an offer. On success the job is gone from this rider's list. */
+  decline(id: number, reason?: string): Promise<ActionResult>;
+  /**
+   * At the counter: has the shop sent its pickup code. Within a minute of the
+   * last code the shop keeps that one (`resent: false`).
+   */
+  arrivedAtShop(id: number): Promise<ActionResult>;
   requestPickupOtp(id: number): Promise<ActionResult>;
   verifyPickupOtp(id: number, otp: string): Promise<ActionResult>;
   dispatch(id: number): Promise<ActionResult>;

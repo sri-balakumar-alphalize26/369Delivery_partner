@@ -50,6 +50,11 @@ const DOT_PLAIN = 10;
  * present, so the rail still advances rather than sitting blank.
  */
 const REACHED: Record<DeliveryStatus, number> = {
+  // The shop is still packing: nothing the rider has done yet.
+  awaiting_shop: 0,
+  preparing: 0,
+  ready: 0,
+  to_assign: 0,
   offered: 0,
   accepted: 1,
   picked: 2,

@@ -48,13 +48,20 @@ export const useSession = create<SessionState>((set) => ({
   async restore() {
     const server = await getServer();
     set({ server });
+    console.log(
+      server.useMock
+        ? '[login] launch: demo mode'
+        : `[login] launch: checking saved session for "${server.login}" on ${server.db} at ${server.url}`
+    );
 
     try {
       const { rider, timezone, currency } = await api.me();
       set({ rider, timezone, currency, connected: true });
-    } catch {
+      console.log(`[login] launch: session good, rider ${rider.name} (#${rider.id})`);
+    } catch (err) {
       // No session yet, or an expired one — land on Connect rather than a
       // broken home screen. Not an error worth showing on launch.
+      console.log('[login] launch: no usable session, going to Connect:', (err as Error)?.message);
       set({ rider: null, connected: false });
     } finally {
       set({ ready: true });
@@ -69,8 +76,16 @@ export const useSession = create<SessionState>((set) => ({
       await api.login(server.login, password);
       const { rider, timezone, currency } = await api.me();
       set({ rider, timezone, currency, connected: true });
+      console.log(
+        `[login] connected${server.useMock ? ' (demo)' : ''}: rider ${rider.name} (#${rider.id}), ` +
+          `timezone ${timezone ?? 'unset'}, currency ${currency?.code ?? 'unset'}`
+      );
       return rider;
     } catch (err) {
+      console.warn(
+        '[login] connect failed:',
+        err instanceof ApiError ? `${err.code} — ${err.message}` : (err as Error)?.message
+      );
       set({ rider: null, connected: false });
       throw err instanceof ApiError
         ? err
@@ -93,10 +108,12 @@ export const useSession = create<SessionState>((set) => ({
   },
 
   expire() {
+    console.warn('[login] session ended by the server, back to Connect');
     set({ rider: null, connected: false });
   },
 
   async disconnect() {
+    console.log('[login] signing out');
     // Server side first, while the cookie can still authenticate the call. The
     // address, database and number stay saved: none of them is a secret, and
     // typing the tunnel address again is what this screen exists to avoid.

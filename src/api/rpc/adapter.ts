@@ -43,6 +43,14 @@ export const rpcAdapter: ApiAdapter = {
 
   accept: (id) => call<ActionResult>('accept', { job_id: id, client_uuid: uuid() }),
 
+  decline: (id, reason) =>
+    call<ActionResult>('decline', { job_id: id, reason: reason ?? '', client_uuid: uuid() }),
+
+  // `arrived` at the shop is what issues the pickup code. Without it the shop
+  // had no code until the rider tapped "resend".
+  arrivedAtShop: (id) =>
+    call<ActionResult>('arrived', { job_id: id, point: 'shop', client_uuid: uuid() }),
+
   requestPickupOtp: (id) => call<ActionResult>('request_pickup_otp', { job_id: id }),
 
   verifyPickupOtp: (id, otp) =>
@@ -85,9 +93,9 @@ export const rpcAdapter: ApiAdapter = {
     call<ActionResult>('return_to_shop', { job_id: id, reason: reason ?? '', client_uuid: uuid() }),
 
   /**
-   * The module's prose says only the shop closes a return, but its state table
-   * offers `confirm_return` to the rider. Render what Odoo offers and let Odoo
-   * refuse it — a `wrong_state` answer re-renders the screen from the truth.
+   * Only the shop confirms a return now, and the module no longer offers
+   * this. Should an older server still list it, Odoo's `wrong_state` answer
+   * re-renders the screen from the truth.
    */
   confirmReturn: (id) => call<ActionResult>('confirm_return', { job_id: id, client_uuid: uuid() }),
 

@@ -138,6 +138,10 @@ export const gshadow = {
 export type GlassBarState =
   | 'disconnected'
   | 'idle'
+  | 'awaiting_shop'
+  | 'preparing'
+  | 'ready'
+  | 'to_assign'
   | 'offered'
   | 'accepted'
   | 'picked'
@@ -162,6 +166,12 @@ export type GlassBarState =
 export const glassBand: Record<GlassBarState, { bg: string; fg: string; label: string }> = {
   disconnected: { bg: glass.fill, fg: glass.inkSoft, label: 'NOT CONNECTED' },
   idle: { bg: glass.fill, fg: glass.ink, label: 'NO JOBS' },
+  // The shop's steps before the rider is called. Quiet on purpose: there is
+  // nothing to do yet, only something coming.
+  awaiting_shop: { bg: glass.fill, fg: glass.inkSoft, label: 'AT SHOP' },
+  preparing: { bg: glass.fill, fg: glass.inkSoft, label: 'PACKING' },
+  ready: { bg: glass.orangeSoft, fg: glass.orange, label: 'PACKED' },
+  to_assign: { bg: glass.fill, fg: glass.inkSoft, label: 'WAITING' },
   offered: { bg: glass.orange, fg: glass.white, label: 'NEW JOB' },
   accepted: { bg: glass.fill, fg: glass.ink, label: 'GO TO SHOP' },
   picked: { bg: glass.fill, fg: glass.ink, label: 'COLLECTED' },

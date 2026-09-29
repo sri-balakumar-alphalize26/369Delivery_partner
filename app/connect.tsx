@@ -1,15 +1,26 @@
 import { useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
-import { Image, KeyboardAvoidingView, Platform, ScrollView, Switch, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Image,
+  KeyboardAvoidingView,
+  Modal,
+  Platform,
+  Pressable,
+  ScrollView,
+  View,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ENV_DEFAULTS } from '../src/api/config';
 import { MOCK_DELIVERY_OTP, MOCK_PICKUP_OTP } from '../src/api/mock/fixtures';
+import { listDatabases } from '../src/api/rpc/client';
 import { ApiError } from '../src/api/types';
 import { useSession } from '../src/store/session';
-import { glass, gradius, gspace } from '../src/theme/glass';
+import { glass, gradius, gspace, poppins } from '../src/theme/glass';
 import { Field } from '../src/ui/Field';
 import { GlassButton } from '../src/ui/glass/GlassButton';
 import { GlassCard } from '../src/ui/glass/GlassCard';
+import { GlassIcon, GlassIconName } from '../src/ui/glass/GlassIcon';
 import { GlassScreen } from '../src/ui/glass/GlassScreen';
 import { GlassText } from '../src/ui/glass/GlassText';
 
@@ -23,11 +34,40 @@ import { GlassText } from '../src/ui/glass/GlassText';
  *
  * The screen doubles as the server config. The test host is a Cloudflare quick
  * tunnel whose address changes on restart; being able to paste the new one here
- * is what stops that costing a rebuild every time.
+ * is what stops that costing a rebuild every time. Like Odoo's own login page,
+ * a whole address is enough to load the server's databases. The rider picks
+ * one from a popup — nothing is picked for them — and only a server that
+ * hides its list makes them type the name.
+ *
+ * Sign-in is the whole point of the screen, so it leads. Demo mode is a link
+ * under the card, and the support number and route key — settings, not
+ * credentials — fold away under "More settings".
  *
  * It stays outside the tabs group, so it is not a tab — reached only from
  * Profile or by the Gate redirect.
  */
+
+/** Wide enough for a phone in landscape, narrow enough not to sprawl on a tablet. */
+const FORM_MAX_W = 480;
+
+type ServerState =
+  | { kind: 'idle' }
+  | { kind: 'invalid' }
+  | { kind: 'checking' }
+  | { kind: 'found'; dbs: string[] }
+  | { kind: 'hidden' }
+  | { kind: 'failed'; message: string };
+
+/**
+ * Whether the text is a whole server address yet: a scheme and a host with a
+ * dot in it (or localhost), an optional port, an optional path. Half a link
+ * is not worth a request — it can only fail, and the failure would flash red
+ * at a rider who is still typing.
+ */
+const SERVER_URL = /^https?:\/\/(localhost|[\w-]+(\.[\w-]+)+)(:\d{1,5})?(\/\S*)?$/i;
+
+const COULD_NOT_LOAD = "Couldn't load databases from this link. Check it and try again.";
+
 export default function Connect() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
@@ -37,13 +77,18 @@ export default function Connect() {
   const [db, setDb] = useState('');
   const [login, setLogin] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [supportPhone, setSupportPhone] = useState('');
   const [orsKey, setOrsKey] = useState('');
   const [useMock, setUseMock] = useState(true);
+  const [moreOpen, setMoreOpen] = useState(false);
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [ok, setOk] = useState<string | null>(null);
+  const [serverState, setServerState] = useState<ServerState>({ kind: 'idle' });
+  /** Bumped by "Try again", to re-run the lookup for an unchanged address. */
+  const [attempt, setAttempt] = useState(0);
+  const [dbPickerOpen, setDbPickerOpen] = useState(false);
 
   useEffect(() => {
     setUrl(server?.url ?? ENV_DEFAULTS.url);
@@ -54,45 +99,96 @@ export default function Connect() {
     setUseMock(server?.useMock ?? true);
   }, [server]);
 
-  const config = () => ({ url, db, login, supportPhone, orsKey, useMock });
+  // Ask the server for its databases once the address is a whole link and has
+  // stopped changing. The `alive` flag drops an answer for an address the
+  // rider has already edited. Nothing is picked for them: the database is
+  // cleared on every new address, so a name left over from another server can
+  // never ride along into the sign-in.
+  useEffect(() => {
+    setDb('');
+    const link = url.trim();
+    if (useMock || !link) {
+      setServerState({ kind: 'idle' });
+      return;
+    }
+    if (!SERVER_URL.test(link)) {
+      setServerState({ kind: 'invalid' });
+      return;
+    }
+    let alive = true;
+    setServerState({ kind: 'checking' });
+    const timer = setTimeout(async () => {
+      try {
+        const list = await listDatabases(link);
+        if (!alive) return;
+        if (!list) {
+          setServerState({ kind: 'hidden' });
+        } else if (!list.length) {
+          setServerState({ kind: 'failed', message: 'This server has no databases yet.' });
+        } else {
+          setServerState({ kind: 'found', dbs: list });
+        }
+      } catch {
+        if (alive) setServerState({ kind: 'failed', message: COULD_NOT_LOAD });
+      }
+    }, 600);
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+    };
+  }, [url, useMock, attempt]);
 
   // The server would refuse an empty login too, but with a message about a
   // wrong password, which sends the rider looking in the wrong place.
-  function missingLogin(): boolean {
-    if (useMock || (login.trim() && password)) return false;
-    setError('Enter your mobile number and password.');
-    return true;
+  function missingField(): string | null {
+    if (useMock) return null;
+    if (!url.trim()) return 'Enter the server link.';
+    if (serverState.kind === 'invalid') return 'Enter the full server link, starting with https://';
+    if (serverState.kind === 'checking') return 'Still loading databases. One moment.';
+    if (serverState.kind === 'failed') return COULD_NOT_LOAD;
+    if (!db.trim()) return 'Choose a database.';
+    if (!login.trim()) return 'Enter your username.';
+    if (!password) return 'Enter your password.';
+    return null;
   }
 
-  async function test() {
+  async function submit() {
     setError(null);
-    setOk(null);
-    if (missingLogin()) return;
-    setBusy(true);
-    try {
-      const rider = await connect(config(), password);
-      setOk(`Connected as ${rider.name}`);
-    } catch (err) {
-      // The server writes its own messages for riders — show them unchanged.
-      setError(err instanceof ApiError ? err.message : 'Could not connect.');
-    } finally {
-      setBusy(false);
+    const missing = missingField();
+    if (missing) {
+      setError(missing);
+      return;
     }
-  }
-
-  async function save() {
-    setError(null);
-    if (missingLogin()) return;
     setBusy(true);
     try {
-      await connect(config(), password);
+      await connect({ url, db, login, supportPhone, orsKey, useMock }, password);
       router.replace('/');
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : 'Could not connect.');
+      // The server writes its own messages for riders — show them unchanged.
+      setError(err instanceof ApiError ? err.message : 'Could not sign in. Try again.');
     } finally {
       setBusy(false);
     }
   }
+
+  function switchMode(mock: boolean) {
+    setUseMock(mock);
+    setError(null);
+  }
+
+  const dbs = serverState.kind === 'found' ? serverState.dbs : null;
+
+  // What the database field says before one is chosen. The list is the only
+  // way in: a name is typed only for a server that answered but keeps its
+  // list private, since there the link is right and the list simply withheld.
+  const dbPlaceholder =
+    serverState.kind === 'found'
+      ? `${serverState.dbs.length} database${serverState.dbs.length === 1 ? '' : 's'} found · tap to choose`
+      : serverState.kind === 'checking'
+        ? 'Loading databases…'
+        : serverState.kind === 'failed'
+          ? "Couldn't load databases"
+          : 'Enter the server link first';
 
   return (
     <GlassScreen>
@@ -102,177 +198,535 @@ export default function Connect() {
       >
         <ScrollView
           contentContainerStyle={{
-            paddingTop: insets.top + gspace.xxxl,
+            flexGrow: 1,
+            justifyContent: 'center',
+            paddingTop: insets.top + gspace.xxl,
             paddingHorizontal: gspace.xl,
             paddingBottom: gspace.xxxl + insets.bottom,
           }}
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
-          <View style={{ alignItems: 'center' }}>
-            <View
-              style={{
-                backgroundColor: glass.fillStrong,
-                borderRadius: gradius.card,
-                borderWidth: 1,
-                borderColor: glass.border,
-                padding: gspace.md,
-              }}
-            >
-              <Image
-                source={require('../assets/images/brand-full.png')}
-                style={{ width: 84, height: 84 }}
-                resizeMode="contain"
-              />
+          <View style={{ width: '100%', maxWidth: FORM_MAX_W, alignSelf: 'center' }}>
+            {/* ── Brand ─────────────────────────────────────────────── */}
+            <View style={{ alignItems: 'center' }}>
+              <View
+                style={{
+                  backgroundColor: glass.fillStrong,
+                  borderRadius: gradius.card,
+                  borderWidth: 1,
+                  borderColor: glass.border,
+                  padding: gspace.sm,
+                }}
+              >
+                <Image
+                  source={require('../assets/images/brand-full.png')}
+                  style={{ width: 72, height: 72 }}
+                  resizeMode="contain"
+                />
+              </View>
+              <GlassText variant="hero" style={{ marginTop: gspace.lg, textAlign: 'center' }}>
+                {useMock ? 'Try the app' : 'Welcome back'}
+              </GlassText>
+              <GlassText
+                variant="body"
+                tone="soft"
+                style={{ marginTop: gspace.xs, textAlign: 'center' }}
+              >
+                {useMock
+                  ? 'Explore with sample jobs. No server needed.'
+                  : 'Sign in to start taking deliveries.'}
+              </GlassText>
             </View>
-            <GlassText variant="hero" style={{ marginTop: gspace.lg }}>
-              Delivery Partner
-            </GlassText>
-            <GlassText variant="body" tone="soft" style={{ marginTop: gspace.xs }}>
-              Connect to start earning
-            </GlassText>
-          </View>
 
-          <GlassCard style={{ marginTop: gspace.xxl }}>
-            <View
-              style={{
+            {/* ── Sign in / demo ────────────────────────────────────── */}
+            <GlassCard style={{ marginTop: gspace.xxl }} padding={gspace.xl}>
+              {useMock ? (
+                <>
+                  <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <GlassIcon name="play" color={glass.orange} size={22} />
+                    <GlassText variant="subtitle" style={{ marginLeft: gspace.sm }}>
+                      Demo mode
+                    </GlassText>
+                  </View>
+                  <GlassText variant="body" tone="soft" style={{ marginTop: gspace.sm }}>
+                    Jobs, maps and earnings are made up, and nothing reaches the office.
+                  </GlassText>
+                  <View style={{ flexDirection: 'row', marginTop: gspace.lg, gap: gspace.md }}>
+                    <CodeTile label="Pickup code" code={MOCK_PICKUP_OTP} />
+                    <CodeTile label="Delivery code" code={MOCK_DELIVERY_OTP} />
+                  </View>
+                </>
+              ) : (
+                <>
+                  <Field
+                    label="Server link"
+                    icon="link"
+                    value={url}
+                    onChangeText={setUrl}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    keyboardType="url"
+                    placeholder="https://your-server.com"
+                    style={{ fontSize: 16 }}
+                  />
+                  <ServerStatus state={serverState} onRetry={() => setAttempt((n) => n + 1)} />
+
+                  {serverState.kind !== 'hidden' ? (
+                    <DbField
+                      value={db}
+                      placeholder={dbPlaceholder}
+                      loading={serverState.kind === 'checking'}
+                      failed={serverState.kind === 'failed'}
+                      enabled={!!dbs}
+                      onPress={() => setDbPickerOpen(true)}
+                    />
+                  ) : (
+                    <Field
+                      label="Database"
+                      icon="database"
+                      value={db}
+                      onChangeText={setDb}
+                      autoCapitalize="none"
+                      autoCorrect={false}
+                      placeholder="Ask the office for the name"
+                    />
+                  )}
+                  <DbPicker
+                    visible={dbPickerOpen}
+                    options={dbs ?? []}
+                    value={db}
+                    onChoose={(name) => {
+                      setDb(name);
+                      setDbPickerOpen(false);
+                      setError(null);
+                    }}
+                    onClose={() => setDbPickerOpen(false)}
+                  />
+
+                  <Field
+                    label="Username"
+                    icon="user"
+                    value={login}
+                    onChangeText={setLogin}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    autoComplete="username"
+                    textContentType="username"
+                    placeholder="Your mobile number"
+                  />
+                  <Field
+                    label="Password"
+                    icon="lock"
+                    value={password}
+                    onChangeText={setPassword}
+                    autoCapitalize="none"
+                    autoCorrect={false}
+                    secureTextEntry={!showPassword}
+                    autoComplete="password"
+                    textContentType="password"
+                    placeholder="Your password"
+                    returnKeyType="go"
+                    onSubmitEditing={submit}
+                    right={
+                      <Pressable
+                        onPress={() => setShowPassword((v) => !v)}
+                        hitSlop={12}
+                        accessibilityRole="button"
+                        accessibilityLabel={showPassword ? 'Hide password' : 'Show password'}
+                        style={{ paddingLeft: gspace.md, paddingVertical: gspace.sm }}
+                      >
+                        <GlassIcon
+                          name={showPassword ? 'eyeOff' : 'eye'}
+                          size={20}
+                          color={glass.inkSoft}
+                        />
+                      </Pressable>
+                    }
+                  />
+                </>
+              )}
+
+              {error ? <ErrorBanner message={error} /> : null}
+
+              <GlassButton
+                title={useMock ? 'Open the demo' : 'Sign in'}
+                kind={useMock ? 'orange' : 'dark'}
+                onPress={submit}
+                loading={busy}
+                style={{ marginTop: error ? gspace.lg : gspace.xs }}
+              />
+            </GlassCard>
+
+            {/* ── Mode switch ───────────────────────────────────────── */}
+            <Pressable
+              onPress={() => switchMode(!useMock)}
+              hitSlop={8}
+              accessibilityRole="button"
+              style={({ pressed }) => ({
+                alignSelf: 'center',
+                marginTop: gspace.xl,
+                paddingVertical: gspace.sm,
+                opacity: pressed ? 0.6 : 1,
+              })}
+            >
+              <GlassText variant="body" tone="soft" style={{ textAlign: 'center' }}>
+                {useMock ? 'Have a rider login? ' : 'No login yet? '}
+                <GlassText variant="bodyStrong" tone="orange">
+                  {useMock ? 'Sign in instead' : 'Try the demo'}
+                </GlassText>
+              </GlassText>
+            </Pressable>
+
+            {/* ── More settings ─────────────────────────────────────── */}
+            <Pressable
+              onPress={() => setMoreOpen((v) => !v)}
+              accessibilityRole="button"
+              accessibilityState={{ expanded: moreOpen }}
+              style={({ pressed }) => ({
                 flexDirection: 'row',
                 alignItems: 'center',
-                justifyContent: 'space-between',
-              }}
+                justifyContent: 'center',
+                marginTop: gspace.md,
+                paddingVertical: gspace.sm,
+                opacity: pressed ? 0.6 : 1,
+              })}
             >
-              <View style={{ flex: 1, paddingRight: gspace.lg }}>
-                <GlassText variant="bodyStrong">Use demo data</GlassText>
-                <GlassText variant="caption" tone="soft" style={{ marginTop: 2 }}>
-                  Try the app with no server at all
-                </GlassText>
-              </View>
-              <Switch
-                value={useMock}
-                onValueChange={setUseMock}
-                trackColor={{ true: glass.indigo }}
-              />
-            </View>
-
-            <View
-              style={{
-                borderBottomWidth: 1,
-                borderColor: glass.divider,
-                marginVertical: gspace.lg,
-              }}
-            />
-
-            {/* The codes are read from the fixtures, as Profile already does.
-                They were typed out by hand here and went stale the moment the
-                demo codes changed. */}
-            {useMock ? (
-              <GlassText variant="body" tone="soft">
-                Demo mode is on. Pickup code is {MOCK_PICKUP_OTP} and delivery code is{' '}
-                {MOCK_DELIVERY_OTP}.
+              <GlassIcon name="settings" size={16} color={glass.inkSoft} />
+              <GlassText variant="caption" tone="soft" style={{ marginHorizontal: gspace.xs }}>
+                More settings
               </GlassText>
-            ) : (
-              <>
+              <GlassIcon name={moreOpen ? 'chevUp' : 'chevDown'} size={14} color={glass.inkSoft} />
+            </Pressable>
+
+            {moreOpen ? (
+              <GlassCard style={{ marginTop: gspace.sm }} padding={gspace.xl}>
+                {/* Outside the demo branch on purpose: who a rider calls when
+                    they are stuck has nothing to do with which server the app
+                    points at, and someone trying the demo should be able to
+                    test the button. */}
                 <Field
-                  label="Server address"
-                  value={url}
-                  onChangeText={setUrl}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  keyboardType="url"
-                  placeholder="https://…trycloudflare.com"
-                />
-                <Field
-                  label="Database"
-                  value={db}
-                  onChangeText={setDb}
-                  autoCapitalize="none"
-                  autoCorrect={false}
-                  placeholder="res-test1"
-                />
-                <Field
-                  label="Mobile number"
-                  value={login}
-                  onChangeText={setLogin}
+                  label="Support number"
+                  icon="phone"
+                  value={supportPhone}
+                  onChangeText={setSupportPhone}
                   autoCapitalize="none"
                   autoCorrect={false}
                   keyboardType="phone-pad"
-                  autoComplete="tel"
-                  textContentType="username"
-                  placeholder="The number on your rider record"
+                  placeholder="Leave empty to hide the call button"
+                  style={{ fontSize: 16 }}
                 />
                 <Field
-                  label="Password"
-                  value={password}
-                  onChangeText={setPassword}
+                  label="Map route key"
+                  icon="nav"
+                  value={orsKey}
+                  onChangeText={setOrsKey}
                   autoCapitalize="none"
                   autoCorrect={false}
-                  secureTextEntry
-                  autoComplete="password"
-                  textContentType="password"
-                  placeholder="Set by the office in Odoo"
+                  placeholder="openrouteservice.org key"
+                  style={{ fontSize: 16 }}
                 />
-              </>
-            )}
+                <GlassText variant="caption" tone="faint" style={{ marginTop: -gspace.sm }}>
+                  Saved when you sign in.
+                </GlassText>
+              </GlassCard>
+            ) : null}
 
-            {/* Outside the demo branch on purpose: who a rider calls when they
-                are stuck has nothing to do with which server the app points at,
-                and someone trying the demo should be able to test the button. */}
-            <View
-              style={{
-                borderBottomWidth: 1,
-                borderColor: glass.divider,
-                marginVertical: gspace.lg,
-              }}
-            />
-            <Field
-              label="Support number"
-              value={supportPhone}
-              onChangeText={setSupportPhone}
-              autoCapitalize="none"
-              autoCorrect={false}
-              keyboardType="phone-pad"
-              placeholder="Leave empty to hide the button"
-            />
-            <Field
-              label="Route key"
-              value={orsKey}
-              onChangeText={setOrsKey}
-              autoCapitalize="none"
-              autoCorrect={false}
-              placeholder="openrouteservice.org key, for the map route"
-            />
-          </GlassCard>
-
-          {error ? (
-            <GlassText variant="bodyStrong" tone="red" style={{ marginTop: gspace.lg }}>
-              {error}
-            </GlassText>
-          ) : null}
-          {ok ? (
-            <GlassText variant="bodyStrong" tone="green" style={{ marginTop: gspace.lg }}>
-              {ok}
-            </GlassText>
-          ) : null}
-
-          <GlassButton
-            title="Continue"
-            kind="dark"
-            onPress={save}
-            loading={busy}
-            style={{ marginTop: gspace.xl }}
-          />
-
-          {!useMock ? (
-            <GlassButton
-              title="Test connection"
-              kind="ghost"
-              onPress={test}
-              disabled={busy}
-              style={{ marginTop: gspace.md }}
-            />
-          ) : null}
+            {!useMock ? (
+              <GlassText
+                variant="caption"
+                tone="faint"
+                style={{ marginTop: gspace.lg, textAlign: 'center' }}
+              >
+                Can't sign in? Ask the office to check your rider login.
+              </GlassText>
+            ) : null}
+          </View>
         </ScrollView>
       </KeyboardAvoidingView>
     </GlassScreen>
+  );
+}
+
+/** One line under the server link saying what the app found there. */
+function ServerStatus({ state, onRetry }: { state: ServerState; onRetry: () => void }) {
+  if (state.kind === 'idle') return null;
+
+  let icon: GlassIconName | null = null;
+  let tone: 'soft' | 'green' | 'red' = 'soft';
+  let text: string;
+  switch (state.kind) {
+    case 'invalid':
+      icon = 'alert';
+      text = 'Enter the full link, starting with https://';
+      break;
+    case 'checking':
+      text = 'Looking for the server…';
+      break;
+    case 'found':
+      icon = 'checked';
+      tone = 'green';
+      text = 'Server found';
+      break;
+    case 'hidden':
+      icon = 'alert';
+      text = 'Server found, but it keeps its databases private. Type the name below.';
+      break;
+    case 'failed':
+      icon = 'alert';
+      tone = 'red';
+      text = state.message;
+      break;
+  }
+  const color = tone === 'green' ? glass.green : tone === 'red' ? glass.red : glass.inkSoft;
+
+  return (
+    <View
+      style={{
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginTop: -gspace.md,
+        marginBottom: gspace.xl,
+      }}
+    >
+      {state.kind === 'checking' ? (
+        <ActivityIndicator size="small" color={glass.inkSoft} />
+      ) : icon ? (
+        <GlassIcon name={icon} size={16} color={color} />
+      ) : null}
+      <GlassText variant="caption" tone={tone} style={{ marginLeft: gspace.sm, flex: 1 }}>
+        {text}
+      </GlassText>
+      {state.kind === 'failed' ? (
+        <Pressable
+          onPress={onRetry}
+          hitSlop={10}
+          accessibilityRole="button"
+          style={({ pressed }) => ({ marginLeft: gspace.sm, opacity: pressed ? 0.6 : 1 })}
+        >
+          <GlassText variant="caption" tone="orange" style={{ fontFamily: poppins.semibold }}>
+            Try again
+          </GlassText>
+        </Pressable>
+      ) : null}
+    </View>
+  );
+}
+
+/**
+ * The database, drawn to match `Field` so the form reads as one column of
+ * inputs. It is a button, not an input: tapping it opens `DbPicker`. Until the
+ * server has answered it is shut and says why — loading, or could not load.
+ */
+function DbField({
+  value,
+  placeholder,
+  loading,
+  failed,
+  enabled,
+  onPress,
+}: {
+  value: string;
+  placeholder: string;
+  loading: boolean;
+  failed: boolean;
+  enabled: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <View style={{ marginBottom: gspace.xl }}>
+      <GlassText variant="label" tone="soft" upper style={{ marginBottom: gspace.sm }}>
+        Database
+      </GlassText>
+      <Pressable
+        onPress={onPress}
+        disabled={!enabled}
+        accessibilityRole="button"
+        accessibilityLabel={`Database, ${value || placeholder}`}
+        accessibilityState={{ disabled: !enabled }}
+        style={({ pressed }) => ({
+          flexDirection: 'row',
+          alignItems: 'center',
+          paddingVertical: gspace.md,
+          borderBottomWidth: 1,
+          borderBottomColor: failed ? glass.red : glass.divider,
+          opacity: pressed ? 0.7 : 1,
+        })}
+      >
+        {loading ? (
+          <ActivityIndicator
+            size="small"
+            color={glass.inkFaint}
+            style={{ width: 20, marginRight: gspace.md }}
+          />
+        ) : (
+          <GlassIcon
+            name="database"
+            size={20}
+            color={failed ? glass.red : glass.inkFaint}
+            style={{ marginRight: gspace.md }}
+          />
+        )}
+        <GlassText
+          variant="body"
+          tone={value ? 'ink' : failed ? 'red' : enabled ? 'soft' : 'faint'}
+          numberOfLines={1}
+          style={{ flex: 1, fontSize: 16 }}
+        >
+          {value || placeholder}
+        </GlassText>
+        {enabled ? <GlassIcon name="chevDown" size={18} color={glass.inkSoft} /> : null}
+      </Pressable>
+    </View>
+  );
+}
+
+/**
+ * The server's databases in a popup: a centred card over a dimmed screen,
+ * closed by a choice, a tap outside, or the Android back button. No native
+ * picker, so no rebuild. The list scrolls once it outgrows the card.
+ */
+function DbPicker({
+  visible,
+  options,
+  value,
+  onChoose,
+  onClose,
+}: {
+  visible: boolean;
+  options: string[];
+  value: string;
+  onChoose: (db: string) => void;
+  onClose: () => void;
+}) {
+  return (
+    <Modal
+      visible={visible}
+      transparent
+      animationType="fade"
+      onRequestClose={onClose}
+      statusBarTranslucent
+    >
+      <Pressable
+        onPress={onClose}
+        accessibilityRole="button"
+        accessibilityLabel="Close"
+        style={{
+          flex: 1,
+          backgroundColor: 'rgba(15,23,42,0.45)',
+          justifyContent: 'center',
+          padding: gspace.xl,
+        }}
+      >
+        {/* Swallows the press, so a tap on the card's own padding does not
+            fall through to the backdrop and close it. */}
+        <Pressable
+          onPress={() => {}}
+          style={{
+            width: '100%',
+            maxWidth: 420,
+            maxHeight: '75%',
+            alignSelf: 'center',
+            backgroundColor: glass.bg,
+            borderRadius: gradius.card,
+            paddingTop: gspace.xl,
+            paddingBottom: gspace.sm,
+          }}
+        >
+          <View style={{ paddingHorizontal: gspace.xl, marginBottom: gspace.md }}>
+            <GlassText variant="title">Choose a database</GlassText>
+            <GlassText variant="caption" tone="soft" style={{ marginTop: 2 }}>
+              {options.length} found on this server
+            </GlassText>
+          </View>
+          <ScrollView bounces={false}>
+            {options.map((name) => {
+              const selected = name === value;
+              return (
+                <Pressable
+                  key={name}
+                  onPress={() => onChoose(name)}
+                  accessibilityRole="radio"
+                  accessibilityState={{ selected }}
+                  style={({ pressed }) => ({
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    paddingHorizontal: gspace.xl,
+                    // 44+ tall: a gloved thumb has to hit one row, not two.
+                    minHeight: 52,
+                    borderTopWidth: 1,
+                    borderTopColor: glass.divider,
+                    backgroundColor: pressed
+                      ? glass.fill
+                      : selected
+                        ? glass.fillLight
+                        : 'transparent',
+                  })}
+                >
+                  <GlassIcon
+                    name="database"
+                    size={18}
+                    color={selected ? glass.indigo : glass.inkFaint}
+                    style={{ marginRight: gspace.md }}
+                  />
+                  <GlassText
+                    variant={selected ? 'bodyStrong' : 'body'}
+                    tone={selected ? 'ink' : 'soft'}
+                    numberOfLines={1}
+                    style={{ flex: 1 }}
+                  >
+                    {name}
+                  </GlassText>
+                  {selected ? <GlassIcon name="check" size={18} color={glass.indigo} /> : null}
+                </Pressable>
+              );
+            })}
+          </ScrollView>
+        </Pressable>
+      </Pressable>
+    </Modal>
+  );
+}
+
+function CodeTile({ label, code }: { label: string; code: string }) {
+  return (
+    <View
+      style={{
+        flex: 1,
+        backgroundColor: glass.orangeSoft,
+        borderRadius: gradius.chip,
+        borderWidth: 1,
+        borderColor: glass.orangeLine,
+        paddingVertical: gspace.md,
+        paddingHorizontal: gspace.md,
+      }}
+    >
+      <GlassText variant="caption" tone="soft">
+        {label}
+      </GlassText>
+      <GlassText variant="title" nums style={{ marginTop: 2, letterSpacing: 2 }}>
+        {code}
+      </GlassText>
+    </View>
+  );
+}
+
+function ErrorBanner({ message }: { message: string }) {
+  return (
+    <View
+      accessibilityRole="alert"
+      style={{
+        flexDirection: 'row',
+        alignItems: 'flex-start',
+        backgroundColor: glass.redSoft,
+        borderRadius: gradius.chip,
+        padding: gspace.md,
+      }}
+    >
+      <GlassIcon name="alert" size={18} color={glass.red} style={{ marginTop: 1 }} />
+      <GlassText variant="body" tone="red" style={{ marginLeft: gspace.sm, flex: 1 }}>
+        {message}
+      </GlassText>
+    </View>
   );
 }

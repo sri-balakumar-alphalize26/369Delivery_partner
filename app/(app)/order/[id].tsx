@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import {
+  Alert,
   KeyboardAvoidingView,
   Linking,
   Pressable,
@@ -21,6 +22,7 @@ import {
   DeliveryOrder,
   DELIVERY_REASONS,
   headingFor,
+  isAtShop,
   PRIMARY_ACTIONS,
 } from '../../../src/api/types';
 import {
@@ -102,6 +104,17 @@ function navigateTo(order: DeliveryOrder) {
  */
 const SHEET_MAX_W = 720;
 
+/**
+ * Jobs whose shop has been sent a pickup code this app session.
+ *
+ * The code used to reach the shop only when the rider tapped "resend": nothing
+ * else issued it, so a rider opened the code panel at the counter and the shop
+ * had nothing to read out. Opening the panel now tells Odoo the rider has
+ * arrived, once per job. Module-level so leaving the screen and coming back
+ * does not send a second code that voids the one the shop is holding.
+ */
+const shopToldFor = new Set<number>();
+
 /** Why tracking would not start, in words a rider can act on. */
 const TRACKING_ERROR: Record<
   Exclude<Awaited<ReturnType<typeof startTracking>>, { ok: true }>['reason'],
@@ -150,6 +163,11 @@ export default function Job() {
   const [reasonNote, setReasonNote] = useState('');
   /** Whether the code panel is up. The code itself still lives in `otp`. */
   const [codeOpen, setCodeOpen] = useState(false);
+  /**
+   * Good news from the server — "the shop has been sent the code". Shown in
+   * the code panel's hint, never in red: this used to go through `error`.
+   */
+  const [notice, setNotice] = useState<string | null>(null);
 
   /**
    * Ticks the countdown. Called up here with the other hooks because the
@@ -312,7 +330,8 @@ export default function Job() {
 
     await qc.invalidateQueries();
 
-    if (res.status === 'delivered' || res.status === 'returned') {
+    // `removed`: declined, and now another rider's — nothing left here.
+    if (res.removed || res.status === 'delivered' || res.status === 'returned') {
       router.replace('/');
     }
   }
@@ -333,6 +352,20 @@ export default function Job() {
       setOtpError(null);
       setReasonNote('');
       setReasonFor(action);
+      return;
+    }
+
+    // Declining cannot be undone — the job goes to someone else and is never
+    // offered back — so it asks first. A stray tap beside Accept is easy.
+    if (action === 'decline') {
+      Alert.alert(
+        'Decline this job?',
+        'It will be offered to another rider, and not to you again.',
+        [
+          { text: 'Keep it', style: 'cancel' },
+          { text: 'Decline', style: 'destructive', onPress: () => void fire('decline') },
+        ]
+      );
       return;
     }
 
@@ -365,6 +398,9 @@ export default function Job() {
         case 'accept':
           res = await api.accept(orderId);
           break;
+        case 'decline':
+          res = await api.decline(orderId);
+          break;
         case 'verify_pickup_otp':
           res = await api.verifyPickupOtp(orderId, otp);
           break;
@@ -381,9 +417,8 @@ export default function Job() {
           res = await api.returnToShop(orderId, reason);
           break;
         case 'confirm_return':
-          // The contract's prose says only the shop closes a return, while its
-          // state table offers this action to the rider. Render what Odoo
-          // offers and let Odoo refuse it — a 409 re-renders from the truth.
+          // Only the shop confirms a return now, and Odoo no longer offers
+          // this. An older server might; its refusal re-renders from the truth.
           res = await api.confirmReturn(orderId);
           break;
         case 'report_issue':
@@ -433,17 +468,46 @@ export default function Job() {
     setOtpError(null);
     try {
       const res = await api.requestPickupOtp(orderId);
-      if (res.message) setError(res.message);
+      // Good news goes in the panel's hint, not in red under the screen.
+      setNotice(res.message ?? null);
       // The server enforces the window; obey the number it sends rather than a
       // constant of our own.
       setCooldown(res.retry_after_seconds ?? 0);
     } catch (err) {
-      setError(
+      setOtpError(
         err instanceof ApiError
           ? err.message
           : 'Could not reach the shop. Ask them to read the code out.'
       );
     }
+  }
+
+  /**
+   * Open the code panel. For the pickup code, this is also the moment the
+   * rider is at the counter, so the shop is sent its code — once per job; see
+   * `shopToldFor`.
+   */
+  function openCode() {
+    setCodeOpen(true);
+    if (primary !== 'verify_pickup_otp' || shopToldFor.has(orderId)) return;
+    shopToldFor.add(orderId);
+    setNotice('Sending the code to the shop…');
+    api
+      .arrivedAtShop(orderId)
+      .then((res) => {
+        setNotice(res.message ?? 'The shop has been sent the code.');
+        setCooldown(res.retry_after_seconds ?? 0);
+      })
+      .catch((err) => {
+        // Let the next open try again, and leave "resend" as the way out.
+        shopToldFor.delete(orderId);
+        setNotice(null);
+        setOtpError(
+          err instanceof ApiError
+            ? err.message
+            : 'Could not reach the shop. Tap "Ask shop to resend".'
+        );
+      });
   }
 
   /**
@@ -1083,7 +1147,9 @@ export default function Job() {
           <CodeSheet
             visible={codeOpen && primary === 'verify_pickup_otp'}
             title="Pickup code"
-            hint="The shop staff will read this out when they hand the parcel over."
+            hint={
+              notice ?? 'The shop staff will read this out when they hand the parcel over.'
+            }
             value={otp}
             onChange={setOtp}
             error={otpError}
@@ -1113,13 +1179,19 @@ export default function Job() {
               title={ACTION_LABEL[primary]}
               kind="indigo"
               icon="check"
-              onPress={() => (needsOtp ? setCodeOpen(true) : run(primary))}
+              onPress={() => (needsOtp ? openCode() : run(primary))}
               loading={busy}
               style={{ marginTop: gspace.xl }}
             />
           ) : (
             <GlassText variant="body" tone="soft" style={{ marginTop: gspace.xl }}>
-              This job is finished. Nothing left to do.
+              {/* No action is not always "finished": a job the shop is still
+                  packing has none either, and read as done. */}
+              {order.delivery_status === 'to_assign'
+                ? 'The office is still assigning this job. Nothing to do yet.'
+                : isAtShop(order.delivery_status)
+                  ? "The shop is packing this order. You'll be called when it's ready."
+                  : 'This job is finished. Nothing left to do.'}
             </GlassText>
           )}
 

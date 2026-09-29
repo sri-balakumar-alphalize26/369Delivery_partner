@@ -5,3 +5,6 @@ from . import sa_rider_device
 from . import sa_delivery_partner
 from . import stock_picking
 from . import sa_rider_rpc
+from . import sa_delivery_settings
+from . import sa_outbox_guard
+from . import rider_dispatch
