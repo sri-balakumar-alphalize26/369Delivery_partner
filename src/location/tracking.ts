@@ -200,7 +200,7 @@ export async function startTracking(orderId: number): Promise<TrackingResult> {
     foregroundService: {
       notificationTitle: '369 Delivery Partner',
       notificationBody: 'Sharing your location for the delivery in progress.',
-      notificationColor: '#0042B3',
+      notificationColor: '#0F3D2E',
     },
   });
 

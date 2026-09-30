@@ -1,11 +1,10 @@
 import {
-  Poppins_400Regular,
-  Poppins_500Medium,
-  Poppins_600SemiBold,
-  Poppins_700Bold,
-  Poppins_800ExtraBold,
+  Manrope_500Medium,
+  Manrope_600SemiBold,
+  Manrope_700Bold,
+  Manrope_800ExtraBold,
   useFonts,
-} from '@expo-google-fonts/poppins';
+} from '@expo-google-fonts/manrope';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Stack, useRouter, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
@@ -17,6 +16,8 @@ import { glass } from '../src/theme/glass';
 import { SplashAnimation } from '../src/ui/SplashAnimation';
 import * as Notifications from 'expo-notifications';
 import { useOfferAlert } from '../src/hooks/useOfferAlert';
+import { useDutyLocation } from '../src/location/dutyLocation';
+import { useSettingsRefresh } from '../src/hooks/useSettingsRefresh';
 import { usePush } from '../src/push/usePush';
 import { useSession } from '../src/store/session';
 
@@ -88,6 +89,13 @@ function Gate({ children }: { children: ReactNode }) {
   // screen comes up, unless the rider is already inside another job.
   useOfferAlert(connected);
 
+  // On a server with the fleet module: where this rider is, for the office's
+  // live map, while on duty with the app open.
+  useDutyLocation(connected);
+
+  // What the office switches in Delivery Settings reaches an open phone too.
+  useSettingsRefresh(connected);
+
   useEffect(() => {
     if (!ready) return;
     if (!connected && segments[0] !== 'connect') router.replace('/connect');
@@ -98,11 +106,10 @@ function Gate({ children }: { children: ReactNode }) {
 
 export default function RootLayout() {
   const [fontsLoaded, fontError] = useFonts({
-    Poppins_400Regular,
-    Poppins_500Medium,
-    Poppins_600SemiBold,
-    Poppins_700Bold,
-    Poppins_800ExtraBold,
+    Manrope_500Medium,
+    Manrope_600SemiBold,
+    Manrope_700Bold,
+    Manrope_800ExtraBold,
   });
 
   const ready = useSession((s) => s.ready);
@@ -147,6 +154,12 @@ export default function RootLayout() {
                 headerShown: false,
                 contentStyle: { backgroundColor: glass.meshMid },
                 animation: 'fade',
+                // Every screen has the green band under the status bar
+                // (GlassScreen draws it), so the clock and battery are white.
+                // Said here as well as on ExpoStatusBar above: the native
+                // stack sets the bar's style per screen and would otherwise
+                // put dark icons back.
+                statusBarStyle: 'light',
               }}
             />
           </Gate>
