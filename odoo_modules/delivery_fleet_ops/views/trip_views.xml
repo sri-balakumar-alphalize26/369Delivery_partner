@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!-- Shop: where riders pick up. -->
+    <record id="view_sa_delivery_shop_form_fleet_ops" model="ir.ui.view">
+        <field name="name">sa.delivery.shop.form.fleet_ops</field>
+        <field name="model">sa.delivery.shop</field>
+        <field name="inherit_id" ref="sales_automation_delivery.view_sa_delivery_shop_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//field[@name='partner_id']" position="after">
+                <label for="sa_pickup_lat" string="Pickup Pin"/>
+                <div class="o_row">
+                    <span invisible="not sa_pickup_known">
+                        <field name="sa_pickup_lat" nolabel="1" class="oe_inline"/>,
+                        <field name="sa_pickup_lng" nolabel="1" class="oe_inline"/>
+                    </span>
+                    <span class="text-warning" invisible="sa_pickup_known">
+                        Not on the map - riders get no road to follow.
+                    </span>
+                    <field name="sa_pickup_known" invisible="1"/>
+                    <button name="action_fleet_locate" type="object"
+                            string="Locate shop" icon="fa-map-marker"
+                            class="btn-link"
+                            groups="sales_automation_delivery.group_sa_delivery_manager"/>
+                </div>
+            </xpath>
+        </field>
+    </record>
+
+    <!-- Delivery: distances at "arrived", and the photo at the door. -->
+    <record id="view_sa_delivery_form_fleet_ops" model="ir.ui.view">
+        <field name="name">stock.picking.delivery.form.fleet_ops</field>
+        <field name="model">stock.picking</field>
+        <field name="inherit_id" ref="sales_automation_delivery.view_sa_delivery_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//field[@name='sa_delivery_partner_id']" position="after">
+                <field name="sa_arrived_shop_distance_m"
+                       invisible="not sa_arrived_shop_distance_m"/>
+                <field name="sa_arrived_customer_distance_m"
+                       invisible="not sa_arrived_customer_distance_m"/>
+                <field name="sa_proof_attachment_id" invisible="1"/>
+                <field name="sa_proof_image" widget="image"
+                       options="{'size': [0, 180]}"
+                       invisible="not sa_proof_attachment_id"/>
+            </xpath>
+        </field>
+    </record>
+
+    <!-- Customer: where the pin came from. -->
+    <record id="view_partner_form_fleet_ops" model="ir.ui.view">
+        <field name="name">res.partner.form.fleet_ops</field>
+        <field name="model">res.partner</field>
+        <field name="inherit_id" ref="base_geolocalize.view_crm_partner_geo_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//field[@name='partner_longitude']/.." position="after">
+                <span class="text-muted ms-2" invisible="not sa_geo_source">
+                    (<field name="sa_geo_source" nolabel="1" class="oe_inline"/>)
+                </span>
+            </xpath>
+        </field>
+    </record>
+
+    <!-- Fuel and problems riders log, in Fleet's service log. -->
+    <record id="action_fleet_ops_service_logs" model="ir.actions.act_window">
+        <field name="name">Fuel &amp; Issues</field>
+        <field name="res_model">fleet.vehicle.log.services</field>
+        <field name="view_mode">list,kanban,form</field>
+        <field name="domain" eval="[('service_type_id', 'in', [ref('delivery_fleet_ops.service_type_fuel'), ref('delivery_fleet_ops.service_type_rider_issue')])]"/>
+        <field name="context">{'search_default_groupby_service_type_id': 1}</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_empty_folder">Nothing logged yet</p>
+            <p>Riders log fuel and report vehicle problems from the app's
+               My vehicle screen.</p>
+        </field>
+    </record>
+</odoo>
