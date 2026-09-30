@@ -138,9 +138,11 @@ function Dot({ done, current }: { done: boolean; current: boolean }) {
       style={{
         width: size,
         height: size,
-        borderRadius: size / 2,
-        backgroundColor: done ? glass.indigo : glass.bg,
-        borderWidth: done ? (current ? 3 : 0) : 2,
+        borderRadius: 2,
+        // The step the rider is on is the lime one, ringed in green; the ones
+        // behind it are solid green, the ones ahead hollow.
+        backgroundColor: current ? glass.accent : done ? glass.indigo : glass.bg,
+        borderWidth: done && !current ? 0 : 2,
         borderColor: current ? glass.indigo : done ? 'transparent' : glass.dividerDashed,
       }}
     />

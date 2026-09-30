@@ -1,6 +1,5 @@
-import { Image } from 'expo-image';
 import { ReactNode } from 'react';
-import { StyleSheet, View, ViewStyle } from 'react-native';
+import { View, ViewStyle } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useOnline } from '../../hooks/useOnline';
 import { glass, gradius, gshadow, gspace } from '../../theme/glass';
@@ -8,13 +7,12 @@ import { GlassIcon } from './GlassIcon';
 import { GlassText } from './GlassText';
 
 /**
- * The gradient mesh every screen sits on.
+ * The flat pale ground every screen sits on.
  *
- * The template drew this with react-native-linear-gradient plus two hard-edged
- * circles, and its own comment conceded that "plain RN has no CSS filter: blur
- * equivalent". Baking the whole mesh into a PNG avoids a native module — so no
- * APK rebuild — and lets the blobs be genuinely blurred, which is what the
- * mockups actually show.
+ * It was a blurred gradient mesh, baked into `assets/images/glass-mesh.png`.
+ * A wash of colour behind white cards costs contrast exactly where a rider in
+ * sunlight has none to spare, so the ground is one flat tone now and the cards
+ * carry an outline instead.
  */
 /**
  * The offline bar lives here rather than on each screen.
@@ -32,15 +30,23 @@ export function GlassScreen({ children, style }: { children: ReactNode; style?: 
 
   return (
     <View style={[{ flex: 1, backgroundColor: glass.meshMid }, style]}>
-      <Image
-        source={require('../../../assets/images/glass-mesh.png')}
-        style={StyleSheet.absoluteFill}
-        // 'fill' so the mesh spans whatever aspect ratio the screen is; it is a
-        // soft wash, so stretching costs nothing.
-        contentFit="fill"
-        transition={0}
-      />
       <View style={{ flex: 1 }}>{children}</View>
+
+      {/* The green band, under the status bar, on every screen. Screens with a
+          header band of their own just run into it; the ones without one (an
+          offer, the map, Connect) would otherwise put white status icons on a
+          pale ground. */}
+      <View
+        pointerEvents="none"
+        style={{
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          right: 0,
+          height: insets.top,
+          backgroundColor: glass.band,
+        }}
+      />
 
       {/**
        * A card that floats, not a bar glued under the status bar.

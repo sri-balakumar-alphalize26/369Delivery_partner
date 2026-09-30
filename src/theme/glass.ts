@@ -1,91 +1,112 @@
 /**
- * "Glass Light" design tokens — frosted translucent cards over a soft
- * blue-purple-orange gradient mesh.
+ * "Forest" design tokens — deep green bands, lime buttons, white cards with a
+ * visible outline on a flat pale ground.
  *
- * Ported from the template drop's `theme.js`. This replaces the Bold Cards and
- * Big Type token sets; see git history for those.
+ * Chosen for sunlight: a rider reads this at arm's length on a handlebar mount,
+ * and the Glass Light look before it (soft mesh, hairline borders, faint greys)
+ * washed out in glare. Nothing here depends on a shadow or a subtle tint, and
+ * colours that must be told apart also differ in brightness.
+ *
+ * The token names are the Glass Light ones, kept so the thirty-odd files that
+ * import them needed no edit. Read them by role, not by name: `indigo` is the
+ * deep green, `orange` is the money colour, the `mesh*` stops are one flat
+ * ground. See git history for the Glass Light values.
  */
 
 export const glass = {
-  // Navy and orange house palette, from the UI refresh. `indigo` keeps its
-  // token name so every call site still compiles, but it resolves to the navy
-  // primary now — the old #3730A3 read as a purple app rather than a delivery
-  // one, and the soft tints below are most of why the refresh looks calmer.
-  ink: '#1B2A4A',
-  inkSoft: '#6B7280',
-  inkFaint: '#9AA1B1',
-  indigo: '#1B2A4A',
-  orange: '#F26B1D',
-  orangeSoft: '#FFF1E8',
-  orangeLine: '#F9D3BC',
-  green: '#1E8E4E',
-  greenSoft: '#E8F5EE',
-  red: '#D94141',
-  redSoft: '#FDEBEB',
+  ink: '#0B1F17',
+  // One step darker than the template's mockup: muted text is the first thing
+  // glare takes away.
+  inkSoft: '#3F574C',
+  inkFaint: '#5F7A6E',
+  /** The strong neutral: dark buttons, progress, focus, the shop's pin. */
+  indigo: '#0F3D2E',
+  /**
+   * Money and "look here". Not the button colour any more — that is `accent` —
+   * so it only has to read as text on white, and as a line on the map.
+   */
+  orange: '#C2410C',
+  orangeSoft: '#FFF4E5',
+  orangeLine: '#F5C38A',
+  green: '#166534',
+  greenSoft: '#DCFCE7',
+  red: '#B91C1C',
+  redSoft: '#FEE2E2',
   white: '#FFFFFF',
 
-  /** The mesh's own stops, kept for anything that needs to blend into it. */
-  meshTop: '#DCEBFF',
-  meshMid: '#E9E4FF',
-  meshBottom: '#FFE8DC',
-
   /**
-   * Card surfaces — deliberately WHITE, not the template's translucent glass.
-   *
-   * The template specifies rgba(255,255,255,0.55) over the coloured mesh, and
-   * its own mockup measures out at #E7EDFF / #F0F1FF / #F3F3FF inside the cards.
-   * That is a lavender tint by design, and on a real screen it reads as grey
-   * panels with a grey rim. Solid white was asked for instead, so this is an
-   * intentional departure — not drift from reference-screens/.
+   * The one thing to press. Lime is only ever a FILL, with `accentInk` on it;
+   * as text on white it disappears, which is what `accentText` is for.
    */
+  accent: '#A3E635',
+  accentInk: '#04140C',
+  accentLine: '#84CC16',
+  accentText: '#166534',
+  accentSoft: '#ECFCCB',
+
+  /** Header bands and the tab bar. */
+  band: '#0F3D2E',
+  bandInk: '#FFFFFF',
+  bandSoft: '#BFD9CB',
+  tabOn: '#C6F26B',
+  tabOff: '#9DBFB0',
+
+  /** One flat ground. Three names because three call sites predate it. */
+  meshTop: '#F3F7F4',
+  meshMid: '#F3F7F4',
+  meshBottom: '#F3F7F4',
+
   bg: '#FFFFFF',
-  /** A hairline edge, not the rim the translucent border produced. */
-  border: '#E6E8EF',
-  /**
-   * Chips and tiles. Sampled from the template's own stat chip: they sit ON a
-   * white card now, so 50% white over white would make them vanish.
-   */
-  fill: '#EEF0F7',
+  /** Dark enough to still draw a card's edge when the shadows are gone. */
+  border: '#A9C4B5',
+  fill: '#EAF2EC',
   fillStrong: '#FFFFFF',
-  fillLight: '#F7F8FB',
+  fillLight: '#F3F7F4',
 
-  btnDark: '#1B2A4A',
+  btnDark: '#0F3D2E',
   btnGhost: '#FFFFFF',
-  divider: '#E6E8EF',
-  dividerDashed: '#D6D9E3',
-} as const;
-
-export const poppins = {
-  regular: 'Poppins_400Regular',
-  medium: 'Poppins_500Medium',
-  semibold: 'Poppins_600SemiBold',
-  bold: 'Poppins_700Bold',
-  extrabold: 'Poppins_800ExtraBold',
+  divider: '#CFE0D6',
+  dividerDashed: '#A9C4B5',
 } as const;
 
 /**
- * The drop expresses weight as `fontWeight`, which React Native ignores for a
- * custom family — the face has to be named. These map its scale onto the loaded
- * Poppins faces.
+ * Manrope, one step heavier than each name says: thin strokes are the second
+ * thing glare takes away, so "regular" is the 500 face and "bold" the 800.
  */
-export const gtype = {
-  hero: { fontFamily: poppins.bold, fontSize: 26 },
-  amount: { fontFamily: poppins.bold, fontSize: 36, letterSpacing: -1 },
-  amountLg: { fontFamily: poppins.bold, fontSize: 40, letterSpacing: -1.5 },
-  title: { fontFamily: poppins.bold, fontSize: 19 },
-  subtitle: { fontFamily: poppins.bold, fontSize: 16 },
-  body: { fontFamily: poppins.medium, fontSize: 14 },
-  bodyStrong: { fontFamily: poppins.semibold, fontSize: 15 },
-  label: { fontFamily: poppins.bold, fontSize: 12, letterSpacing: 0.4 },
-  caption: { fontFamily: poppins.medium, fontSize: 12 },
-  button: { fontFamily: poppins.semibold, fontSize: 15 },
+export const font = {
+  regular: 'Manrope_500Medium',
+  medium: 'Manrope_600SemiBold',
+  semibold: 'Manrope_700Bold',
+  bold: 'Manrope_800ExtraBold',
+  extrabold: 'Manrope_800ExtraBold',
 } as const;
 
+/** The name the faces were first exported under; a few files still use it. */
+export const poppins = font;
+
+/**
+ * Weight has to be a named face: React Native ignores `fontWeight` for a
+ * custom family.
+ */
+export const gtype = {
+  hero: { fontFamily: font.bold, fontSize: 26 },
+  amount: { fontFamily: font.bold, fontSize: 36, letterSpacing: -1 },
+  amountLg: { fontFamily: font.bold, fontSize: 40, letterSpacing: -1.5 },
+  title: { fontFamily: font.bold, fontSize: 19 },
+  subtitle: { fontFamily: font.bold, fontSize: 16 },
+  body: { fontFamily: font.medium, fontSize: 14 },
+  bodyStrong: { fontFamily: font.semibold, fontSize: 15 },
+  label: { fontFamily: font.bold, fontSize: 12, letterSpacing: 0.4 },
+  caption: { fontFamily: font.medium, fontSize: 12 },
+  button: { fontFamily: font.semibold, fontSize: 15 },
+} as const;
+
+/** Squared off: a work tool, not a shopping app. */
 export const gradius = {
-  card: 22,
-  chip: 14,
-  button: 18,
-  pill: 24,
+  card: 12,
+  chip: 6,
+  button: 10,
+  pill: 6,
   avatar: 28,
 } as const;
 
@@ -114,16 +135,18 @@ export const TABLET_MIN_WIDTH = 768;
  */
 export const CONTENT_MAX_W = 720;
 
+/**
+ * No shadow at all. A card's edge is its `border` now: a soft shadow is
+ * invisible in sunlight, and the outline is not. The shape stays so call sites
+ * that spread it keep compiling.
+ */
 export const gshadow = {
   glass: {
-    shadowColor: '#1F294A',
-    // Softened from the template's 0.08 / elevation 3. Android draws elevation
-    // as a grey drop shadow, and around a white card on a pale mesh that halo
-    // was a large part of what read as a grey border.
-    shadowOpacity: 0.05,
-    shadowRadius: 24,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 1,
+    shadowColor: '#000000',
+    shadowOpacity: 0,
+    shadowRadius: 0,
+    shadowOffset: { width: 0, height: 0 },
+    elevation: 0,
   },
 } as const;
 
@@ -154,12 +177,13 @@ export type GlassBarState =
   | 'failed';
 
 /**
- * Soft tints rather than solid blocks, and shorter labels.
+ * Four kinds of badge, told apart by brightness as much as by colour, so they
+ * still differ when glare has bleached the colour out:
  *
- * Every state used to be a saturated fill with white text, so a list of jobs
- * was a column of shouting badges and none of them meant more than any other.
- * Only the two that genuinely want attention keep a strong colour — a new
- * offer, and a delivery in progress. The rest sit back as grey chips.
+ *   lime        a new offer — the one that wants a tap
+ *   deep green  the rider's own job in hand, before the road
+ *   pale green  on the road, and done
+ *   grey        waiting on somebody else
  *
  * Labels are cut to fit a chip: "GO TO THE SHOP" wrapped, "GO TO SHOP" does not.
  */
@@ -170,12 +194,12 @@ export const glassBand: Record<GlassBarState, { bg: string; fg: string; label: s
   // nothing to do yet, only something coming.
   awaiting_shop: { bg: glass.fill, fg: glass.inkSoft, label: 'AT SHOP' },
   preparing: { bg: glass.fill, fg: glass.inkSoft, label: 'PACKING' },
-  ready: { bg: glass.orangeSoft, fg: glass.orange, label: 'PACKED' },
+  ready: { bg: glass.accentSoft, fg: glass.accentText, label: 'PACKED' },
   to_assign: { bg: glass.fill, fg: glass.inkSoft, label: 'WAITING' },
-  offered: { bg: glass.orange, fg: glass.white, label: 'NEW JOB' },
-  accepted: { bg: glass.fill, fg: glass.ink, label: 'GO TO SHOP' },
-  picked: { bg: glass.fill, fg: glass.ink, label: 'COLLECTED' },
-  dispatched: { bg: glass.fill, fg: glass.ink, label: 'LEFT SHOP' },
+  offered: { bg: glass.accent, fg: glass.accentInk, label: 'NEW JOB' },
+  accepted: { bg: glass.band, fg: glass.bandInk, label: 'GO TO SHOP' },
+  picked: { bg: glass.band, fg: glass.bandInk, label: 'COLLECTED' },
+  dispatched: { bg: glass.band, fg: glass.bandInk, label: 'LEFT SHOP' },
   out_for_delivery: { bg: glass.greenSoft, fg: glass.green, label: 'DELIVERING' },
   delivered: { bg: glass.greenSoft, fg: glass.green, label: 'DELIVERED' },
   returning: { bg: glass.redSoft, fg: glass.red, label: 'RETURNING' },

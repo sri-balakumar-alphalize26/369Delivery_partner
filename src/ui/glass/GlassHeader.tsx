@@ -5,11 +5,16 @@ import { glass, gradius, gspace } from '../../theme/glass';
 import { GlassIcon } from './GlassIcon';
 import { GlassText } from './GlassText';
 
-/** Back button and centred title, as the Orders / Earnings / Proof screens use. */
+/**
+ * Back button and centred title on the deep green band, as the Orders,
+ * Earnings and My vehicle screens use.
+ *
+ * `tone` is kept for callers that pass it, but the band is dark whatever it
+ * says, so the title is always white.
+ */
 export function GlassHeader({
   title,
   onBack,
-  tone = 'ink',
   right,
 }: {
   title: string;
@@ -19,14 +24,16 @@ export function GlassHeader({
   right?: ReactNode;
 }) {
   const insets = useSafeAreaInsets();
-  const fg = tone === 'white' ? glass.white : glass.ink;
+  const fg = glass.bandInk;
 
   return (
     <View
       style={{
+        backgroundColor: glass.band,
         paddingTop: insets.top + gspace.sm,
         paddingHorizontal: gspace.xl,
         paddingBottom: gspace.md,
+        marginBottom: gspace.md,
         flexDirection: 'row',
         alignItems: 'center',
       }}
@@ -41,9 +48,9 @@ export function GlassHeader({
             width: 40,
             height: 40,
             borderRadius: gradius.chip,
-            backgroundColor: glass.fillLight,
+            backgroundColor: 'rgba(255,255,255,0.12)',
             borderWidth: 1,
-            borderColor: glass.border,
+            borderColor: 'rgba(255,255,255,0.25)',
             alignItems: 'center',
             justifyContent: 'center',
             opacity: pressed ? 0.7 : 1,

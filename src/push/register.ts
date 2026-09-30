@@ -49,7 +49,7 @@ export async function ensureJobsChannel(): Promise<void> {
     name: 'New jobs',
     importance: Notifications.AndroidImportance.MAX,
     vibrationPattern: [0, 250, 250, 250],
-    lightColor: '#3730A3',
+    lightColor: '#A3E635',
   });
 }
 

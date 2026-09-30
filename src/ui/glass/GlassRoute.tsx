@@ -90,7 +90,7 @@ const MARKER_W = 12;
 function Dot() {
   return (
     <View
-      style={{ width: 11, height: 11, borderRadius: 6, backgroundColor: glass.indigo }}
+      style={{ width: 11, height: 11, borderRadius: 2, backgroundColor: glass.indigo }}
     />
   );
 }
@@ -102,7 +102,7 @@ function Ring() {
       style={{
         width: 11,
         height: 11,
-        borderRadius: 6,
+        borderRadius: 2,
         borderWidth: 3,
         borderColor: glass.orange,
         backgroundColor: glass.bg,

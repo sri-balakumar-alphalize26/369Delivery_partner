@@ -2,13 +2,7 @@ import { ReactNode } from 'react';
 import { View, ViewStyle } from 'react-native';
 import { glass, gradius, gshadow } from '../../theme/glass';
 
-/**
- * The frosted card.
- *
- * A translucent tinted panel rather than a true blur, exactly as the template
- * ships it — a real blur-behind needs expo-blur, a native module that would
- * force a rebuild. Over the soft mesh the difference is barely visible.
- */
+/** A white card with a visible outline — its edge is the border, not a shadow. */
 export function GlassCard({
   children,
   style,

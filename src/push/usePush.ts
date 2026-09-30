@@ -51,9 +51,17 @@ export function usePush(connected: boolean) {
       qc.invalidateQueries({ queryKey: ['orders'] });
 
       const data = res.notification.request.content.data as
-        | { delivery_order_id?: number | string }
+        | { delivery_order_id?: number | string; status?: string }
         | undefined;
       const id = Number(data?.delivery_order_id);
+
+      // "Moved on to another rider" and "cancelled" are about a job that is no
+      // longer this rider's: opening it would only answer `not_found`. The
+      // refreshed list is where the news shows.
+      if (data?.status === 'passed' || data?.status === 'cancelled') {
+        router.replace('/');
+        return;
+      }
 
       // Only navigate on a real id — a malformed payload should leave the rider
       // where they are rather than on a broken screen.
