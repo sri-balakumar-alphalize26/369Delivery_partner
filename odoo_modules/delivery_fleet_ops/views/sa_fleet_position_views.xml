@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="action_fleet_live_map" model="ir.actions.client">
+        <field name="name">Live Map</field>
+        <field name="tag">delivery_fleet_ops.live_map</field>
+    </record>
+
+    <record id="view_sa_fleet_position_list" model="ir.ui.view">
+        <field name="name">sa.fleet.position.list</field>
+        <field name="model">sa.fleet.position</field>
+        <field name="arch" type="xml">
+            <list string="Rider Positions" create="false" edit="false">
+                <field name="recorded_on"/>
+                <field name="rider_id"/>
+                <field name="vehicle_id" optional="show"/>
+                <field name="picking_id" optional="show"/>
+                <field name="latitude"/>
+                <field name="longitude"/>
+                <field name="accuracy" optional="hide"/>
+                <field name="battery" optional="hide"/>
+            </list>
+        </field>
+    </record>
+
+    <record id="view_sa_fleet_position_search" model="ir.ui.view">
+        <field name="name">sa.fleet.position.search</field>
+        <field name="model">sa.fleet.position</field>
+        <field name="arch" type="xml">
+            <search>
+                <field name="rider_id"/>
+                <field name="vehicle_id"/>
+                <field name="picking_id"/>
+                <filter string="Today" name="today"
+                        domain="[('recorded_on', '&gt;=', context_today().strftime('%Y-%m-%d'))]"/>
+                <filter string="On a Delivery" name="on_delivery"
+                        domain="[('picking_id', '!=', False)]"/>
+                <group>
+                    <filter string="Rider" name="group_rider" context="{'group_by': 'rider_id'}"/>
+                </group>
+            </search>
+        </field>
+    </record>
+
+    <record id="action_sa_fleet_position" model="ir.actions.act_window">
+        <field name="name">Rider Positions</field>
+        <field name="res_model">sa.fleet.position</field>
+        <field name="view_mode">list</field>
+        <field name="context">{'search_default_today': 1}</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_empty_folder">No positions yet</p>
+            <p>Riders report where they are while on duty with the app open,
+               and while a parcel is out for delivery.</p>
+        </field>
+    </record>
+</odoo>

@@ -1,0 +1,82 @@
+.o_fleet_live_map {
+    min-height: 0;
+
+    .o_fleet_panel {
+        width: 340px;
+        min-width: 280px;
+    }
+
+    .o_fleet_row {
+        cursor: pointer;
+
+        &:hover {
+            background: rgba(27, 42, 74, 0.04);
+        }
+
+        &.o_selected {
+            background: rgba(59, 91, 219, 0.08);
+            box-shadow: inset 3px 0 0 #3B5BDB;
+        }
+    }
+
+    .o_fleet_dot {
+        display: inline-block;
+        width: 10px;
+        height: 10px;
+        border-radius: 50%;
+        vertical-align: middle;
+    }
+
+    .o_fleet_map {
+        min-height: 400px;
+    }
+}
+
+// Leaflet's divIcon wrappers: no default white square behind the pins.
+.o_fleet_rider_icon,
+.o_fleet_shop_icon {
+    background: transparent;
+    border: none;
+}
+
+.o_fleet_pin {
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    border: 3px solid #fff;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+    color: #fff;
+    font-weight: 600;
+    font-size: 12px;
+    line-height: 28px;
+    text-align: center;
+
+    &.o_selected {
+        box-shadow: 0 0 0 3px #3B5BDB, 0 1px 4px rgba(0, 0, 0, 0.35);
+    }
+}
+
+.o_fleet_label {
+    position: absolute;
+    top: 36px;
+    left: 50%;
+    transform: translateX(-50%);
+    white-space: nowrap;
+    background: rgba(255, 255, 255, 0.92);
+    border-radius: 4px;
+    padding: 0 4px;
+    font-size: 11px;
+    color: #1B2A4A;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+}
+
+.o_fleet_shop {
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    background: #1B2A4A;
+    color: #fff;
+    text-align: center;
+    line-height: 28px;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+}
