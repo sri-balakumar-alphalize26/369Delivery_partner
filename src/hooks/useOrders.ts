@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/endpoints';
 import { syncClock } from '../lib/clock';
-import { DeliveryOrder, DutyResult, OrdersResponse } from '../api/types';
+import { DeliveryOrder, DutyResult, OrdersResponse, TakeVehicleResult } from '../api/types';
 import { useSession } from '../store/session';
 
 /**
@@ -12,21 +12,27 @@ import { useSession } from '../store/session';
  * not draining a phone that has to last a shift; it becomes a fallback the
  * moment push arrives.
  */
+/**
+ * Every response carries `server_time`, so the offset between the server's
+ * clock and this phone's is taken here — free, and refreshed with the poll.
+ * Countdowns read from it rather than from the device; see lib/clock.
+ *
+ * Shared by every observer of `['orders']`: React Query runs the query with
+ * whichever observer's options it holds last, so one without this function
+ * would break the poll for all of them.
+ */
+export async function fetchOrders(): Promise<OrdersResponse> {
+  const res = await api.orders();
+  syncClock(res.server_time);
+  return res;
+}
+
 export function useOrders() {
   const connected = useSession((s) => s.connected);
 
   return useQuery<OrdersResponse>({
     queryKey: ['orders'],
-    /**
-     * Every response carries `server_time`, so the offset between the server's
-     * clock and this phone's is taken here — free, and refreshed with the poll.
-     * Countdowns read from it rather than from the device; see lib/clock.
-     */
-    queryFn: async () => {
-      const res = await api.orders();
-      syncClock(res.server_time);
-      return res;
-    },
+    queryFn: fetchOrders,
     enabled: connected,
     refetchInterval: connected ? 10_000 : false,
     refetchIntervalInBackground: false,
@@ -41,12 +47,18 @@ export function useOrders() {
  * while nobody was available. So the orders list is refetched immediately
  * rather than waiting up to ten seconds for the next poll.
  */
+export interface DutyInput {
+  on: boolean;
+  /** The vehicle picked on the way on duty, on a server with a fleet. */
+  vehicleId?: number;
+}
+
 export function useDuty() {
   const qc = useQueryClient();
   const applyDuty = useSession((s) => s.applyDuty);
 
-  return useMutation<DutyResult, Error, boolean, { previous?: OrdersResponse }>({
-    mutationFn: (on) => api.duty(on),
+  return useMutation<DutyResult, Error, DutyInput, { previous?: OrdersResponse }>({
+    mutationFn: ({ on, vehicleId }) => api.duty(on, vehicleId),
 
     /**
      * Show the tap at once, by patching the cached orders response.
@@ -57,12 +69,12 @@ export function useDuty() {
      * only the refetch a moment later flipped it a second time. Three states for
      * one tap, and the middle one a lie.
      */
-    onMutate: async (next) => {
+    onMutate: async ({ on }) => {
       // Stop a poll landing mid-flight and overwriting this with stale truth.
       await qc.cancelQueries({ queryKey: ['orders'] });
       const previous = qc.getQueryData<OrdersResponse>(['orders']);
       qc.setQueryData<OrdersResponse>(['orders'], (old) =>
-        old ? { ...old, on_duty: next } : old
+        old ? { ...old, on_duty: on } : old
       );
       return { previous };
     },
@@ -88,6 +100,19 @@ export function useDuty() {
     onSettled: () => {
       qc.invalidateQueries({ queryKey: ['orders'] });
     },
+  });
+}
+
+/** Changing vehicles mid-shift — the shift itself carries on untouched. */
+export function useTakeVehicle() {
+  const qc = useQueryClient();
+  const applyVehicle = useSession((s) => s.applyVehicle);
+
+  return useMutation<TakeVehicleResult, Error, number>({
+    mutationFn: (vehicleId) => api.takeVehicle(vehicleId),
+    onSuccess: (result) => applyVehicle(result.vehicle),
+    // What is free has changed for everyone, this rider included.
+    onSettled: () => qc.invalidateQueries({ queryKey: ['vehicles'] }),
   });
 }
 

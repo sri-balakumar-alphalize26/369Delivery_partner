@@ -95,6 +95,9 @@ export function makeOffer(): DeliveryOrder {
      * case is visible without waiting for a promise to expire.
      */
     promised_by: minutesFromNow([12, 35, -6][seq % 3]),
+    // As the 369 Mart bridge sends it: the counter packed it a few minutes ago.
+    packed_at: minutesFromNow(-4),
+    assigned_by: "auto",
     allowed_actions: ["accept"],
     products: [
       { name: "Amul Gold Milk 500ml", quantity: 2, uom: "Units" },

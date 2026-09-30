@@ -12,6 +12,10 @@ import {
   OrdersResponse,
   OrderTimestamps,
   Rider,
+  RiderLocationResult,
+  TakeVehicleResult,
+  Vehicle,
+  VehiclesResponse,
 } from '../types';
 import {
   MOCK_DELIVERY_OTP,
@@ -85,6 +89,23 @@ const rider: Rider = {
   kind: 'own',
   on_duty: false,
   duty_since: '',
+};
+
+/**
+ * Two bikes from the Fleet app, so demo mode shows the vehicle picker the way
+ * a server with `delivery_fleet_ops` does. Not required: a rider may skip it.
+ */
+const VEHICLES: Vehicle[] = [
+  { id: 1, name: 'Honda/Wave 110/MCT 4412', plate: 'MCT 4412', model: 'Wave 110', brand: 'Honda', type: 'bike', grounded: false },
+  { id: 2, name: 'Yamaha/YBR 125/MCT 7730', plate: 'MCT 7730', model: 'YBR 125', brand: 'Yamaha', type: 'bike', grounded: false },
+];
+
+const fleet = {
+  vehicle: null as Vehicle | null,
+  default_vehicle_id: 1,
+  vehicle_required: false,
+  proof_required: false,
+  features: ['vehicles', 'location', 'geofence', 'fuel', 'proof'],
 };
 
 const state = {
@@ -191,12 +212,49 @@ export const mockAdapter: ApiAdapter = {
   async me(): Promise<Identity> {
     await wait(200);
     guard();
-    return { rider, timezone: MOCK_TIMEZONE, currency: OMR };
+    return { rider, timezone: MOCK_TIMEZONE, currency: OMR, fleet: { ...fleet } };
   },
 
-  async duty(on): Promise<DutyResult> {
+  async vehicles(): Promise<VehiclesResponse> {
+    await wait(250);
+    guard();
+    return {
+      ...fleet,
+      vehicles: VEHICLES,
+      preselect_id: fleet.vehicle?.id ?? fleet.default_vehicle_id,
+    };
+  },
+
+  async riderLocation(): Promise<RiderLocationResult> {
+    await wait(150);
+    guard();
+    return { on_duty: rider.on_duty, poll_after_seconds: 60, has_new_offer: false };
+  },
+
+  async takeVehicle(vehicleId): Promise<TakeVehicleResult> {
+    await wait(250);
+    guard();
+    if (!rider.on_duty) throw new ApiError('off_duty', 'You are no longer on duty.');
+    const vehicle = VEHICLES.find((v) => v.id === vehicleId);
+    if (!vehicle) {
+      throw new ApiError('vehicle_unavailable', 'That vehicle is not free now. Pick another one.');
+    }
+    fleet.vehicle = vehicle;
+    return { vehicle, message: `You are riding ${vehicle.plate} now.` };
+  },
+
+  async duty(on, vehicleId): Promise<DutyResult> {
     await wait(350);
     guard();
+
+    if (on && vehicleId) {
+      const vehicle = VEHICLES.find((v) => v.id === vehicleId);
+      if (!vehicle) {
+        throw new ApiError('vehicle_unavailable', 'That vehicle is not free now. Pick another one.');
+      }
+      fleet.vehicle = vehicle;
+    }
+    if (!on) fleet.vehicle = null;
 
     rider.on_duty = on;
 
@@ -222,6 +280,7 @@ export const mockAdapter: ApiAdapter = {
         duty_since: '',
         jobs_picked_up: 0,
         message: 'You are off duty. No new jobs will be offered.',
+        vehicle: null,
       };
     }
 
@@ -237,6 +296,7 @@ export const mockAdapter: ApiAdapter = {
       duty_since: rider.duty_since,
       jobs_picked_up: waiting,
       message: `You are on duty. ${waiting} job(s) were waiting.`,
+      vehicle: fleet.vehicle,
     };
   },
 
@@ -427,6 +487,37 @@ export const mockAdapter: ApiAdapter = {
   // the adapter interface honest without pretending a token was stored.
   async registerPush() {},
   async unregisterPush() {},
+
+  async uploadProof() {
+    await wait(600);
+    guard();
+    return { attachment_id: Date.now() };
+  },
+
+  async fuelReport({ liters }) {
+    await wait(400);
+    guard();
+    if (!fleet.vehicle) {
+      throw new ApiError('no_vehicle', 'Take a vehicle first — fuel is logged against the bike you are riding.');
+    }
+    return { log_id: Date.now(), message: `Fuel logged: ${liters} L.` };
+  },
+
+  async vehicleIssue({ grounded }) {
+    await wait(400);
+    guard();
+    if (!fleet.vehicle) {
+      throw new ApiError('no_vehicle', 'Take a vehicle first — problems are logged against the bike you are riding.');
+    }
+    if (grounded) fleet.vehicle = { ...fleet.vehicle, grounded: true };
+    return {
+      log_id: Date.now(),
+      grounded: !!grounded,
+      message: grounded
+        ? 'Reported. The vehicle is marked as not rideable; the office will follow up.'
+        : 'Reported. The office will follow up.',
+    };
+  },
 
   async returnToShop(id) {
     await wait(350);

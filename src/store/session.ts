@@ -1,8 +1,17 @@
 import { create } from 'zustand';
 import { api } from '../api/endpoints';
 import { getServer, saveServer } from '../api/config';
+import { setFeatures } from '../api/features';
 import { setSessionExpiredHandler } from '../api/rpc/client';
-import { ApiError, Currency, DutyResult, Rider, ServerConfig } from '../api/types';
+import {
+  ApiError,
+  Currency,
+  DutyResult,
+  FleetInfo,
+  Rider,
+  ServerConfig,
+  Vehicle,
+} from '../api/types';
 
 /**
  * Connection state.
@@ -22,6 +31,11 @@ interface SessionState {
   /** The shop's zone, not the phone's. Times are meaningless without it. */
   timezone: string | undefined;
   currency: Currency | undefined;
+  /**
+   * The vehicle side, when the server has `delivery_fleet_ops`. Undefined
+   * means "no fleet here", and every vehicle control stays hidden.
+   */
+  fleet: FleetInfo | undefined;
   /** False until storage has been read — gates the router. */
   ready: boolean;
   /** True once `me` has succeeded against the current server. */
@@ -32,6 +46,14 @@ interface SessionState {
   connect: (cfg: ServerConfig, password: string) => Promise<Rider>;
   /** Folds a duty response back in, so no round-trip to `me` is needed. */
   applyDuty: (result: DutyResult) => void;
+  /** The vehicle in hand after a mid-shift swap. */
+  applyVehicle: (vehicle: Vehicle | null) => void;
+  /**
+   * Ask `me` again, quietly. What the office switches in Delivery Settings —
+   * fuel logs, the door photo — reaches a phone that is already open, not
+   * only the next time the app starts. A failure changes nothing.
+   */
+  refresh: () => Promise<void>;
   /** The server no longer knows this session. The Gate then lands on Connect. */
   expire: () => void;
   disconnect: () => Promise<void>;
@@ -42,6 +64,7 @@ export const useSession = create<SessionState>((set) => ({
   rider: null,
   timezone: undefined,
   currency: undefined,
+  fleet: undefined,
   ready: false,
   connected: false,
 
@@ -55,8 +78,8 @@ export const useSession = create<SessionState>((set) => ({
     );
 
     try {
-      const { rider, timezone, currency } = await api.me();
-      set({ rider, timezone, currency, connected: true });
+      const { rider, timezone, currency, fleet } = await api.me();
+      set({ rider, timezone, currency, fleet, connected: true });
       console.log(`[login] launch: session good, rider ${rider.name} (#${rider.id})`);
     } catch (err) {
       // No session yet, or an expired one — land on Connect rather than a
@@ -74,8 +97,8 @@ export const useSession = create<SessionState>((set) => ({
 
     try {
       await api.login(server.login, password);
-      const { rider, timezone, currency } = await api.me();
-      set({ rider, timezone, currency, connected: true });
+      const { rider, timezone, currency, fleet } = await api.me();
+      set({ rider, timezone, currency, fleet, connected: true });
       console.log(
         `[login] connected${server.useMock ? ' (demo)' : ''}: rider ${rider.name} (#${rider.id}), ` +
           `timezone ${timezone ?? 'unset'}, currency ${currency?.code ?? 'unset'}`
@@ -102,9 +125,28 @@ export const useSession = create<SessionState>((set) => ({
               on_duty: result.on_duty,
               duty_since: result.duty_since,
             },
+            // Only a fleet server answers with `vehicle`; leave the rest alone.
+            ...(s.fleet && result.vehicle !== undefined
+              ? { fleet: { ...s.fleet, vehicle: result.vehicle } }
+              : {}),
           }
         : {}
     );
+  },
+
+  async refresh() {
+    if (!useSession.getState().connected) return;
+    try {
+      const { rider, timezone, currency, fleet } = await api.me();
+      set({ rider, timezone, currency, fleet });
+    } catch {
+      // Offline, or the session ended — the latter is handled by the expiry
+      // path in the client. Keep what we have.
+    }
+  },
+
+  applyVehicle(vehicle) {
+    set((s) => (s.fleet ? { fleet: { ...s.fleet, vehicle } } : {}));
   },
 
   expire() {
@@ -118,7 +160,13 @@ export const useSession = create<SessionState>((set) => ({
     // address, database and number stay saved: none of them is a secret, and
     // typing the tunnel address again is what this screen exists to avoid.
     await api.logout();
-    set({ rider: null, timezone: undefined, currency: undefined, connected: false });
+    set({
+      rider: null,
+      timezone: undefined,
+      currency: undefined,
+      fleet: undefined,
+      connected: false,
+    });
   },
 }));
 
@@ -126,3 +174,7 @@ export const useSession = create<SessionState>((set) => ({
 // too, so the Gate sends the rider to Connect instead of leaving them on a
 // screen whose every request fails.
 setSessionExpiredHandler(() => useSession.getState().expire());
+
+// The adapters ask `hasFeature` before sending a parameter an older server
+// would reject; keep its list in step with whatever `me` said last.
+useSession.subscribe((s) => setFeatures(s.fleet?.features));

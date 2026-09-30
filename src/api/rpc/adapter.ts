@@ -1,3 +1,4 @@
+import { hasFeature } from '../features';
 import { call, login, logout, uuid } from './client';
 import {
   ActionResult,
@@ -6,7 +7,11 @@ import {
   DutyResult,
   Identity,
   LocationResult,
+  LogResult,
   OrdersResponse,
+  RiderLocationResult,
+  TakeVehicleResult,
+  VehiclesResponse,
 } from '../types';
 
 /**
@@ -31,7 +36,33 @@ export const rpcAdapter: ApiAdapter = {
   // is formatted with.
   me: () => call<Identity>('me'),
 
-  duty: (on) => call<DutyResult>('set_duty', { on_duty: on, client_uuid: uuid() }),
+  // `vehicle_id` only when one was picked: a server without delivery_fleet_ops
+  // has no such parameter and would fail the whole call on it.
+  duty: (on, vehicleId) =>
+    call<DutyResult>('set_duty', {
+      on_duty: on,
+      client_uuid: uuid(),
+      ...(vehicleId ? { vehicle_id: vehicleId } : {}),
+    }),
+
+  vehicles: () => call<VehiclesResponse>('vehicles'),
+
+  takeVehicle: (vehicleId) =>
+    call<TakeVehicleResult>('take_vehicle', { vehicle_id: vehicleId, client_uuid: uuid() }),
+
+  /** "You are off duty" is an instruction to stop, so it is read, not thrown. */
+  async riderLocation(fix) {
+    const r = await call<Partial<RiderLocationResult> & { success: boolean }>(
+      'rider_location',
+      { latitude: fix.latitude, longitude: fix.longitude, accuracy: fix.accuracy },
+      { timeoutMs: 10000, allowRefusal: true }
+    );
+    return {
+      on_duty: r.success !== false && r.on_duty !== false,
+      poll_after_seconds: r.poll_after_seconds ?? 120,
+      has_new_offer: !!r.has_new_offer,
+    };
+  },
 
   orders: () => call<OrdersResponse>('orders'),
 
@@ -48,8 +79,17 @@ export const rpcAdapter: ApiAdapter = {
 
   // `arrived` at the shop is what issues the pickup code. Without it the shop
   // had no code until the rider tapped "resend".
-  arrivedAtShop: (id) =>
-    call<ActionResult>('arrived', { job_id: id, point: 'shop', client_uuid: uuid() }),
+  // With the fleet module, where the rider is goes along, so the server can
+  // tell a rider at the counter from one tapping Arrived across town.
+  arrivedAtShop: (id, fix) =>
+    call<ActionResult>('arrived', {
+      job_id: id,
+      point: 'shop',
+      client_uuid: uuid(),
+      ...(fix && hasFeature('geofence')
+        ? { latitude: fix.latitude, longitude: fix.longitude, accuracy: fix.accuracy }
+        : {}),
+    }),
 
   requestPickupOtp: (id) => call<ActionResult>('request_pickup_otp', { job_id: id }),
 
@@ -88,6 +128,42 @@ export const rpcAdapter: ApiAdapter = {
   async unregisterPush(token) {
     await call('unregister_push', { token });
   },
+
+  async uploadProof(id, imageBase64) {
+    return call<{ attachment_id: number }>(
+      'upload_proof',
+      { job_id: id, image_base64: imageBase64, filename: `proof-${id}.jpg` },
+      // A photo over a weak connection takes a while; the default would give up.
+      { timeoutMs: 60000 }
+    );
+  },
+
+  fuelReport: ({ liters, amount, odometer, note, photoBase64 }) =>
+    call<LogResult>(
+      'fuel_report',
+      {
+        liters,
+        amount: amount ?? 0,
+        odometer: odometer ?? 0,
+        note: note ?? '',
+        photo_base64: photoBase64 ?? null,
+        client_uuid: uuid(),
+      },
+      { timeoutMs: 60000 }
+    ),
+
+  vehicleIssue: ({ category, note, photoBase64, grounded }) =>
+    call<LogResult>(
+      'vehicle_issue',
+      {
+        category,
+        note: note ?? '',
+        photo_base64: photoBase64 ?? null,
+        grounded: !!grounded,
+        client_uuid: uuid(),
+      },
+      { timeoutMs: 60000 }
+    ),
 
   returnToShop: (id, reason) =>
     call<ActionResult>('return_to_shop', { job_id: id, reason: reason ?? '', client_uuid: uuid() }),

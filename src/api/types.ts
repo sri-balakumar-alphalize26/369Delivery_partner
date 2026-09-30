@@ -244,6 +244,14 @@ export interface DeliveryOrder {
   tracking?: Tracking;
   timestamps?: OrderTimestamps;
   delivered_at?: string;
+  /**
+   * When the 369 Mart counter pressed Packed — UTC with a `Z`, like
+   * `promised_by`; null before it is packed. Sent by the `mart369_rider_bridge`
+   * module only, so absent on a server without it.
+   */
+  packed_at?: string | null;
+  /** `office` when a person chose this rider, `auto` when the least-busy rule did. */
+  assigned_by?: 'auto' | 'office';
 }
 
 /** The four dashboard figures. */
@@ -342,6 +350,76 @@ export interface DutyResult {
   duty_since: string;
   jobs_picked_up: number;
   message?: string;
+  /** With `delivery_fleet_ops`: the vehicle now in hand, null once given back. */
+  vehicle?: Vehicle | null;
+}
+
+/** A bike or car from Odoo's Fleet app that riders may take. */
+export interface Vehicle {
+  id: number;
+  /** Fleet's own "Brand/Model/Plate". */
+  name: string;
+  plate: string;
+  model: string;
+  brand: string;
+  /** Fleet's two kinds; null when the model does not say. */
+  type: 'bike' | 'car' | null;
+  grounded: boolean;
+}
+
+/**
+ * `me`'s `fleet` block. Only a server with `delivery_fleet_ops` sends it, and
+ * the vehicle screens stay hidden without it — an older server must never be
+ * sent a `vehicle_id` it has no parameter for.
+ */
+export interface FleetInfo {
+  vehicle: Vehicle | null;
+  default_vehicle_id: number | null;
+  /** On: the server refuses to clock the rider on without a vehicle. */
+  vehicle_required: boolean;
+  /** On: the delivery code is refused until a photo at the door is sent. */
+  proof_required?: boolean;
+  /**
+   * What this server accepts: `vehicles`, `location`, `geofence` (a position
+   * with "arrived"), `fuel` (fuel and problem reports), `proof` (door photo).
+   */
+  features: string[];
+}
+
+/** What a phone knows about where it is, sent with "arrived". */
+export interface Fix {
+  latitude: number;
+  longitude: number;
+  accuracy: number;
+}
+
+export type VehicleIssueCategory = 'flat_tyre' | 'breakdown' | 'accident' | 'other';
+
+export interface LogResult {
+  log_id: number;
+  message?: string;
+  grounded?: boolean;
+}
+
+/**
+ * `rider_location`'s answer. The server paces the heartbeat: 30 s with work
+ * in hand, 2 min without. `on_duty: false` means stop sending.
+ */
+export interface RiderLocationResult {
+  on_duty: boolean;
+  poll_after_seconds: number;
+  has_new_offer: boolean;
+}
+
+export interface TakeVehicleResult {
+  vehicle: Vehicle | null;
+  message?: string;
+}
+
+/** What the rider may take now, and which one to preselect. */
+export interface VehiclesResponse extends FleetInfo {
+  vehicles: Vehicle[];
+  preselect_id: number | null;
 }
 
 export interface LocationResult {
@@ -364,6 +442,18 @@ export type ApiErrorCode =
   | 'too_large'
   | 'no_token'
   | 'uuid_reused'
+  // delivery_fleet_ops: no vehicle picked where one is required, or the one
+  // picked has just gone out with somebody else.
+  | 'vehicle_needed'
+  | 'vehicle_unavailable'
+  // "Arrived" far from the shop, with the arrival check set to refuse.
+  | 'too_far'
+  | 'no_vehicle'
+  | 'bad_odometer'
+  | 'bad_input'
+  | 'proof_needed'
+  // Fuel and problem logs switched off in Delivery Settings.
+  | 'disabled'
   | 'no_database'
   | 'network'
   | 'unknown';
@@ -432,6 +522,8 @@ export interface Identity {
   rider: Rider;
   timezone: string;
   currency: Currency;
+  /** Absent on a server without `delivery_fleet_ops`. */
+  fleet?: FleetInfo;
 }
 
 /**
@@ -446,7 +538,27 @@ export interface ApiAdapter {
 
   me(): Promise<Identity>;
 
-  duty(on: boolean): Promise<DutyResult>;
+  /** `vehicleId` only when `me` carried a `fleet` block. */
+  duty(on: boolean, vehicleId?: number): Promise<DutyResult>;
+
+  /** Vehicles free for this rider. Only when `me` carried a `fleet` block. */
+  vehicles(): Promise<VehiclesResponse>;
+  /**
+   * Swap vehicles while on duty. Not `duty(true, id)` again: clocking on
+   * restarts the shift clock on the server.
+   */
+  takeVehicle(vehicleId: number): Promise<TakeVehicleResult>;
+
+  /**
+   * Where an on-duty rider is, for the office's live map. Only when `me`'s
+   * `fleet.features` has `location`. A refusal (`off_duty`) comes back as
+   * `on_duty: false`, not as an error.
+   */
+  riderLocation(fix: {
+    latitude: number;
+    longitude: number;
+    accuracy: number;
+  }): Promise<RiderLocationResult>;
 
   orders(): Promise<OrdersResponse>;
   order(id: number): Promise<DeliveryOrder>;
@@ -458,7 +570,8 @@ export interface ApiAdapter {
    * At the counter: has the shop sent its pickup code. Within a minute of the
    * last code the shop keeps that one (`resent: false`).
    */
-  arrivedAtShop(id: number): Promise<ActionResult>;
+  /** `fix` is sent only to a server with the `geofence` feature. */
+  arrivedAtShop(id: number, fix?: Fix | null): Promise<ActionResult>;
   requestPickupOtp(id: number): Promise<ActionResult>;
   verifyPickupOtp(id: number, otp: string): Promise<ActionResult>;
   dispatch(id: number): Promise<ActionResult>;
@@ -485,6 +598,26 @@ export interface ApiAdapter {
 
   /** Deactivate a token on sign-out. */
   unregisterPush(token: string): Promise<void>;
+
+  /** A photo of the parcel at the door, base64 JPEG. Needs the `proof` feature. */
+  uploadProof(id: number, imageBase64: string): Promise<{ attachment_id: number }>;
+
+  /** Into Fleet's service log, against the vehicle in hand. Needs `fuel`. */
+  fuelReport(input: {
+    liters: number;
+    amount?: number;
+    odometer?: number;
+    note?: string;
+    photoBase64?: string;
+  }): Promise<LogResult>;
+
+  /** `grounded`: the rider cannot ride it; it is offered to nobody after this shift. */
+  vehicleIssue(input: {
+    category: VehicleIssueCategory;
+    note?: string;
+    photoBase64?: string;
+    grounded?: boolean;
+  }): Promise<LogResult>;
 
   returnToShop(id: number, reason?: string): Promise<ActionResult>;
   confirmReturn(id: number): Promise<ActionResult>;

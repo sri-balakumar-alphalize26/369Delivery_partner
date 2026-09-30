@@ -60,6 +60,14 @@ const KNOWN_CODES: ApiErrorCode[] = [
   'too_large',
   'no_token',
   'uuid_reused',
+  'vehicle_needed',
+  'vehicle_unavailable',
+  'too_far',
+  'no_vehicle',
+  'bad_odometer',
+  'bad_input',
+  'proof_needed',
+  'disabled',
 ];
 
 function toCode(raw: unknown): ApiErrorCode {

@@ -1,12 +1,28 @@
+import * as Location from 'expo-location';
 import { useRouter } from 'expo-router';
-import { Pressable, RefreshControl, ScrollView, Switch, View, ViewStyle } from 'react-native';
+import { useEffect, useState } from 'react';
+import { Modal, Pressable, RefreshControl, ScrollView, Switch, View, ViewStyle } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { sortForRider, useDuty, useOrders } from '../../src/hooks/useOrders';
+import { sortForRider, useDuty, useOrders, useTakeVehicle } from '../../src/hooks/useOrders';
 import { money, onDutyFor } from '../../src/lib/format';
 import { useNow } from '../../src/hooks/useNow';
 import { useSession } from '../../src/store/session';
+import { useRefreshOnFocus } from '../../src/hooks/useSettingsRefresh';
 import { CONTENT_MAX_W, glass, gradius, gspace } from '../../src/theme/glass';
 import { useWide } from '../../src/ui/useWide';
+import { VehicleSheet } from '../../src/ui/VehicleSheet';
+import { LocationPrimer } from '../../src/ui/LocationPrimer';
+import { SharingRow } from '../../src/ui/SharingRow';
+import {
+  needsDutyLocationPermission,
+  notifyLocationPermission,
+} from '../../src/location/dutyLocation';
+
+/**
+ * Asked at most once per app session. A rider who said "Not now" is not asked
+ * again every time Home remounts; the next launch may ask once more.
+ */
+let askedDutyLocation = false;
 import { GlassButton } from '../../src/ui/glass/GlassButton';
 import { GlassCard } from '../../src/ui/glass/GlassCard';
 import { GlassIcon } from '../../src/ui/glass/GlassIcon';
@@ -37,10 +53,62 @@ export default function Home() {
   const { data, isLoading, isError, error, isRefetching, refetch } = useOrders();
   const duty = useDuty();
   const wide = useWide();
+  // Only a server with delivery_fleet_ops sends this; without it the switch
+  // clocks on directly, as it always has.
+  const fleet = useSession((s) => s.fleet);
+  // Settings the office changed since this phone opened (vehicles, sharing).
+  useRefreshOnFocus();
+  const [pickingVehicle, setPickingVehicle] = useState(false);
+  const take = useTakeVehicle();
+
+  const setDuty = (on: boolean, vehicleId?: number) => {
+    setPickingVehicle(false);
+    take.reset();
+    duty.mutate({ on, vehicleId });
+  };
+
+  const pickVehicle = (vehicleId: number) => {
+    if (!onDuty) return setDuty(true, vehicleId);
+    setPickingVehicle(false);
+    duty.reset();
+    take.mutate(vehicleId);
+  };
 
   // The server is the authority on duty; the stored rider is only the fallback
   // before the first /orders comes back.
   const onDuty = data?.on_duty ?? rider?.on_duty ?? false;
+
+  /**
+   * On a fleet server the office's live map wants this rider's position while
+   * they are on duty with the app open. Ask once, in words first, and only
+   * once they are actually on duty — never at the switch itself, where the
+   * vehicle sheet is already asking something.
+   */
+  const [askingLocation, setAskingLocation] = useState(false);
+  const [grantingLocation, setGrantingLocation] = useState(false);
+  useEffect(() => {
+    if (!onDuty || askedDutyLocation) return;
+    let alive = true;
+    needsDutyLocationPermission().then((needed) => {
+      if (!alive || !needed || askedDutyLocation) return;
+      askedDutyLocation = true;
+      setAskingLocation(true);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [onDuty, fleet]);
+
+  const grantLocation = async () => {
+    setGrantingLocation(true);
+    try {
+      const perm = await Location.requestForegroundPermissionsAsync();
+      if (perm.granted) notifyLocationPermission();
+    } finally {
+      setGrantingLocation(false);
+      setAskingLocation(false);
+    }
+  };
 
   /**
    * How long this shift has been running.
@@ -63,9 +131,37 @@ export default function Home() {
 
   return (
     <GlassScreen>
+      {/* The greeting sits on the green band, outside the scroll view: the band
+          has to run edge to edge, and the column below it stops at
+          CONTENT_MAX_W on a tablet. It also stays put while the jobs scroll. */}
+      <View
+        style={{
+          backgroundColor: glass.band,
+          paddingTop: insets.top + gspace.lg,
+          paddingBottom: gspace.lg,
+        }}
+      >
+        <View
+          style={{
+            width: '100%',
+            maxWidth: CONTENT_MAX_W,
+            alignSelf: 'center',
+            paddingHorizontal: gspace.xl,
+          }}
+        >
+          <GlassText variant="caption" style={{ color: glass.bandSoft }}>
+            {greeting()}
+          </GlassText>
+          <GlassText variant="hero" tone="white" numberOfLines={1}>
+            {rider?.name ?? 'Rider'}
+          </GlassText>
+          {/* No bell: nothing registers for push (useOrders polls instead), so
+              it would be a control that does nothing. */}
+        </View>
+      </View>
+
       <ScrollView
         contentContainerStyle={{
-          paddingTop: insets.top + gspace.lg,
           paddingHorizontal: gspace.xl,
           // A column, not a full-width sprawl. Binds only above CONTENT_MAX_W.
           width: '100%',
@@ -79,19 +175,6 @@ export default function Home() {
           <RefreshControl refreshing={isRefetching} onRefresh={() => refetch()} />
         }
       >
-        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-          <View style={{ flex: 1, paddingRight: gspace.md }}>
-            <GlassText variant="caption" tone="soft">
-              {greeting()}
-            </GlassText>
-            <GlassText variant="hero" numberOfLines={1}>
-              {rider?.name ?? 'Rider'}
-            </GlassText>
-          </View>
-          {/* No bell: nothing registers for push (useOrders polls instead), so
-              it would be a control that does nothing. */}
-        </View>
-
         <GlassCard padding={16} style={{ marginTop: gspace.lg }}>
           <View
             style={{
@@ -106,7 +189,7 @@ export default function Home() {
                   width: 10,
                   height: 10,
                   borderRadius: 5,
-                  backgroundColor: onDuty ? '#22C55E' : glass.inkFaint,
+                  backgroundColor: onDuty ? glass.green : glass.inkFaint,
                   marginRight: gspace.sm,
                 }}
               />
@@ -124,11 +207,92 @@ export default function Home() {
             <Switch
               value={onDuty}
               disabled={duty.isPending}
-              onValueChange={(next) => duty.mutate(next)}
-              trackColor={{ true: '#22C55E' }}
+              onValueChange={(next) =>
+                next && fleet ? setPickingVehicle(true) : setDuty(next)
+              }
+              trackColor={{ true: glass.green, false: glass.dividerDashed }}
+              // Android's default thumb is its own blue accent.
+              thumbColor={onDuty ? glass.accent : glass.white}
             />
           </View>
+
+          {/* The vehicle in hand, and the way to swap it mid-shift. */}
+          {fleet && onDuty ? (
+            <Pressable
+              onPress={() => setPickingVehicle(true)}
+              accessibilityRole="button"
+              accessibilityLabel={
+                fleet.vehicle
+                  ? `Riding ${fleet.vehicle.plate || fleet.vehicle.name}. Change vehicle.`
+                  : 'No vehicle. Pick one.'
+              }
+              hitSlop={6}
+              style={({ pressed }) => ({
+                flexDirection: 'row',
+                alignItems: 'center',
+                marginTop: gspace.md,
+                paddingTop: gspace.md,
+                borderTopWidth: 1,
+                borderTopColor: glass.divider,
+                opacity: pressed ? 0.6 : 1,
+              })}
+            >
+              <GlassIcon
+                name={fleet.vehicle?.type === 'car' ? 'car' : 'bike'}
+                color={glass.inkSoft}
+                size={20}
+                style={{ marginRight: gspace.sm }}
+              />
+              <GlassText variant="body" style={{ flex: 1 }} numberOfLines={1}>
+                {fleet.vehicle
+                  ? `${fleet.vehicle.plate || fleet.vehicle.name}${
+                      fleet.vehicle.model ? ` · ${fleet.vehicle.model}` : ''
+                    }`
+                  : 'No vehicle'}
+              </GlassText>
+              <GlassText variant="caption" tone="indigo">
+                {fleet.vehicle ? 'Change' : 'Pick one'}
+              </GlassText>
+            </Pressable>
+          ) : null}
+
+          {/* Whether the office's live map can see this rider. */}
+          {onDuty ? <SharingRow /> : null}
         </GlassCard>
+
+        <VehicleSheet
+          visible={pickingVehicle}
+          onDuty={onDuty}
+          busy={duty.isPending || take.isPending}
+          onPick={pickVehicle}
+          onSkip={() => setDuty(true)}
+          onClose={() => setPickingVehicle(false)}
+        />
+
+        <Modal
+          visible={askingLocation}
+          transparent
+          animationType="fade"
+          onRequestClose={() => setAskingLocation(false)}
+          statusBarTranslucent
+        >
+          <View
+            style={{
+              flex: 1,
+              justifyContent: 'center',
+              backgroundColor: 'rgba(15,23,42,0.45)',
+            }}
+          >
+            <View style={{ width: '100%', maxWidth: CONTENT_MAX_W, alignSelf: 'center' }}>
+              <LocationPrimer
+                purpose="duty"
+                busy={grantingLocation}
+                onContinue={grantLocation}
+                onSkip={() => setAskingLocation(false)}
+              />
+            </View>
+          </View>
+        </Modal>
 
         <GlassCard style={{ marginTop: gspace.lg }}>
           {/* Alone among the four, this one does not open anything: delivered
@@ -191,6 +355,16 @@ export default function Home() {
         {duty.isError ? (
           <GlassText variant="bodyStrong" tone="red" style={{ marginTop: gspace.lg }}>
             {duty.error.message}
+          </GlassText>
+        ) : null}
+        {take.data?.message ? (
+          <GlassText variant="bodyStrong" tone="indigo" style={{ marginTop: gspace.lg }}>
+            {take.data.message}
+          </GlassText>
+        ) : null}
+        {take.isError ? (
+          <GlassText variant="bodyStrong" tone="red" style={{ marginTop: gspace.lg }}>
+            {take.error.message}
           </GlassText>
         ) : null}
 

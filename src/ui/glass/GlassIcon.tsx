@@ -38,6 +38,8 @@ const MAP = {
   chevDown: 'chevron-down',
   chevUp: 'chevron-up',
   play: 'play-circle-outline',
+  bike: 'bicycle-outline',
+  car: 'car-outline',
 } as const;
 
 export type GlassIconName = keyof typeof MAP;
