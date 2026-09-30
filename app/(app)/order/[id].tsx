@@ -56,6 +56,9 @@ import { LocationPrimer } from '../../../src/ui/LocationPrimer';
 import { CodeSheet } from '../../../src/ui/CodeSheet';
 import { OtpInput } from '../../../src/ui/OtpInput';
 import { MAP_ENABLED, RouteMap } from '../../../src/ui/RouteMap';
+import { ProofPhoto, proofSent } from '../../../src/ui/ProofPhoto';
+import { currentFix } from '../../../src/location/currentFix';
+import { hasFeature } from '../../../src/api/features';
 import { GlassButton } from '../../../src/ui/glass/GlassButton';
 import { GlassCard } from '../../../src/ui/glass/GlassCard';
 import { GlassCheckRow } from '../../../src/ui/glass/GlassCheckRow';
@@ -147,6 +150,10 @@ export default function Job() {
   const { height: screenH } = useWindowDimensions();
   // The shop's zone, from /auth/me — never the phone's own.
   const timezone = useSession((s) => s.timezone);
+  // Fleet features, when the server has the fleet module: the door photo.
+  const proofOn = useSession((s) => !!s.fleet?.features.includes('proof'));
+  const proofRequired = useSession((s) => !!s.fleet?.proof_required);
+  const [, setProofTick] = useState(0);
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -293,6 +300,9 @@ export default function Job() {
   /** The promise as pressure, counted against the server's clock. */
   const due = dueIn(order.promised_by, now);
 
+  /** When the counter packed it, or empty — only the 369 Mart bridge sends it. */
+  const packedAt = timeOnly(order.packed_at ?? undefined, timezone);
+
 
   /** At the counter waiting on the pickup code — the moment to check the bag. */
   const collecting = primary === 'verify_pickup_otp';
@@ -378,7 +388,11 @@ export default function Job() {
      * to dismiss it. On Android a refusal is close to permanent, so the cost of
      * asking badly is a rider who can never be tracked again.
      */
-    if (action === 'start_delivery' && !(await hasLocationPermission())) {
+    // With "Customer Follows From Accept" on, tracking starts at accept, so
+    // the explainer comes before that tap instead.
+    const tracksHere =
+      action === 'start_delivery' || (action === 'accept' && hasFeature('track_from_accept'));
+    if (tracksHere && !(await hasLocationPermission())) {
       setError(null);
       setPrimerFor(action);
       return;
@@ -492,8 +506,9 @@ export default function Job() {
     if (primary !== 'verify_pickup_otp' || shopToldFor.has(orderId)) return;
     shopToldFor.add(orderId);
     setNotice('Sending the code to the shop…');
-    api
-      .arrivedAtShop(orderId)
+    // Where the rider is goes along, for the fleet module's arrival check.
+    currentFix()
+      .then((fix) => api.arrivedAtShop(orderId, fix))
       .then((res) => {
         setNotice(res.message ?? 'The shop has been sent the code.');
         setCooldown(res.retry_after_seconds ?? 0);
@@ -688,6 +703,13 @@ export default function Job() {
             <GlassText variant="bodyStrong" style={{ marginTop: gspace.xs }}>
               {shopName(order.shop)}
             </GlassText>
+            {/* The counter has already packed it: the parcel is waiting, not
+                being got ready. */}
+            {packedAt ? (
+              <GlassText variant="caption" tone="soft" nums style={{ marginTop: 2 }}>
+                Packed and ready since {packedAt}
+              </GlassText>
+            ) : null}
 
             <View
               style={{
@@ -829,6 +851,13 @@ export default function Job() {
             <GlassText variant="body" tone="soft" style={{ marginTop: 2 }}>
               {order.delivery_address}
             </GlassText>
+            {/* No pin: the map has no door to draw the road to. Say why, and
+                that Navigate still works — it goes by the written address. */}
+            {order.latitude == null || order.longitude == null ? (
+              <GlassText variant="caption" tone="faint" style={{ marginTop: gspace.xs }}>
+                No map pin for this address yet — Navigate uses the written address.
+              </GlassText>
+            ) : null}
 
             {/* How far the door still is, from the road the map drew rather
                 than from a straight line across the city. Absent unless there
@@ -887,6 +916,15 @@ export default function Job() {
             ) : null}
           </View>
 
+          {/* The parcel at the door, before the code — on a server that keeps it. */}
+          {proofOn && primary === 'verify_delivery_otp' ? (
+            <ProofPhoto
+              orderId={orderId}
+              required={proofRequired}
+              onSent={() => setProofTick((n) => n + 1)}
+            />
+          ) : null}
+
           {/* The same panel as the pickup code, so two codes in one flow cannot
               end up looking like different controls. */}
           <CodeSheet
@@ -916,6 +954,15 @@ export default function Job() {
             icon="check"
             onPress={() => (needsOtp ? setCodeOpen(true) : run(primary))}
             loading={busy}
+            // Held back until the required photo is in; the server refuses the
+            // code without it anyway, and a refusal after typing six digits is
+            // the worse way to find out.
+            disabled={
+              proofOn &&
+              proofRequired &&
+              primary === 'verify_delivery_otp' &&
+              !proofSent(orderId)
+            }
             style={{ marginTop: gspace.xxl }}
           />
 
@@ -1189,7 +1236,9 @@ export default function Job() {
                   packing has none either, and read as done. */}
               {order.delivery_status === 'to_assign'
                 ? 'The office is still assigning this job. Nothing to do yet.'
-                : isAtShop(order.delivery_status)
+                : order.delivery_status === 'ready'
+                  ? 'Packed at the shop. It will be offered to a rider in a moment.'
+                  : isAtShop(order.delivery_status)
                   ? "The shop is packing this order. You'll be called when it's ready."
                   : 'This job is finished. Nothing left to do.'}
             </GlassText>

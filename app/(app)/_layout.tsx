@@ -1,14 +1,14 @@
 import { Ionicons } from '@expo/vector-icons';
 import {
-  Poppins_600SemiBold,
+  Manrope_700Bold,
   useFonts,
-} from '@expo-google-fonts/poppins';
+} from '@expo-google-fonts/manrope';
 import { Tabs } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { glass, gradius, poppins } from '../../src/theme/glass';
+import { font, glass, gradius } from '../../src/theme/glass';
 
 /**
- * The Glass Light tab bar: icon over label, indigo when active.
+ * The tab bar: a deep green band, icon over label, lime when active.
  *
  * All four tabs the template draws, but two are honest about what the backend
  * lacks: Orders lists work in hand rather than history (a delivered job leaves
@@ -25,12 +25,12 @@ export default function AppLayout() {
   const insets = useSafeAreaInsets();
 
   /**
-   * Wait for Poppins before drawing the bar, and this is load-bearing rather
-   * than tidiness.
+   * Wait for the label's face before drawing the bar, and this is load-bearing
+   * rather than tidiness.
    *
    * The root layout mounts the whole app tree on the first frame and hides it
    * behind the splash, so without this the tab bar measures its labels while
-   * Poppins is still loading. Android measures them against the fallback face,
+   * the font is still loading. Android measures them against the fallback face,
    * gets a width that does not match what it later draws, and — because the
    * label is numberOfLines={1} — ellipsizes "Earnings" to "Earnin…" and never
    * measures again. It looked fixed under fast refresh only because the font
@@ -40,15 +40,16 @@ export default function AppLayout() {
    * root's call has finished. Rendering nothing meanwhile costs nothing: the
    * splash is covering this.
    */
-  const [fontsLoaded, fontError] = useFonts({ Poppins_600SemiBold });
+  // The face `font.semibold` names, which is what the label below is set in.
+  const [fontsLoaded, fontError] = useFonts({ Manrope_700Bold });
   if (!fontsLoaded && !fontError) return null;
 
   return (
     <Tabs
       screenOptions={{
         headerShown: false,
-        tabBarActiveTintColor: glass.indigo,
-        tabBarInactiveTintColor: glass.inkFaint,
+        tabBarActiveTintColor: glass.tabOn,
+        tabBarInactiveTintColor: glass.tabOff,
         // React Navigation picks the label position itself, and on a screen
         // 768dp or wider — this tablet is ~800dp — it puts the label in a row
         // beside the icon instead. The label then gets only the width the icon
@@ -57,10 +58,10 @@ export default function AppLayout() {
         // label the full width of its tab.
         tabBarLabelPosition: 'below-icon',
         tabBarStyle: {
-          // Translucent over the mesh, as the template's floating glass pill.
-          backgroundColor: glass.fillStrong,
-          borderTopWidth: 1,
-          borderTopColor: glass.border,
+          // A solid band, the same green as the headers: it frames the screen
+          // top and bottom, and needs no hairline to separate it.
+          backgroundColor: glass.band,
+          borderTopWidth: 0,
           elevation: 0,
           // Tall enough for icon + label with the label's full line box. At 68
           // the descenders were being clipped.
@@ -69,7 +70,7 @@ export default function AppLayout() {
           paddingBottom: 8 + insets.bottom,
         },
         tabBarLabelStyle: {
-          fontFamily: poppins.semibold,
+          fontFamily: font.semibold,
           fontSize: 11,
           // Nothing else. The label is numberOfLines={1}, and every tab has
           // flex:1 — about 300dp on this tablet — so there is ample room for
@@ -120,6 +121,8 @@ export default function AppLayout() {
       {/* href: null only hides it FROM the bar. A job — above all an offer that
           has just taken over the screen — should own the whole screen rather
           than sit above four tabs inviting the rider away mid-handover. */}
+      {/* Reached from Profile, not the bar. */}
+      <Tabs.Screen name="vehicle" options={{ href: null }} />
       <Tabs.Screen
         name="order/[id]"
         options={{ href: null, tabBarStyle: { display: 'none' } }}

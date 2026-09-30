@@ -13,6 +13,7 @@ import {
 } from '../../src/push/register';
 import { sortForRider, useOrders } from '../../src/hooks/useOrders';
 import { useSession } from '../../src/store/session';
+import { useRefreshOnFocus } from '../../src/hooks/useSettingsRefresh';
 import { CONTENT_MAX_W, glass, gradius, gspace } from '../../src/theme/glass';
 import { GlassButton } from '../../src/ui/glass/GlassButton';
 import { GlassCard } from '../../src/ui/glass/GlassCard';
@@ -32,6 +33,9 @@ export default function Profile() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { rider, server, connected, disconnect } = useSession();
+  const fleetFuel = useSession((s) => !!s.fleet?.features.includes('fuel'));
+  // The office may have switched fuel logs on or off since this phone opened.
+  useRefreshOnFocus();
   // Only to give the test notification a real job to open.
   const { data: orders, isRefetching, refetch } = useOrders();
 
@@ -42,9 +46,53 @@ export default function Profile() {
 
   return (
     <GlassScreen>
+      {/* Who is signed in, on the same green band Home greets them from. */}
+      <View
+        style={{
+          backgroundColor: glass.band,
+          paddingTop: insets.top + gspace.lg,
+          paddingBottom: gspace.lg,
+        }}
+      >
+        <View
+          style={{
+            width: '100%',
+            maxWidth: CONTENT_MAX_W,
+            alignSelf: 'center',
+            paddingHorizontal: gspace.xl,
+            flexDirection: 'row',
+            alignItems: 'center',
+          }}
+        >
+          <View
+            style={{
+              width: 56,
+              height: 56,
+              borderRadius: gradius.avatar,
+              backgroundColor: glass.accent,
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            <GlassText variant="title" style={{ color: glass.accentInk }}>
+              {initials(rider?.name)}
+            </GlassText>
+          </View>
+          <View style={{ marginLeft: gspace.md, flex: 1 }}>
+            <GlassText variant="title" tone="white" numberOfLines={1}>
+              {rider?.name ?? 'Not connected'}
+            </GlassText>
+            {rider?.mobile ? (
+              <GlassText variant="body" style={{ color: glass.bandSoft }}>
+                {rider.mobile}
+              </GlassText>
+            ) : null}
+          </View>
+        </View>
+      </View>
+
       <ScrollView
         contentContainerStyle={{
-          paddingTop: insets.top + gspace.xl,
           paddingHorizontal: gspace.xl,
           // A column, not a full-width sprawl. Binds only above CONTENT_MAX_W.
           width: '100%',
@@ -57,34 +105,7 @@ export default function Profile() {
           <RefreshControl refreshing={isRefetching} onRefresh={() => refetch()} />
         }
       >
-        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-          <View
-            style={{
-              width: 56,
-              height: 56,
-              borderRadius: gradius.avatar,
-              backgroundColor: glass.orange,
-              alignItems: 'center',
-              justifyContent: 'center',
-            }}
-          >
-            <GlassText variant="title" tone="white">
-              {initials(rider?.name)}
-            </GlassText>
-          </View>
-          <View style={{ marginLeft: gspace.md, flex: 1 }}>
-            <GlassText variant="title" numberOfLines={1}>
-              {rider?.name ?? 'Not connected'}
-            </GlassText>
-            {rider?.mobile ? (
-              <GlassText variant="body" tone="soft">
-                {rider.mobile}
-              </GlassText>
-            ) : null}
-          </View>
-        </View>
-
-        <GlassCard style={{ marginTop: gspace.xl }} padding={gspace.sm}>
+        <GlassCard style={{ marginTop: gspace.lg }} padding={gspace.sm}>
           <Row label="Rider ID" value={rider ? String(rider.id) : '—'} />
           <Row label="Type" value={rider?.kind ?? '—'} />
           {/* Read-only here — Home owns the control, so there is one source of
@@ -167,6 +188,15 @@ export default function Profile() {
         ) : null}
 
         <View style={{ marginTop: gspace.xl, gap: gspace.md }}>
+          {/* Only on a server with the fleet module: fuel and vehicle problems. */}
+          {fleetFuel ? (
+            <GlassButton
+              title="My vehicle"
+              kind="dark"
+              icon="bike"
+              onPress={() => router.push('/vehicle')}
+            />
+          ) : null}
           <GlassButton
             title="Change connection"
             kind="ghost"
@@ -254,7 +284,12 @@ function Toggle({
       <GlassText variant="body" style={{ flex: 1, paddingRight: gspace.lg }}>
         {label}
       </GlassText>
-      <Switch value={value} onValueChange={onChange} trackColor={{ true: glass.indigo }} />
+      <Switch
+        value={value}
+        onValueChange={onChange}
+        trackColor={{ true: glass.green, false: glass.dividerDashed }}
+        thumbColor={value ? glass.accent : glass.white}
+      />
     </View>
   );
 }

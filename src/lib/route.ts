@@ -30,8 +30,11 @@ import { LatLng, Leg, measure } from './routeGeometry';
  */
 const HOST = 'https://api.heigit.org/openrouteservice/v2/directions/driving-car';
 
-/** Long enough to be worth waiting for, short enough not to stall the screen. */
-const TIMEOUT_MS = 12_000;
+/**
+ * Long enough to be worth waiting for, short enough not to stall the screen.
+ * 12 s aborted real requests on the test tablet's Wi-Fi; the server is abroad.
+ */
+const TIMEOUT_MS = 20_000;
 
 export type Route = {
   leg: Leg;

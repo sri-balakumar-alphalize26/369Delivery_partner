@@ -62,6 +62,9 @@ const OFF_ROUTE_M = 150;
 /** A floor between refetches, because the free ORS tier is 2000 routes a day. */
 const REFETCH_COOLDOWN_MS = 30_000;
 
+/** Waits before asking again for a route that failed: at most six more requests per leg. */
+const RETRY_DELAYS_MS = [10_000, 20_000, 40_000, 60_000, 60_000, 60_000];
+
 /** One step per ~33ms. Sixty a second would re-render the map for no visible gain. */
 const FRAME_MS = 33;
 
@@ -147,7 +150,11 @@ export function RouteMapView({
    * would draw the line off toward the actual device and frame half a continent.
    */
   const riderIsOnThisJob =
-    rider != null && target != null && metresBetween(rider, target) / 1000 <= MAX_RIDER_KM;
+    rider != null &&
+    // No pin to measure against (a customer never pinned): the rider is still
+    // the one true thing on the map. Hiding them left the camera on its
+    // fallback, a city on the wrong continent, with nothing on it at all.
+    (target == null || metresBetween(rider, target) / 1000 <= MAX_RIDER_KM);
 
   /**
    * The rider, read through a ref rather than as a dependency.
@@ -169,6 +176,9 @@ export function RouteMapView({
 
   const lastFetchAt = useRef(0);
   const fetchedFor = useRef<string | null>(null);
+  /** Failed route requests for this leg, for the retry below. */
+  const retries = useRef(0);
+  const retriesFor = useRef<string | null>(null);
 
   /* ----------------------------------------------------------------- *
    * The route, fetched once per leg.
@@ -199,13 +209,39 @@ export function RouteMapView({
 
     fetchedFor.current = legKey;
     lastFetchAt.current = Date.now();
+    if (retriesFor.current !== legKey) {
+      retriesFor.current = legKey;
+      retries.current = 0;
+    }
 
     let alive = true;
-    fetchRoute(origin, target, peekServer().orsKey).then((r) => {
-      if (alive) setRoute(r);
+    let retryTimer: ReturnType<typeof setTimeout> | null = null;
+    const key = peekServer().orsKey;
+    fetchRoute(origin, target, key).then((r) => {
+      if (!alive) return;
+      setRoute(r);
+      if (r) {
+        retries.current = 0;
+        return;
+      }
+      /**
+       * A failed request used to be final for the whole leg: `fetchedFor`
+       * already named it, and with no route drawn the off-route refetch below
+       * never fires. One slow answer on the tablet's Wi-Fi left the straight
+       * placeholder up for an entire delivery. Ask again, backing off, a few
+       * times — still nothing like one request per fix. No key means no point.
+       */
+      if (!key || retries.current >= RETRY_DELAYS_MS.length) return;
+      const delay = RETRY_DELAYS_MS[retries.current];
+      retryTimer = setTimeout(() => {
+        retries.current += 1;
+        fetchedFor.current = null;
+        setRefetchTick((n) => n + 1);
+      }, delay);
     });
     return () => {
       alive = false;
+      if (retryTimer) clearTimeout(retryTimer);
     };
   /**
    * Deps are the leg and nothing else.
@@ -334,8 +370,9 @@ export function RouteMapView({
     );
     if (focus.length > 1) {
       map.current?.fitToCoordinates(focus, { edgePadding: EDGE_PADDING, animated: true });
-    } else if (target) {
-      map.current?.animateToRegion({ ...target, latitudeDelta: 0.02, longitudeDelta: 0.02 });
+    } else if (focus.length === 1) {
+      // One end only — the destination, or with no pin the rider — so centre on it.
+      map.current?.animateToRegion({ ...focus[0], latitudeDelta: 0.02, longitudeDelta: 0.02 });
     }
   };
 
