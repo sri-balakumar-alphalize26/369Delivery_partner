@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_sa_delivery_partner_form_fleet_ops" model="ir.ui.view">
+        <field name="name">sa.delivery.partner.form.fleet_ops</field>
+        <field name="model">sa.delivery.partner</field>
+        <field name="inherit_id"
+               ref="sales_automation_delivery.view_sa_delivery_partner_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//field[@name='partner_id']" position="before">
+                <field name="vehicle_id"/>
+                <field name="default_vehicle_id"/>
+                <label for="last_fix_on" string="Last Seen"/>
+                <div class="o_row">
+                    <field name="last_fix_on" readonly="1"/>
+                    <button name="action_fleet_live_map" type="object"
+                            string="On the map" icon="fa-map-marker"
+                            class="btn-link" invisible="not last_fix_on"/>
+                </div>
+            </xpath>
+        </field>
+    </record>
+
+    <record id="view_sa_delivery_partner_list_fleet_ops" model="ir.ui.view">
+        <field name="name">sa.delivery.partner.list.fleet_ops</field>
+        <field name="model">sa.delivery.partner</field>
+        <field name="inherit_id"
+               ref="sales_automation_delivery.view_sa_delivery_partner_list"/>
+        <field name="arch" type="xml">
+            <xpath expr="//field[@name='on_duty']" position="after">
+                <field name="vehicle_id" optional="show"/>
+            </xpath>
+        </field>
+    </record>
+</odoo>

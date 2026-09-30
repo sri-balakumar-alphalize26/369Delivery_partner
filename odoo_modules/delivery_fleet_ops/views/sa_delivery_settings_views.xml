@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="view_sa_delivery_settings_form_fleet_ops" model="ir.ui.view">
+        <field name="name">sa.delivery.settings.form.fleet_ops</field>
+        <field name="model">sa.delivery.settings</field>
+        <field name="inherit_id"
+               ref="sales_automation_delivery.view_sa_delivery_settings_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//group[field[@name='otp_test_mode']]" position="before">
+                <group string="Fleet" colspan="2">
+                    <field name="fleet_vehicle_required"/>
+                    <field name="fleet_fix_max_age_min"/>
+                    <field name="fleet_position_keep_days"/>
+                    <field name="fleet_dispatch_max_km"/>
+                    <field name="fleet_arrive_radius_m"/>
+                    <field name="fleet_arrive_enforce"/>
+                    <field name="fleet_track_from_accept"/>
+                    <field name="fleet_rider_logs"/>
+                    <field name="fleet_proof_required"/>
+                </group>
+            </xpath>
+        </field>
+    </record>
+</odoo>

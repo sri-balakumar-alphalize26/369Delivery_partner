@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <record id="fleet_vehicle_view_form_fleet_ops" model="ir.ui.view">
+        <field name="name">fleet.vehicle.form.fleet_ops</field>
+        <field name="model">fleet.vehicle</field>
+        <field name="inherit_id" ref="fleet.fleet_vehicle_view_form"/>
+        <field name="arch" type="xml">
+            <xpath expr="//field[@name='future_driver_id']" position="after">
+                <field name="sa_rider_ok"/>
+                <field name="sa_rider_id" invisible="not sa_rider_ok"/>
+                <field name="sa_grounded" invisible="not sa_rider_ok"/>
+            </xpath>
+        </field>
+    </record>
+
+    <record id="fleet_vehicle_view_tree_fleet_ops" model="ir.ui.view">
+        <field name="name">fleet.vehicle.list.fleet_ops</field>
+        <field name="model">fleet.vehicle</field>
+        <field name="inherit_id" ref="fleet.fleet_vehicle_view_tree"/>
+        <field name="arch" type="xml">
+            <xpath expr="//field[@name='future_driver_id']" position="after">
+                <field name="sa_rider_id" optional="show"/>
+                <field name="sa_grounded" optional="show"/>
+            </xpath>
+        </field>
+    </record>
+
+    <record id="fleet_vehicle_view_search_fleet_ops" model="ir.ui.view">
+        <field name="name">fleet.vehicle.search.fleet_ops</field>
+        <field name="model">fleet.vehicle</field>
+        <field name="inherit_id" ref="fleet.fleet_vehicle_view_search"/>
+        <field name="arch" type="xml">
+            <xpath expr="//filter[@name='available']" position="before">
+                <filter string="Rider Vehicles" name="sa_rider_ok"
+                        domain="[('sa_rider_ok', '=', True)]"/>
+                <filter string="Out With a Rider" name="sa_out"
+                        domain="[('sa_rider_id', '!=', False)]"/>
+                <filter string="Grounded" name="sa_grounded"
+                        domain="[('sa_grounded', '=', True)]"/>
+                <separator/>
+            </xpath>
+        </field>
+    </record>
+
+    <record id="action_fleet_ops_vehicles" model="ir.actions.act_window">
+        <field name="name">Rider Vehicles</field>
+        <field name="res_model">fleet.vehicle</field>
+        <field name="view_mode">list,kanban,form</field>
+        <field name="context">{'search_default_sa_rider_ok': 1, 'default_sa_rider_ok': True}</field>
+        <field name="help" type="html">
+            <p class="o_view_nocontent_smiling_face">Add a bike or car riders can take</p>
+            <p>Vehicles marked <b>Rider Vehicle</b> are offered in the rider
+               app when a rider clocks on.</p>
+        </field>
+    </record>
+</odoo>

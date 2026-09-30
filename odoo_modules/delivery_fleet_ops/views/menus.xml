@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <menuitem id="menu_fleet_ops_root"
+              name="Fleet"
+              parent="sales_automation_delivery.menu_sa_delivery_root"
+              sequence="4"/>
+
+    <menuitem id="menu_fleet_ops_live_map"
+              name="Live Map"
+              parent="menu_fleet_ops_root"
+              action="action_fleet_live_map"
+              sequence="1"/>
+
+    <menuitem id="menu_fleet_ops_vehicles"
+              name="Rider Vehicles"
+              parent="menu_fleet_ops_root"
+              action="action_fleet_ops_vehicles"
+              groups="sales_automation_delivery.group_sa_delivery_manager"
+              sequence="10"/>
+
+    <menuitem id="menu_fleet_ops_service_logs"
+              name="Fuel &amp; Issues"
+              parent="menu_fleet_ops_root"
+              action="action_fleet_ops_service_logs"
+              groups="sales_automation_delivery.group_sa_delivery_manager"
+              sequence="15"/>
+
+    <menuitem id="menu_fleet_ops_positions"
+              name="Rider Positions"
+              parent="menu_fleet_ops_root"
+              action="action_sa_fleet_position"
+              groups="sales_automation_delivery.group_sa_delivery_manager"
+              sequence="20"/>
+</odoo>

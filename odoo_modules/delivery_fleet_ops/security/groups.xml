@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<odoo>
+    <!--
+        Delivery managers run the rider vehicles, which are Fleet's own
+        records: without Fleet rights the Delivery > Fleet menu would open on
+        an access error. Riders get nothing here - the app reads vehicles
+        through sa.rider.rpc, as it reads everything else.
+    -->
+    <record id="sales_automation_delivery.group_sa_delivery_manager" model="res.groups">
+        <field name="implied_ids" eval="[(4, ref('fleet.fleet_group_user'))]"/>
+    </record>
+</odoo>
