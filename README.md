@@ -53,14 +53,38 @@ The app talks to exactly one interface, `ApiAdapter` in
 
 ```
 src/api/mock/adapter.ts    in-memory simulation                 (default)
-src/api/rpc/adapter.ts     JSON-RPC to the Odoo model sa.rider.rpc
+src/api/rest/adapter.ts    REST to the Delivery Partner API     (/api/delivery/*)
 ```
 
-The live adapter signs in at `/web/session/authenticate` with the database, the
-rider's mobile number and a password, keeps the session cookie, and calls every
-method of `sa.rider.rpc` through `/web/dataset/call_kw`
-([`src/api/rpc/client.ts`](src/api/rpc/client.ts)). The rider's login is created
-in Odoo: Delivery → Configuration → Riders → **Create app login**.
+The live adapter talks to the WhatsApp delivery module's own rider API
+(`sales_automation_delivery`), the same server actions as the buttons on
+Odoo's job form ([`src/api/rest/client.ts`](src/api/rest/client.ts)). Every
+call carries `X-Odoo-Database` and the rider's Bearer token.
+
+The contract is the senior's *Delivery_Developer_Flow.pdf*, section 3 (served
+from `/sales_automation_manual/static/manual/`). `/api/sa/*` in
+*Full_Flow_API.pdf* is the shop/admin app's API, not this one's.
+
+A rider signs in with the WhatsApp number on their rider record (Delivery →
+Configuration → Riders & Couriers): `auth/request-code {mobile}` sends a
+6-digit code on WhatsApp, `auth/verify-code {mobile, code}` trades it for a
+`token`, kept in the phone's keystore. A 401 is answered once by trading that
+token at `auth/refresh`. No Odoo user or password is involved.
+
+The steps follow the shop's Step-by-Step Guide:
+
+```
+accept → pickup/verify-otp → dispatch   Collect (one tap: "Collected by Rider")
+       → start                          I am near the customer
+       → arrived {point: "customer"}    Reached - Odoo sends the customer their code
+       → complete/verify-otp            the customer's code: Delivered
+```
+
+`arrived` is never in `allowed_actions` - Odoo offers the code from "near" on -
+so the job screen shows "Reached" itself until the code has been sent.
+
+`scripts/live-check.mjs` checks the live shapes against the app's parsers:
+`send-code <phone>` first, then `check <format.js> --phone <phone> --code <code>`.
 
 Switch with environment variables — no screen code changes:
 
