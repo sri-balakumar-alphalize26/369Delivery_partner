@@ -18,6 +18,11 @@ export type Action =
   | 'verify_pickup_otp'
   | 'dispatch'
   | 'start_delivery'
+  /**
+   * Odoo offers this from "Rider Near Customer" on, but the customer has no
+   * code until the rider reaches the door: `ApiAdapter.reachedCustomer`,
+   * which is never in this list - the job screen calls it itself.
+   */
   | 'verify_delivery_otp'
   | 'return_to_shop'
   /**
@@ -252,6 +257,11 @@ export interface DeliveryOrder {
   packed_at?: string | null;
   /** `office` when a person chose this rider, `auto` when the least-busy rule did. */
   assigned_by?: 'auto' | 'office';
+  /**
+   * When the rider reached the door and the customer was sent their code, UTC.
+   * Read when the server sends it; the job screen also remembers it per job.
+   */
+  reached_customer_on?: string;
 }
 
 /** The four dashboard figures. */
@@ -494,9 +504,9 @@ export interface ServerConfig {
   url: string;
   db: string;
   /**
-   * The Odoo username — for a rider, their mobile number. The password is
-   * never stored: the session cookie the phone keeps is the credential, and
-   * signing in again is the only way to get a new one.
+   * The rider's WhatsApp number, digits with the country code (96891234567).
+   * It is where the sign-in code is sent. The tokens that follow are kept
+   * apart from this config, in `rest/auth.ts`.
    */
   login: string;
   /**
@@ -530,9 +540,21 @@ export interface Identity {
  * Both backends implement this, so contract drift surfaces as a compile error
  * rather than as a blank screen on a rider's phone.
  */
+/** What `auth/request-code` answers. Deliberately the same for an unknown number. */
+export interface CodeRequestResult {
+  message?: string;
+  /** Seconds before another code may be asked for. */
+  retry_after_seconds?: number;
+}
+
 export interface ApiAdapter {
-  /** Sign in with the rider's number and password. Resolves once the server accepted them. */
-  login(mobile: string, password: string): Promise<void>;
+  /**
+   * Step one of signing in: Odoo sends a code to this number on WhatsApp, if
+   * the number belongs to a rider. The answer never says which.
+   */
+  requestCode(phone: string): Promise<CodeRequestResult>;
+  /** Step two: trade the code for the tokens every later call carries. */
+  verifyCode(phone: string, code: string): Promise<void>;
   /** End the session on the server. Best effort: a failure must never block signing out. */
   logout(): Promise<void>;
 
@@ -576,6 +598,11 @@ export interface ApiAdapter {
   verifyPickupOtp(id: number, otp: string): Promise<ActionResult>;
   dispatch(id: number): Promise<ActionResult>;
   start(id: number): Promise<ActionResult>;
+  /**
+   * At the door: Odoo sends the customer their code, or a fresh one that voids
+   * the last. Never in `allowed_actions`; the job screen calls it itself.
+   */
+  reachedCustomer(id: number): Promise<ActionResult>;
   verifyDeliveryOtp(id: number, otp: string): Promise<ActionResult>;
 
   sendLocation(

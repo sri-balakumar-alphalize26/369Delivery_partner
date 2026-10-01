@@ -2,9 +2,10 @@ import { create } from 'zustand';
 import { api } from '../api/endpoints';
 import { getServer, saveServer } from '../api/config';
 import { setFeatures } from '../api/features';
-import { setSessionExpiredHandler } from '../api/rpc/client';
+import { setSessionExpiredHandler } from '../api/rest/client';
 import {
   ApiError,
+  CodeRequestResult,
   Currency,
   DutyResult,
   FleetInfo,
@@ -16,11 +17,11 @@ import {
 /**
  * Connection state.
  *
- * A rider signs in with their mobile number and the password the office set
- * with "Create app login" on their rider record in Odoo. The server answers with
- * a session cookie the phone keeps; the app stores no credential. `me` is the
- * first call after signing in, and again on every launch — it answers "is the
- * session still good" and "is this person actually a rider" together.
+ * A rider signs in with their WhatsApp number: Odoo sends a code there, and
+ * the code buys a token the phone keeps in its keystore (`api/rest/auth.ts`).
+ * No password, no Odoo user. `me` is the first call after signing in, and
+ * again on every launch — it answers "is the token still good" and "is this
+ * person actually a rider" together.
  *
  * That same response carries the `timezone` and `currency` every screen formats
  * with, so they are held here rather than guessed at per screen.
@@ -42,8 +43,13 @@ interface SessionState {
   connected: boolean;
 
   restore: () => Promise<void>;
-  /** Saves the config, signs in and verifies it. Throws if the server rejects it. */
-  connect: (cfg: ServerConfig, password: string) => Promise<Rider>;
+  /** Saves the config and asks Odoo to send `cfg.login` a sign-in code on WhatsApp. */
+  sendCode: (cfg: ServerConfig) => Promise<CodeRequestResult>;
+  /**
+   * Signs in with the code from WhatsApp and verifies it with `me`. Demo mode
+   * takes no code. Throws if the server rejects it.
+   */
+  connect: (cfg: ServerConfig, code: string) => Promise<Rider>;
   /** Folds a duty response back in, so no round-trip to `me` is needed. */
   applyDuty: (result: DutyResult) => void;
   /** The vehicle in hand after a mid-shift swap. */
@@ -91,12 +97,28 @@ export const useSession = create<SessionState>((set) => ({
     }
   },
 
-  async connect(cfg, password) {
+  async sendCode(cfg) {
+    const server = await saveServer(cfg);
+    set({ server });
+    try {
+      return await api.requestCode(server.login);
+    } catch (err) {
+      console.warn(
+        '[login] code request failed:',
+        err instanceof ApiError ? `${err.code} — ${err.message}` : (err as Error)?.message
+      );
+      throw err instanceof ApiError
+        ? err
+        : new ApiError('unknown', 'Could not ask for a sign-in code.');
+    }
+  },
+
+  async connect(cfg, code) {
     const server = await saveServer(cfg);
     set({ server });
 
     try {
-      await api.login(server.login, password);
+      if (!server.useMock) await api.verifyCode(server.login, code);
       const { rider, timezone, currency, fleet } = await api.me();
       set({ rider, timezone, currency, fleet, connected: true });
       console.log(
@@ -156,9 +178,10 @@ export const useSession = create<SessionState>((set) => ({
 
   async disconnect() {
     console.log('[login] signing out');
-    // Server side first, while the cookie can still authenticate the call. The
-    // address, database and number stay saved: none of them is a secret, and
-    // typing the tunnel address again is what this screen exists to avoid.
+    // Server side first, while the token can still authenticate the call; the
+    // tokens are dropped either way. The address, database and number stay
+    // saved: none of them is a secret, and typing them again is what Connect
+    // exists to avoid.
     await api.logout();
     set({
       rider: null,

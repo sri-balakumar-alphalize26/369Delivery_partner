@@ -60,7 +60,10 @@ const ACTIONS_FOR: Record<DeliveryStatus, Action[]> = {
   offered: ['accept', 'decline'],
   accepted: ['verify_pickup_otp', 'report_issue'],
   picked: ['dispatch', 'return_to_shop', 'report_issue'],
+  // "Collected by Rider".
   dispatched: ['start_delivery', 'return_to_shop', 'report_issue'],
+  // "Rider Near Customer". The code is offered at once, as on the server, but
+  // the customer has none until `reachedCustomer` - see `codeSentFor`.
   out_for_delivery: ['verify_delivery_otp', 'return_to_shop', 'report_issue'],
   delivered: [],
   // Only the shop confirms a return, in Odoo — nothing for the rider to do.
@@ -81,6 +84,12 @@ const ACTIONS_FOR: Record<DeliveryStatus, Action[]> = {
  * still carry it, so it stays mapped and terminal.
  */
 const TERMINAL: DeliveryStatus[] = ['delivered', 'returned', 'cancelled', 'failed'];
+
+/**
+ * Jobs whose customer has been sent a delivery code - the server's
+ * `sa_arrived_customer_on`, a time on the job rather than a status.
+ */
+const codeSentFor = new Set<number>();
 
 const rider: Rider = {
   id: 18,
@@ -205,8 +214,11 @@ function offer() {
 }
 
 export const mockAdapter: ApiAdapter = {
-  // Demo mode has no server to sign in to: any number and password work.
-  async login() {},
+  // Demo mode has no server to sign in to: no code is sent, and any works.
+  async requestCode() {
+    return { message: 'Demo mode: any 6 digits will do.', retry_after_seconds: 60 };
+  },
+  async verifyCode() {},
   async logout() {},
 
   async me(): Promise<Identity> {
@@ -443,6 +455,30 @@ export const mockAdapter: ApiAdapter = {
     // This is the moment tracking becomes permitted — never before.
     state.tracking = true;
     return advance(o, 'out_for_delivery');
+  },
+
+  async reachedCustomer(id) {
+    await wait(400);
+    guard();
+    const o = find(id);
+    // The server's `/arrived {point: "customer"}`: only on the way to the door.
+    if (o.delivery_status !== 'out_for_delivery') {
+      throw new ApiError('wrong_state', 'That is not possible right now.', {
+        status: 409,
+        statusName: o.delivery_status,
+        allowedActions: o.allowed_actions,
+      });
+    }
+    // Again = a fresh code, so the count of wrong tries starts over.
+    state.deliveryAttempts = 0;
+    codeSentFor.add(id);
+    o.reached_customer_on = utcNow();
+    return {
+      status: o.delivery_status,
+      allowed_actions: o.allowed_actions,
+      tracking: o.tracking,
+      message: 'The customer has been sent their code on WhatsApp.',
+    };
   },
 
   async verifyDeliveryOtp(id, otp) {

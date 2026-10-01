@@ -1,5 +1,5 @@
 import { useRouter } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Image,
@@ -13,7 +13,7 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ENV_DEFAULTS } from '../src/api/config';
 import { MOCK_DELIVERY_OTP, MOCK_PICKUP_OTP } from '../src/api/mock/fixtures';
-import { listDatabases } from '../src/api/rpc/client';
+import { listDatabases, normalisePhone } from '../src/api/rest/client';
 import { ApiError } from '../src/api/types';
 import { useSession } from '../src/store/session';
 import { glass, gradius, gspace, poppins } from '../src/theme/glass';
@@ -23,14 +23,15 @@ import { GlassCard } from '../src/ui/glass/GlassCard';
 import { GlassIcon, GlassIconName } from '../src/ui/glass/GlassIcon';
 import { GlassScreen } from '../src/ui/glass/GlassScreen';
 import { GlassText } from '../src/ui/glass/GlassText';
+import { OtpBoxes } from '../src/ui/OtpBoxes';
 
 /**
  * Sign-in and server settings on one screen.
  *
- * A rider signs in with their mobile number and the password the office set
- * with "Create app login" on their rider record in Odoo. The server answers
- * with a session cookie the phone keeps, so the password is typed here and
- * nowhere else — it is never stored.
+ * A rider signs in with the WhatsApp number on their rider record in Odoo
+ * (Delivery ▸ Configuration ▸ Riders & Couriers). "Send code" has Odoo send a
+ * 6-digit code there; typing it signs the phone in with a token, kept in the
+ * keystore. There is no password and no Odoo user for a rider.
  *
  * The screen doubles as the server config. The test host is a Cloudflare quick
  * tunnel whose address changes on restart; being able to paste the new one here
@@ -71,13 +72,22 @@ const COULD_NOT_LOAD = "Couldn't load databases from this link. Check it and try
 export default function Connect() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { server, connect } = useSession();
+  const { server, connect, sendCode } = useSession();
 
   const [url, setUrl] = useState('');
   const [db, setDb] = useState('');
   const [login, setLogin] = useState('');
-  const [password, setPassword] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
+  /**
+   * The server, database and number a code was last sent for. A code belongs
+   * to exactly those three, so editing any of them puts the form back to
+   * asking for the number - by comparison, with no effect to keep in step.
+   */
+  const [sentFor, setSentFor] = useState<string | null>(null);
+  const [code, setCode] = useState('');
+  /** Odoo's own words after a code request, shown above the boxes. */
+  const [notice, setNotice] = useState<string | null>(null);
+  /** Seconds until another code may be asked for, as the server said. */
+  const [cooldown, setCooldown] = useState(0);
   const [supportPhone, setSupportPhone] = useState('');
   const [orsKey, setOrsKey] = useState('');
   const [useMock, setUseMock] = useState(true);
@@ -90,13 +100,20 @@ export default function Connect() {
   const [attempt, setAttempt] = useState(0);
   const [dbPickerOpen, setDbPickerOpen] = useState(false);
 
+  // Filled once from the saved config. Not on every change to it: "Send code"
+  // saves the config while the rider is still on this screen, and refilling
+  // then would swap the typed number for its saved digits-only form and a
+  // typed link for its trimmed one - which clears the chosen database.
+  const filled = useRef(false);
   useEffect(() => {
+    if (filled.current) return;
     setUrl(server?.url ?? ENV_DEFAULTS.url);
     setDb(server?.db ?? ENV_DEFAULTS.db);
     setLogin(server?.login ?? '');
     setSupportPhone(server?.supportPhone ?? ENV_DEFAULTS.supportPhone);
     setOrsKey(server?.orsKey ?? ENV_DEFAULTS.orsKey);
     setUseMock(server?.useMock ?? true);
+    if (server) filled.current = true;
   }, [server]);
 
   // Ask the server for its databases once the address is a whole link and has
@@ -138,8 +155,18 @@ export default function Connect() {
     };
   }, [url, useMock, attempt]);
 
-  // The server would refuse an empty login too, but with a message about a
-  // wrong password, which sends the rider looking in the wrong place.
+  const target = `${url.trim()}|${db.trim()}|${normalisePhone(login)}`;
+  const stage: 'number' | 'code' = !useMock && sentFor === target ? 'code' : 'number';
+
+  // The resend countdown. The server enforces the window; this only times the link.
+  useEffect(() => {
+    if (cooldown <= 0) return;
+    const t = setTimeout(() => setCooldown((s) => s - 1), 1000);
+    return () => clearTimeout(t);
+  }, [cooldown]);
+
+  // The server answers an unknown number the same as a known one, so a missing
+  // or half-typed number has to be caught here or the rider waits for nothing.
   function missingField(): string | null {
     if (useMock) return null;
     if (!url.trim()) return 'Enter the server link.';
@@ -147,12 +174,50 @@ export default function Connect() {
     if (serverState.kind === 'checking') return 'Still loading databases. One moment.';
     if (serverState.kind === 'failed') return COULD_NOT_LOAD;
     if (!db.trim()) return 'Choose a database.';
-    if (!login.trim()) return 'Enter your username.';
-    if (!password) return 'Enter your password.';
+    if (normalisePhone(login).length < 8) {
+      return 'Enter your WhatsApp number with the country code, e.g. 968 9123 4567.';
+    }
+    if (stage === 'code' && code.length !== 6) return 'Enter the 6-digit code from WhatsApp.';
     return null;
   }
 
+  const config = () => ({
+    url,
+    db,
+    login: useMock ? login : normalisePhone(login),
+    supportPhone,
+    orsKey,
+    useMock,
+  });
+
+  /** Ask Odoo for a code. Also the "resend" link once a code has been sent. */
+  async function requestCode() {
+    setError(null);
+    const missing = stage === 'code' ? null : missingField();
+    if (missing) {
+      setError(missing);
+      return;
+    }
+    setBusy(true);
+    try {
+      const res = await sendCode(config());
+      setSentFor(target);
+      setCode('');
+      setNotice(res.message ?? 'A code has been sent to your WhatsApp.');
+      setCooldown(res.retry_after_seconds ?? 60);
+    } catch (err) {
+      // The server writes its own messages for riders — show them unchanged.
+      setError(err instanceof ApiError ? err.message : 'Could not send a code. Try again.');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function submit() {
+    if (!useMock && stage === 'number') {
+      await requestCode();
+      return;
+    }
     setError(null);
     const missing = missingField();
     if (missing) {
@@ -161,11 +226,11 @@ export default function Connect() {
     }
     setBusy(true);
     try {
-      await connect({ url, db, login, supportPhone, orsKey, useMock }, password);
+      await connect(config(), code);
       router.replace('/');
     } catch (err) {
-      // The server writes its own messages for riders — show them unchanged.
       setError(err instanceof ApiError ? err.message : 'Could not sign in. Try again.');
+      setCode('');
     } finally {
       setBusy(false);
     }
@@ -305,52 +370,55 @@ export default function Connect() {
                   />
 
                   <Field
-                    label="Username"
-                    icon="user"
+                    label="WhatsApp number"
+                    icon="phone"
                     value={login}
                     onChangeText={setLogin}
                     autoCapitalize="none"
                     autoCorrect={false}
-                    autoComplete="username"
-                    textContentType="username"
-                    placeholder="Your mobile number"
-                  />
-                  <Field
-                    label="Password"
-                    icon="lock"
-                    value={password}
-                    onChangeText={setPassword}
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    secureTextEntry={!showPassword}
-                    autoComplete="password"
-                    textContentType="password"
-                    placeholder="Your password"
+                    keyboardType="phone-pad"
+                    autoComplete="tel"
+                    textContentType="telephoneNumber"
+                    placeholder="With country code, e.g. 968 9123 4567"
                     returnKeyType="go"
                     onSubmitEditing={submit}
-                    right={
-                      <Pressable
-                        onPress={() => setShowPassword((v) => !v)}
-                        hitSlop={12}
-                        accessibilityRole="button"
-                        accessibilityLabel={showPassword ? 'Hide password' : 'Show password'}
-                        style={{ paddingLeft: gspace.md, paddingVertical: gspace.sm }}
-                      >
-                        <GlassIcon
-                          name={showPassword ? 'eyeOff' : 'eye'}
-                          size={20}
-                          color={glass.inkSoft}
-                        />
-                      </Pressable>
-                    }
                   />
+
+                  {stage === 'code' ? (
+                    <View style={{ marginBottom: gspace.xl }}>
+                      <GlassText variant="label" tone="soft" upper style={{ marginBottom: gspace.sm }}>
+                        Code from WhatsApp
+                      </GlassText>
+                      {notice ? (
+                        <GlassText variant="caption" tone="soft" style={{ marginBottom: gspace.md }}>
+                          {notice}
+                        </GlassText>
+                      ) : null}
+                      <OtpBoxes value={code} onChange={setCode} autoFocus />
+                      <Pressable
+                        onPress={requestCode}
+                        disabled={busy || cooldown > 0}
+                        hitSlop={10}
+                        accessibilityRole="button"
+                        style={({ pressed }) => ({
+                          alignSelf: 'flex-start',
+                          marginTop: gspace.md,
+                          opacity: busy || cooldown > 0 ? 0.4 : pressed ? 0.6 : 1,
+                        })}
+                      >
+                        <GlassText variant="caption" tone="orange" nums>
+                          {cooldown > 0 ? `Send a new code (${cooldown}s)` : 'Send a new code'}
+                        </GlassText>
+                      </Pressable>
+                    </View>
+                  ) : null}
                 </>
               )}
 
               {error ? <ErrorBanner message={error} /> : null}
 
               <GlassButton
-                title={useMock ? 'Open the demo' : 'Sign in'}
+                title={useMock ? 'Open the demo' : stage === 'number' ? 'Send code' : 'Sign in'}
                 kind={useMock ? 'orange' : 'dark'}
                 onPress={submit}
                 loading={busy}
@@ -438,7 +506,7 @@ export default function Connect() {
                 tone="faint"
                 style={{ marginTop: gspace.lg, textAlign: 'center' }}
               >
-                Can't sign in? Ask the office to check your rider login.
+                No code? Ask the office to check the WhatsApp number on your rider record.
               </GlassText>
             ) : null}
           </View>
