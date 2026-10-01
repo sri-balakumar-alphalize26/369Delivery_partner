@@ -175,32 +175,60 @@ async function main() {
   );
   check('tracking still off', acc.tracking?.enabled === false);
 
-  console.log('\n=== 6. Pickup code (from the shop) ===');
+  console.log('\n=== 6. Collect: the pickup code, then dispatch (Collected by Rider) ===');
   await api.requestPickupOtp(id);
   await expectError('wrong pickup code -> bad_otp', () => api.verifyPickupOtp(id, '000000'), 'bad_otp');
   const picked = await api.verifyPickupOtp(id, MOCK_PICKUP_OTP);
+  // The server's own sequence: the code makes it `picked`, quietly; the job
+  // screen fires `dispatch` straight after, which is what messages the customer.
   check('status picked', picked.status === 'picked');
   check(
     'can now dispatch',
     picked.allowed_actions.includes('dispatch'),
     picked.allowed_actions.join(',')
   );
-
-  console.log('\n=== 7. Leaving the shop ===');
-  const disp = await api.dispatch(id);
-  check('status dispatched', disp.status === 'dispatched');
-  check('tracking STILL off before /start', disp.tracking?.enabled === false);
+  const collected = await api.dispatch(id);
+  check('status dispatched (Collected by Rider)', collected.status === 'dispatched');
+  check(
+    'next is "I am near the customer"',
+    collected.allowed_actions.includes('start_delivery'),
+    collected.allowed_actions.join(',')
+  );
+  check('tracking STILL off before /start', collected.tracking?.enabled === false);
 
   const locBefore = await api.sendLocation(id, { latitude: 23.5, longitude: 58.3, accuracy: 10 });
   check('GPS before /start is told to stop', locBefore.stop === true);
 
-  console.log('\n=== 8. Start delivery — the only moment GPS may begin ===');
+  console.log('\n=== 7. I am near the customer — the only moment GPS may begin ===');
   const start = await api.start(id);
-  check('status out_for_delivery', start.status === 'out_for_delivery');
+  check('status out_for_delivery (Rider Near Customer)', start.status === 'out_for_delivery');
   check('tracking.enabled turns TRUE here', start.tracking?.enabled === true);
+  // As on the server: the code is offered at once, but the customer has none.
+  check(
+    'the delivery code is offered at once',
+    start.allowed_actions.includes('verify_delivery_otp'),
+    start.allowed_actions.join(',')
+  );
+  await expectError(
+    'delivery code before reaching the door -> otp_required',
+    () => api.verifyDeliveryOtp(id, MOCK_DELIVERY_OTP),
+    'otp_required'
+  );
 
   const locDuring = await api.sendLocation(id, { latitude: 23.5, longitude: 58.3, accuracy: 10 });
   check('GPS accepted during delivery', locDuring.stop === false);
+
+  console.log('\n=== 8. Reached — the customer is sent their code ===');
+  const reached = await api.reachedCustomer(id);
+  check('still out_for_delivery', reached.status === 'out_for_delivery');
+  check('the job records when', !!(await api.order(id)).reached_customer_on);
+  const resent = await api.reachedCustomer(id);
+  check('"Send the customer a new code" works at the door', resent.status === 'out_for_delivery');
+  await expectError(
+    '"Reached" before the road -> wrong_state',
+    () => api.reachedCustomer(secondId),
+    'wrong_state'
+  );
 
   console.log('\n=== 9. Delivery code (from the customer) ===');
   // '000000', as the pickup case uses, and never a literal that a demo code
@@ -225,20 +253,23 @@ async function main() {
   await api.verifyPickupOtp(secondId, MOCK_PICKUP_OTP);
   const returning = await api.returnToShop(secondId);
   check('status returning', returning.status === 'returning');
+  // Only the shop confirms a return, in Odoo ("Goods Back on the Shelf"), so
+  // the rider is offered nothing and a stray confirm is refused.
   check(
-    'only action is confirm_return',
-    sameActions(returning.allowed_actions, ['confirm_return']),
+    'the rider is offered nothing while returning',
+    returning.allowed_actions.length === 0,
     returning.allowed_actions.join(',')
   );
-  // Previously a dead button: the action was offered and nothing was wired to it.
-  const returned = await api.confirmReturn(secondId);
-  check('status returned', returned.status === 'returned');
-  check('no actions left', returned.allowed_actions.length === 0);
+  await expectError(
+    'confirming the return from the app -> wrong_state',
+    () => api.confirmReturn(secondId),
+    'wrong_state'
+  );
 
   const afterReturn = await api.orders();
   check(
-    'a returned job leaves the active list',
-    afterReturn.orders.every((o) => o.delivery_order_id !== secondId)
+    'a returning job stays listed until the shop confirms it',
+    afterReturn.orders.some((o) => o.delivery_order_id === secondId)
   );
   // ...but a terminal row must still render if one ever arrives, because
   // legacy `failed` jobs predate the server's fix and are still fetchable.
