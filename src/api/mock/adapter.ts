@@ -487,6 +487,15 @@ export const mockAdapter: ApiAdapter = {
     const o = find(id);
     requireAction(o, 'verify_delivery_otp');
 
+    // No code has been sent, so none can be right - the server's otp_required.
+    if (!codeSentFor.has(id)) {
+      throw new ApiError(
+        'otp_required',
+        'The customer has no code yet. Tap Reached when you are at the door.',
+        { status: 409, statusName: o.delivery_status, allowedActions: o.allowed_actions }
+      );
+    }
+
     if (otp !== MOCK_DELIVERY_OTP) {
       state.deliveryAttempts += 1;
       throw new ApiError(

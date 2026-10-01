@@ -201,6 +201,37 @@ export default function Job() {
   const [picked, setPicked] = useState<Set<number>>(new Set());
   const pickKey = `d369.picklist.${orderId}`;
 
+  /**
+   * Whether the customer has been sent their delivery code.
+   *
+   * Odoo offers the code from "Rider Near Customer" on, but sends it only when
+   * the rider says they are at the door (`reachedCustomer`), which is never in
+   * `allowed_actions`. So the door step is the app's to show: remembered per
+   * job, so reopening the screen at the door does not send a second code, and
+   * read from the job too when the server sends `reached_customer_on`.
+   */
+  const reachedKey = `d369.reached.${orderId}`;
+  const [reachedHere, setReachedHere] = useState(false);
+
+  function markReached(on: boolean) {
+    setReachedHere(on);
+    (on ? AsyncStorage.setItem(reachedKey, '1') : AsyncStorage.removeItem(reachedKey)).catch(
+      () => {}
+    );
+  }
+
+  useEffect(() => {
+    let live = true;
+    AsyncStorage.getItem(reachedKey)
+      .then((raw) => {
+        if (live && raw) setReachedHere(true);
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [reachedKey]);
+
   useEffect(() => {
     if (cooldown <= 0) return;
     const t = setTimeout(() => setCooldown((s) => s - 1), 1000);
@@ -417,6 +448,21 @@ export default function Job() {
           break;
         case 'verify_pickup_otp':
           res = await api.verifyPickupOtp(orderId, otp);
+          // The documented sequence: the code, then /dispatch at once, so one
+          // tap is the counter's Dispatch - "Collected by Rider", the one step
+          // that messages the customer. Should it fail, Odoo still offers
+          // `dispatch` and the screen shows it as the next button.
+          if (res.allowed_actions.includes('dispatch')) {
+            try {
+              res = await api.dispatch(orderId);
+            } catch (err) {
+              setError(
+                err instanceof ApiError
+                  ? err.message
+                  : 'Code accepted. Tap "Collected – leaving the shop" to carry on.'
+              );
+            }
+          }
           break;
         case 'dispatch':
           res = await api.dispatch(orderId);
@@ -445,9 +491,13 @@ export default function Job() {
         setPicked(new Set());
         AsyncStorage.removeItem(pickKey).catch(() => {});
       }
+      // Done with the door: a later job with this id must start fresh.
+      if (action === 'verify_delivery_otp' || action === 'return_to_shop') markReached(false);
       // The panel has done its job. A wrong code keeps it open, showing the
       // server's message against the boxes.
       setCodeOpen(false);
+      // The last panel's words belong to the last step.
+      setNotice(null);
       await applyResult(res);
     } catch (err) {
       if (err instanceof ApiError) {
@@ -455,6 +505,11 @@ export default function Job() {
         if (err.code === 'bad_otp') {
           setOtpError(err.message);
           setOtp('');
+        } else if (err.code === 'otp_required') {
+          // The customer has no live code after all: back to "Reached".
+          markReached(false);
+          setCodeOpen(false);
+          setError(err.message);
         } else {
           setError(err.message);
         }
@@ -497,6 +552,53 @@ export default function Job() {
   }
 
   /**
+   * At the door - the shop guide's "Reached Customer Location". Odoo sends the
+   * customer their 6-digit code now, and the code panel opens for it.
+   */
+  async function reachCustomer() {
+    setError(null);
+    setOtpError(null);
+    setBusy(true);
+    try {
+      const res = await api.reachedCustomer(orderId);
+      markReached(true);
+      setNotice(res.message ?? 'The customer has been sent their code on WhatsApp.');
+      setOtp('');
+      setCodeOpen(true);
+    } catch (err) {
+      if (err instanceof ApiError) {
+        setError(err.message);
+        if (err.allowedActions) setOverride(err.allowedActions);
+      } else {
+        setError('Could not send the customer their code. Try again.');
+      }
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /**
+   * The customer has no code, or lost it: Odoo sends a fresh one and the old
+   * one stops working - the shop guide's "Resend Customer Code".
+   */
+  async function resendCustomerCode() {
+    setOtpError(null);
+    setBusy(true);
+    try {
+      const res = await api.reachedCustomer(orderId);
+      markReached(true);
+      setNotice(res.message ?? 'A new code has been sent to the customer.');
+      setOtp('');
+    } catch (err) {
+      setOtpError(
+        err instanceof ApiError ? err.message : 'Could not send a new code. Try again.'
+      );
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /**
    * Open the code panel. For the pickup code, this is also the moment the
    * rider is at the counter, so the shop is sent its code — once per job; see
    * `shopToldFor`.
@@ -505,7 +607,7 @@ export default function Job() {
     setCodeOpen(true);
     if (primary !== 'verify_pickup_otp' || shopToldFor.has(orderId)) return;
     shopToldFor.add(orderId);
-    setNotice('Sending the code to the shop…');
+    setNotice('Checking with the shop…');
     // Where the rider is goes along, for the fleet module's arrival check.
     currentFix()
       .then((fix) => api.arrivedAtShop(orderId, fix))
@@ -520,7 +622,7 @@ export default function Job() {
         setOtpError(
           err instanceof ApiError
             ? err.message
-            : 'Could not reach the shop. Tap "Ask shop to resend".'
+            : 'Could not reach the shop. Tap "Ask the shop for a code".'
         );
       });
   }
@@ -792,9 +894,11 @@ export default function Job() {
   }
 
   /* ----------------------------------------------------------------- *
-   * Handover — the delivery code is due.
+   * Handover — near the customer. "Reached" first, which has Odoo send the
+   * customer their code; then the code itself.
    * ----------------------------------------------------------------- */
   if (primary === 'verify_delivery_otp') {
+    const reached = reachedHere || !!order.reached_customer_on;
     return (
       <GlassScreen>
         <View
@@ -930,7 +1034,7 @@ export default function Job() {
           <CodeSheet
             visible={codeOpen && primary === 'verify_delivery_otp'}
             title="Delivery code"
-            hint="Ask the customer for the 6-digit code Odoo sent them on WhatsApp."
+            hint={notice ?? 'Ask the customer for the 6-digit code Odoo sent them on WhatsApp.'}
             value={otp}
             onChange={setOtp}
             error={otpError}
@@ -940,6 +1044,13 @@ export default function Job() {
             submitKind="green"
             onSubmit={() => run('verify_delivery_otp')}
             onClose={() => setCodeOpen(false)}
+            right={
+              <ResendLink
+                label="Send the customer a new code"
+                disabled={busy}
+                onPress={resendCustomerCode}
+              />
+            }
           />
 
           {error ? (
@@ -948,21 +1059,18 @@ export default function Job() {
             </GlassText>
           ) : null}
 
+          {/* At the door first: Odoo sends the customer their code only now,
+              so it is live for the minutes it is needed. Then the code. */}
           <GlassButton
-            title={ACTION_LABEL[primary]}
+            title={reached ? ACTION_LABEL.verify_delivery_otp : 'Reached – send the customer code'}
             kind="green"
-            icon="check"
-            onPress={() => (needsOtp ? setCodeOpen(true) : run(primary))}
+            icon={reached ? 'check' : 'pin'}
+            onPress={() => (reached ? setCodeOpen(true) : void reachCustomer())}
             loading={busy}
             // Held back until the required photo is in; the server refuses the
             // code without it anyway, and a refusal after typing six digits is
             // the worse way to find out.
-            disabled={
-              proofOn &&
-              proofRequired &&
-              primary === 'verify_delivery_otp' &&
-              !proofSent(orderId)
-            }
+            disabled={reached && proofOn && proofRequired && !proofSent(orderId)}
             style={{ marginTop: gspace.xxl }}
           />
 
@@ -976,6 +1084,15 @@ export default function Job() {
               columnGap: gspace.xl,
             }}
           >
+            {/* The office may have sent the code from the job form, or this
+                phone may have been swapped mid-job: no need to send another. */}
+            {!reached ? (
+              <GhostLink
+                label="Customer already has a code"
+                onPress={() => setCodeOpen(true)}
+                disabled={busy}
+              />
+            ) : null}
             {secondary.map((a) => (
               <GhostLink key={a} label={ACTION_LABEL[a]} onPress={() => run(a)} disabled={busy} />
             ))}
@@ -1207,7 +1324,9 @@ export default function Job() {
             onClose={() => setCodeOpen(false)}
             right={
               <ResendLink
-                label={cooldown > 0 ? `Ask shop to resend (${cooldown}s)` : 'Ask shop to resend'}
+                label={
+                  cooldown > 0 ? `Ask the shop for a code (${cooldown}s)` : 'Ask the shop for a code'
+                }
                 disabled={busy || cooldown > 0}
                 onPress={requestOtp}
               />
