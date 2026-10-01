@@ -199,8 +199,9 @@ export const glassBand: Record<GlassBarState, { bg: string; fg: string; label: s
   offered: { bg: glass.accent, fg: glass.accentInk, label: 'NEW JOB' },
   accepted: { bg: glass.band, fg: glass.bandInk, label: 'GO TO SHOP' },
   picked: { bg: glass.band, fg: glass.bandInk, label: 'COLLECTED' },
-  dispatched: { bg: glass.band, fg: glass.bandInk, label: 'LEFT SHOP' },
-  out_for_delivery: { bg: glass.greenSoft, fg: glass.green, label: 'DELIVERING' },
+  // The shop guide's names: "Collected by Rider", "Rider Near Customer".
+  dispatched: { bg: glass.band, fg: glass.bandInk, label: 'COLLECTED' },
+  out_for_delivery: { bg: glass.greenSoft, fg: glass.green, label: 'NEAR CUSTOMER' },
   delivered: { bg: glass.greenSoft, fg: glass.green, label: 'DELIVERED' },
   returning: { bg: glass.redSoft, fg: glass.red, label: 'RETURNING' },
   returned: { bg: glass.fill, fg: glass.inkSoft, label: 'RETURNED' },

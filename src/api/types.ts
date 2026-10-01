@@ -34,14 +34,20 @@ export type Action =
   /** Say no to an offer; Odoo passes it to the next rider on duty. */
   | 'decline';
 
-/** Button labels. A lookup for rendering only — it confers no permission. */
+/**
+ * Button labels. A lookup for rendering only — it confers no permission.
+ *
+ * Worded after the shop's Step-by-Step Guide, so the rider and the counter
+ * name each step the same way: Collect, near the customer, reached, delivered.
+ */
 export const ACTION_LABEL: Record<Action, string> = {
   accept: 'Accept this job',
   decline: 'Decline',
-  verify_pickup_otp: 'Enter pickup code',
-  dispatch: 'Leaving the shop',
-  start_delivery: 'Start delivery',
-  verify_delivery_otp: 'Enter delivery code',
+  verify_pickup_otp: 'Collect – enter pickup code',
+  // Normally fired straight after the pickup code; a button only if that failed.
+  dispatch: 'Collected – leaving the shop',
+  start_delivery: 'I am near the customer',
+  verify_delivery_otp: 'Delivered – enter customer code',
   return_to_shop: 'Return to shop',
   confirm_return: 'Confirm return',
   report_issue: 'Report a problem',

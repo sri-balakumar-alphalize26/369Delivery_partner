@@ -26,7 +26,7 @@ import { GlassText } from './GlassText';
 const STEPS: { key: keyof NonNullable<DeliveryOrder['timestamps']>; label: string }[] = [
   { key: 'accepted', label: 'Accepted' },
   { key: 'picked_up', label: 'Collected' },
-  { key: 'out_for_delivery', label: 'On the road' },
+  { key: 'out_for_delivery', label: 'Near customer' },
   { key: 'delivered', label: 'Delivered' },
 ];
 
