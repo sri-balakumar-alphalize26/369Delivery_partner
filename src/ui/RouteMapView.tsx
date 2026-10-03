@@ -270,6 +270,41 @@ export function RouteMapView({
    */
   }, [legKey, target, riderFound, refetchTick]);
 
+  /* ----------------------------------------------------------------- *
+   * The whole trip, shop to door.
+   *
+   * Drawn soft, under the live line, so the rider sees the job at a glance:
+   * where it starts, where it ends, and the road between. It is an overview,
+   * never the route - nothing is measured from it, and the ETA stays with the
+   * line from the rider. Fixed for the life of the job, and `fetchRoute` caches
+   * per pair of ends, so the job list's `useJobDistance` has usually already
+   * paid for it.
+   * ----------------------------------------------------------------- */
+  const [trip, setTrip] = useState<{ points: LatLng[]; road: boolean } | null>(null);
+
+  // A string, so a fresh `coords()` object each render cannot re-run this.
+  const tripKey =
+    shop && customer
+      ? `${shop.latitude},${shop.longitude}>${customer.latitude},${customer.longitude}`
+      : null;
+
+  useEffect(() => {
+    if (!tripKey || !shop || !customer) {
+      setTrip(null);
+      return;
+    }
+    let alive = true;
+    fetchRoute(shop, customer, peekServer().orsKey).then((r) => {
+      if (!alive) return;
+      setTrip(r ? { points: r.leg.points, road: true } : { points: [shop, customer], road: false });
+    });
+    return () => {
+      alive = false;
+    };
+    // Keyed on the string; `shop` and `customer` are memoised and change with it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tripKey]);
+
 
   /* ----------------------------------------------------------------- *
    * Moving the rider.
@@ -551,17 +586,36 @@ export function RouteMapView({
           </Marker>
         ) : null}
 
+        {/* The whole trip, soft and underneath; dashed when no road came back. */}
+        {trip ? (
+          <Polyline
+            coordinates={trip.points}
+            strokeColor={glass.orangeLine}
+            strokeWidth={4}
+            lineDashPattern={trip.road ? undefined : [8, 6]}
+            zIndex={0}
+          />
+        ) : null}
+
         {/* The road already covered, faded back so it does not read as journey
             still to come. */}
         {drawn && drawn.behind.length > 1 ? (
-          <Polyline coordinates={drawn.behind} strokeColor={glass.inkFaint} strokeWidth={5} />
+          <Polyline
+            coordinates={drawn.behind}
+            strokeColor={glass.inkFaint}
+            strokeWidth={5}
+            zIndex={1}
+          />
         ) : null}
 
+        {/* zIndex 1 on the live lines: the trip line often arrives after them,
+            and Android draws a later line on top of an equal one. */}
         {drawn && drawn.ahead.length > 1 ? (
           <Polyline
             coordinates={drawn.ahead}
             strokeColor={heading === 'shop' ? glass.indigo : glass.orange}
             strokeWidth={5}
+            zIndex={1}
           />
         ) : null}
 
@@ -574,6 +628,7 @@ export function RouteMapView({
             strokeColor={heading === 'shop' ? glass.indigo : glass.orange}
             strokeWidth={4}
             lineDashPattern={[8, 6]}
+            zIndex={1}
           />
         ) : null}
 
