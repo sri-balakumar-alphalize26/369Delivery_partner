@@ -161,6 +161,7 @@ export const restAdapter: ApiAdapter = {
       earnings?: HistoryResponse['earnings'];
     }>(`/api/delivery/history?limit=${limit}`);
     const rows = r.history ?? r.orders ?? [];
+    console.log('[TMP history]', JSON.stringify({ top: Object.keys(r), row: rows[0] }));
     const out: HistoryResponse = {
       jobs: rows.map((row) => ({ ...fixOrder(row), finished_at: row.finished_at })),
       timezone: r.timezone,
@@ -185,18 +186,26 @@ export const restAdapter: ApiAdapter = {
   },
 
   /**
-   * At the counter. The counter makes the pickup code (Generate Pickup Code,
-   * sent to the rider's WhatsApp too), so the app asks for none by itself:
-   * `/arrived {point: "shop"}` would issue a new code and void that one. The
-   * rider asks explicitly with "Ask the shop for a code" (`requestPickupOtp`).
+   * At the counter: the rider asks for the pickup code. The server sends it to
+   * the shop's WhatsApp when the job has a shop, and to the rider's when it has
+   * none. A new code voids the last, but it goes to the same phone, so the
+   * counter just reads the newest. `requestPickupOtp` stays in the API but no
+   * screen uses it: it sends the code to the shop's WhatsApp only, never to the
+   * rider.
    */
-  async arrivedAtShop(id) {
-    const order = await restAdapter.order(id);
-    return {
-      status: order.delivery_status,
-      allowed_actions: order.allowed_actions,
-      message: 'Ask the counter for the 6-digit pickup code.',
-    };
+  async arrivedAtShop(id, fix) {
+    const res = await step('/api/delivery/arrived', {
+      delivery_order_id: id,
+      point: 'shop',
+      ...(fix ? { latitude: fix.latitude, longitude: fix.longitude, accuracy: fix.accuracy } : {}),
+    });
+    if (res.otp_sent === false) {
+      return {
+        ...res,
+        message: `${res.message ?? 'Could not send the pickup code.'} Ask the counter to tap Generate Pickup Code.`,
+      };
+    }
+    return res;
   },
 
   requestPickupOtp: (id) => step('/api/delivery/pickup/request-otp', { delivery_order_id: id }),

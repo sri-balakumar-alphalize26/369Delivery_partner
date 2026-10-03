@@ -476,6 +476,8 @@ export interface ActionResult {
    * minute ago and keeps it, rather than a new one voiding it.
    */
   resent?: boolean;
+  /** On `arrived`: whether the code's WhatsApp went out. */
+  otp_sent?: boolean;
   /** On `decline`: the job is no longer this rider's. Leave its screen. */
   removed?: boolean;
 }

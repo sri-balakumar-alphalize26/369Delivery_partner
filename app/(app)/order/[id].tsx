@@ -273,8 +273,6 @@ export default function Job() {
    * open with its buttons still greyed from the round before.
    */
   const [expiredOffer, setExpiredOffer] = useState<string | null>(null);
-  /** Seconds left on the server's resend window, counted down locally. */
-  const [cooldown, setCooldown] = useState(0);
   /** Which action is waiting on a reason, if any. */
   const [reasonFor, setReasonFor] = useState<Action | null>(null);
   /** Which action is waiting on the location explainer, if any. */
@@ -378,12 +376,6 @@ export default function Job() {
   }, [pending, reachedKey]);
 
   useEffect(() => {
-    if (cooldown <= 0) return;
-    const t = setTimeout(() => setCooldown((s) => s - 1), 1000);
-    return () => clearTimeout(t);
-  }, [cooldown]);
-
-  useEffect(() => {
     let live = true;
     AsyncStorage.getItem(pickKey)
       .then((raw) => {
@@ -440,7 +432,6 @@ export default function Job() {
     setOtp('');
     setError(null);
     setOtpError(null);
-    setCooldown(0);
     setCodeOpen(false);
     setPicked(new Set());
     setLeg(null);
@@ -781,33 +772,6 @@ export default function Job() {
   }
 
   /**
-   * Ask the shop to send the pickup code again.
-   *
-   * Verified on res-test1: with no WhatsApp session this answers success:false
-   * — "Could not send the pickup code." — while still issuing the code.
-   * Swallowing that left the button doing nothing visible, so the server's own
-   * wording is shown.
-   */
-  async function requestOtp() {
-    setError(null);
-    setOtpError(null);
-    try {
-      const res = await api.requestPickupOtp(orderId);
-      // Good news goes in the panel's hint, not in red under the screen.
-      setNotice(res.message ?? null);
-      // The server enforces the window; obey the number it sends rather than a
-      // constant of our own.
-      setCooldown(res.retry_after_seconds ?? 0);
-    } catch (err) {
-      setOtpError(
-        err instanceof ApiError
-          ? err.message
-          : 'Could not reach the shop. Ask them to read the code out.'
-      );
-    }
-  }
-
-  /**
    * At the door - the shop guide's "Reached Customer Location". Odoo sends the
    * customer their 6-digit code now, and the code panel opens for it.
    */
@@ -871,17 +835,16 @@ export default function Job() {
     currentFix()
       .then((fix) => api.arrivedAtShop(orderId, fix))
       .then((res) => {
-        setNotice(res.message ?? 'The shop has been sent the code.');
-        setCooldown(res.retry_after_seconds ?? 0);
+        setNotice(res.message ?? null);
       })
       .catch((err) => {
-        // Let the next open try again, and leave "resend" as the way out.
+        // Let the next open try again.
         shopToldFor.delete(orderId);
         setNotice(null);
         setOtpError(
           err instanceof ApiError
             ? err.message
-            : 'Could not reach the shop. Tap "Ask the shop for a code".'
+            : 'Could not reach the server. Ask the counter for the pickup code.'
         );
       });
   }
@@ -1784,7 +1747,8 @@ export default function Job() {
             visible={codeOpen && primary === 'verify_pickup_otp'}
             title="Enter the pickup code"
             hint={
-              notice ?? 'The shop staff will read this out when they hand the parcel over.'
+              notice ??
+              'Ask the counter for the 6-digit pickup code. If the job has no shop, it comes to your WhatsApp.'
             }
             value={otp}
             onChange={setOtp}
@@ -1796,9 +1760,10 @@ export default function Job() {
               allChecked ? run('verify_pickup_otp') : setOtpError('Tick every item in the bag first.')
             }
             onClose={() => setCodeOpen(false)}
-            // The shop's own wait, from the server, rather than the card's 30s.
-            onResend={requestOtp}
-            resendIn={cooldown}
+            // No resend: the pickup code goes to the shop's WhatsApp when the
+            // job has a shop, and to the rider's only when it has none.
+            // /pickup/request-otp always goes to the shop, so a rider-side
+            // resend could never reach the rider.
           />
 
           {error ? (
@@ -1816,7 +1781,6 @@ export default function Job() {
               icon="check"
               onPress={() => (needsOtp ? openCode() : run(primary))}
               loading={busy}
-              disabled={collecting && !allChecked}
               style={{ marginTop: gspace.xl }}
             />
           ) : (
