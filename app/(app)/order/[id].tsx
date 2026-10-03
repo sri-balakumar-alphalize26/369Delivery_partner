@@ -34,6 +34,7 @@ import {
   DELIVERY_REASONS,
   headingFor,
   isAtShop,
+  Money,
   PRIMARY_ACTIONS,
   trackingWanted,
 } from '../../../src/api/types';
@@ -74,6 +75,7 @@ import { CodeSheet } from '../../../src/ui/CodeSheet';
 import { OtpInput } from '../../../src/ui/OtpInput';
 import { MAP_ENABLED, RouteMap } from '../../../src/ui/RouteMap';
 import { ProofPhoto, proofSent } from '../../../src/ui/ProofPhoto';
+import { PayQr } from '../../../src/ui/PayQr';
 import { currentFix } from '../../../src/location/currentFix';
 import { metresBetween } from '../../../src/lib/routeGeometry';
 import { hasFeature } from '../../../src/api/features';
@@ -100,9 +102,8 @@ import { GlassText } from '../../../src/ui/glass/GlassText';
  * screen when the delivery code is due, and the sheet-over-map for everything
  * between.
  *
- * The template also shows a per-order fee ("You earn"), a distance and an ETA.
- * None of the three exists in the contract, so none is drawn — a number here
- * would be trusted and wrong.
+ * The per-trip fee ("You earn") is drawn only when the server sends
+ * `rider_fee` — Delivery Partners only, worked out on the server, never here.
  */
 
 /**
@@ -253,7 +254,10 @@ export default function Job() {
   // The shop's zone, from /auth/me — never the phone's own.
   const timezone = useSession((s) => s.timezone);
   // Fleet features, when the server has the fleet module: the door photo.
-  const proofOn = useSession((s) => !!s.fleet?.features.includes('proof'));
+  // The door photo is offered on every server now: the delivery API takes it
+  // (multipart `/proof`, 19.0.21.4.0) and never requires it. "Required" is
+  // still only the fleet module's setting.
+  const proofOn = true;
   const proofRequired = useSession((s) => !!s.fleet?.proof_required);
   const [, setProofTick] = useState(0);
 
@@ -1126,6 +1130,7 @@ export default function Job() {
               tone={due?.late ? glass.red : undefined}
             />
           </View>
+          {order.rider_fee ? <FeeLine label="You earn on this trip" fee={order.rider_fee} /> : null}
 
           {/* Where the shop is from here. The shop's pin is real on the live
               server even while customer rows carry none; `heading` resolves to
@@ -1153,7 +1158,8 @@ export default function Job() {
 
           <GlassCard style={{ marginTop: gspace.lg }}>
             <GlassText variant="label" tone="soft" upper>
-              Pick up from
+              {/* A job with no shop is collected from the warehouse (19.0.21.4.0). */}
+              {offerShop?.is_warehouse ? 'Pick up from the warehouse' : 'Pick up from'}
             </GlassText>
             <GlassText variant="bodyStrong" style={{ marginTop: gspace.xs }}>
               {shopName(order.shop) || 'Shop not recorded'}
@@ -1194,6 +1200,7 @@ export default function Job() {
             <GlassText variant="caption" tone="soft" style={{ marginTop: 2 }}>
               {order.delivery_address}
             </GlassText>
+            <DeliveryNote note={order.delivery_note} />
             {order.promised_by ? (
               <GlassText variant="caption" tone="soft" nums style={{ marginTop: gspace.sm }}>
                 Promised {promisedAt(order.promised_by, timezone)}
@@ -1346,11 +1353,17 @@ export default function Job() {
             <GlassText variant="body" tone="soft" style={{ marginTop: 2 }}>
               {order.delivery_address}
             </GlassText>
+            <DeliveryNote note={order.delivery_note} />
             {/* No pin: the map has no door to draw the road to. Say why, and
-                that Navigate still works — it goes by the written address. */}
+                that Navigate still works — it goes by the written address. A
+                pin looked up from the typed address is only near the door. */}
             {order.latitude == null || order.longitude == null ? (
               <GlassText variant="caption" tone="faint" style={{ marginTop: gspace.xs }}>
                 No map pin for this address yet — Navigate uses the written address.
+              </GlassText>
+            ) : order.location_source === 'geocoded' ? (
+              <GlassText variant="caption" tone="faint" style={{ marginTop: gspace.xs }}>
+                Map pin is approximate, found from the typed address.
               </GlassText>
             ) : null}
 
@@ -1411,6 +1424,24 @@ export default function Job() {
               </GlassText>
             ) : null}
           </View>
+
+          {/* Card instead of cash: the customer scans the pay page with their
+              own phone. The job polls every 15s, so once the payment lands it
+              turns paid, `pay_url` goes null, and this and the cash prompt above
+              give way to "Already paid" by themselves. */}
+          {cod && order.pay_url ? (
+            <GlassCard style={{ marginTop: gspace.lg }}>
+              <GlassText
+                variant="label"
+                tone="soft"
+                upper
+                style={{ textAlign: 'center', marginBottom: gspace.md }}
+              >
+                Or the customer pays by card
+              </GlassText>
+              <PayQr url={order.pay_url} />
+            </GlassCard>
+          ) : null}
 
           {/* The parcel at the door, before the code — on a server that keeps it. */}
           {proofOn && primary === 'verify_delivery_otp' ? (
@@ -1620,6 +1651,7 @@ export default function Job() {
                   {order.delivery_address}
                 </GlassText>
               ) : null}
+              {toCustomer ? <DeliveryNote note={order.delivery_note} /> : null}
             </View>
             <View style={{ flexDirection: 'row', gap: gspace.sm }}>
               <RoundButton icon="phone" onPress={toCustomer ? callCustomer : callShop} />
@@ -1665,10 +1697,9 @@ export default function Job() {
             </GlassText>
           ) : null}
 
-          {/* Collect, Items and Due. The template's "You earn" has no field
-              behind it, and there is still no distance or ETA in the contract —
-              but `promised_by` is real and was only ever shown on the list, so
-              the rider had to go back a screen to see when a job was due. */}
+          {/* Collect, Items and Due. `promised_by` was only ever shown on the
+              list, so the rider had to go back a screen to see when a job was
+              due. The trip's pay follows, for a Delivery Partner. */}
           <View style={{ flexDirection: 'row', gap: gspace.md, marginTop: gspace.lg }}>
             <Tile
               label="Collect"
@@ -1684,6 +1715,7 @@ export default function Job() {
               tone={due?.late ? glass.red : undefined}
             />
           </View>
+          {order.rider_fee ? <FeeLine label="You earn on this trip" fee={order.rider_fee} /> : null}
 
           {order.products?.length ? (
             <View style={{ marginTop: gspace.lg }}>
@@ -1926,6 +1958,44 @@ function Tile({ label, value, tone }: { label: string; value: string; tone?: str
         numberOfLines={1}
       >
         {value}
+      </GlassText>
+    </View>
+  );
+}
+
+/**
+ * The customer's landmark, flat or gate note, in bold under the address — the
+ * line that finds the right door in a building with forty (delivery 19.0.21.4.0).
+ */
+function DeliveryNote({ note }: { note?: string }) {
+  const text = note?.trim();
+  if (!text) return null;
+  return (
+    <GlassText variant="bodyStrong" style={{ marginTop: gspace.xs }}>
+      {text}
+    </GlassText>
+  );
+}
+
+/** This trip's pay, exactly as the server worked it out. Delivery Partners only. */
+function FeeLine({ label, fee }: { label: string; fee: Money }) {
+  return (
+    <View
+      style={{
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginTop: gspace.md,
+        padding: gspace.md,
+        borderRadius: gradius.chip,
+        backgroundColor: glass.greenSoft,
+      }}
+    >
+      <GlassIcon name="cash" size={18} color={glass.green} />
+      <GlassText variant="body" style={{ flex: 1, marginLeft: gspace.sm }}>
+        {label}
+      </GlassText>
+      <GlassText variant="subtitle" nums style={{ color: glass.green }}>
+        {fee.formatted}
       </GlassText>
     </View>
   );

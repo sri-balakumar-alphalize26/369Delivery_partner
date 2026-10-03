@@ -149,6 +149,11 @@ export default function PastJobScreen() {
               {job.delivery_address}
             </GlassText>
           ) : null}
+          {job.delivery_note?.trim() ? (
+            <GlassText variant="bodyStrong" style={{ marginTop: gspace.xs }}>
+              {job.delivery_note.trim()}
+            </GlassText>
+          ) : null}
         </Section>
 
         <Section icon="box" title="Items">
@@ -190,6 +195,13 @@ export default function PastJobScreen() {
           ) : (
             <GlassText variant="bodyStrong">Paid online</GlassText>
           )}
+          {/* What the trip paid this rider: Delivery Partners only, frozen once
+              delivered, and 0 for a returned or cancelled trip (server's rule). */}
+          {job.rider_fee ? (
+            <GlassText variant="bodyStrong" nums style={{ marginTop: gspace.sm, color: glass.green }}>
+              You earned {job.rider_fee.formatted}
+            </GlassText>
+          ) : null}
         </Section>
 
         {/* The step times, from the server where it sent them. */}

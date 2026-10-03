@@ -45,7 +45,7 @@ export function ProofPhoto({
     }
     setBusy(true);
     try {
-      await api.uploadProof(orderId, shot.base64);
+      await api.uploadProof(orderId, shot.base64, shot.uri);
       sent.set(orderId, shot.uri);
       setUri(shot.uri);
       onSent();
