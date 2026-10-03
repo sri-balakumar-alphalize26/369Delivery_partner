@@ -1,28 +1,47 @@
 import { ReactNode, useEffect, useRef, useState } from 'react';
-import { Keyboard, Modal, Pressable, View } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { glass, gradius, gspace } from '../theme/glass';
+import {
+  Animated,
+  Keyboard,
+  Modal,
+  Pressable,
+  StyleSheet,
+  useWindowDimensions,
+  View,
+} from 'react-native';
+import { glass, gspace } from '../theme/glass';
 import { OtpBoxes, OtpBoxesHandle } from './OtpBoxes';
 import { GlassButton } from './glass/GlassButton';
+import { GlassIcon } from './glass/GlassIcon';
 import { GlassText } from './glass/GlassText';
 
 /**
- * Entering the six-digit code, on a panel that holds nothing else.
+ * Entering a six-digit code, in a small card centred over the job.
  *
- * The boxes used to sit at the foot of the job sheet, below the progress rail,
- * the order details, three tiles and the item list — so a rider at a counter
- * scrolled to find them and then had the keyboard cover them anyway. The
- * `KeyboardAvoidingView` around that sheet was already fighting the problem and
- * still losing, because the problem was never that the page would not scroll: a
- * single-keystroke task was buried in a page about something else.
+ * The boxes once sat at the foot of the job sheet, under everything else, and
+ * the keyboard covered them; then they moved to a bottom sheet. Now the code
+ * gets a card of its own, centred in the space above the keyboard: a title, a
+ * line saying where the code came from, the boxes, one button, and the resend.
  *
- * So the code gets its own surface. Nothing to scroll past, and the panel sits
- * above the keyboard by construction rather than by measurement.
+ * It submits by itself on the sixth digit, shakes and clears on a wrong code,
+ * and shows a tick on a right one before it closes.
  *
  * The keyboard inset is tracked rather than left to `KeyboardAvoidingView`:
  * app.json turns edge-to-edge on, which stops Android resizing the window when
  * the keyboard opens, so nothing moves on its own.
  */
+
+/** Wide enough for six full-size boxes and the card's padding: 6×48 + 5×8 + 2×28. */
+const CARD_MAX_W = 384;
+/** Space kept between the card and the screen edge on a narrow phone. */
+const SCREEN_MARGIN = 16;
+const BOX_MAX = 48;
+const BOX_GAP = gspace.sm;
+const DIGITS = 6;
+/** How long before a new code may be asked for, when the server gives no wait. */
+const RESEND_WAIT_S = 30;
+/** How long the tick shows after a right code, before the card goes. */
+const SUCCESS_MS = 700;
+
 export function CodeSheet({
   visible,
   title,
@@ -37,6 +56,9 @@ export function CodeSheet({
   onSubmit,
   onClose,
   right,
+  onResend,
+  resendIn,
+  sentTo,
 }: {
   visible: boolean;
   title: string;
@@ -51,10 +73,20 @@ export function CodeSheet({
   submitKind?: 'indigo' | 'green';
   onSubmit: () => void;
   onClose: () => void;
-  /** The resend link, on the steps that have one. */
+  /** An older caller's own resend link, shown in the footer when there is no `onResend`. */
   right?: ReactNode;
+  /** Ask for a new code. Turns the footer into "Resend" once the wait is over. */
+  onResend?: () => void | Promise<void>;
+  /**
+   * Seconds left before a new code may be asked for, counted by the caller —
+   * the server's own wait. Without it the card waits 30s from opening, and
+   * again after each resend.
+   */
+  resendIn?: number;
+  /** The number the code went to, shown with all but its last four digits hidden. */
+  sentTo?: string | null;
 }) {
-  const insets = useSafeAreaInsets();
+  const { width } = useWindowDimensions();
   const [keyboard, setKeyboard] = useState(0);
   const boxes = useRef<OtpBoxesHandle>(null);
 
@@ -69,81 +101,321 @@ export function CodeSheet({
     };
   }, []);
 
+  // Sized from the space the card really has, so the six boxes can never spill
+  // past its edges: full size on most phones, a little smaller on narrow ones.
+  const cardW = Math.min(CARD_MAX_W, width - 2 * SCREEN_MARGIN);
+  const padH = width < 360 ? 24 : 28;
+  const boxSize = Math.min(BOX_MAX, Math.floor((cardW - 2 * padH - (DIGITS - 1) * BOX_GAP) / DIGITS));
+
+  /**
+   * Whether the last close followed a submit that went through.
+   *
+   * There is no "it worked" prop: the caller just closes the card. A right code
+   * closes it with no error and the boxes cleared; every failure either leaves
+   * it open, sets `error`, or closes it with the digits still in. Only the
+   * first is a success.
+   */
+  const submitting = useRef(false);
+  const [shown, setShown] = useState(visible);
+  const [success, setSuccess] = useState(false);
+
+  useEffect(() => {
+    if (visible) {
+      setShown(true);
+      setSuccess(false);
+      return;
+    }
+    const ok = submitting.current && !error && value === '';
+    submitting.current = false;
+    if (!ok) {
+      setShown(false);
+      return;
+    }
+    setSuccess(true);
+    const t = setTimeout(() => {
+      setSuccess(false);
+      setShown(false);
+    }, SUCCESS_MS);
+    return () => clearTimeout(t);
+    // Only the open/close itself decides this; error and value are read as
+    // they stand at that moment.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [visible]);
+
+  const submit = () => {
+    submitting.current = true;
+    onSubmit();
+  };
+
+  const close = () => {
+    submitting.current = false;
+    onClose();
+  };
+
+  /**
+   * The sixth digit submits. Once per complete code: a wrong one is cleared by
+   * the caller, which re-arms this, and a refusal that leaves the digits in
+   * place (the bag check) does not fire again until they change.
+   */
+  const lastSubmitted = useRef<string | null>(null);
+  useEffect(() => {
+    if (!visible || value.length < DIGITS) {
+      lastSubmitted.current = null;
+      return;
+    }
+    if (canSubmit && !busy && lastSubmitted.current !== value) {
+      lastSubmitted.current = value;
+      submit();
+    }
+    // `submit` is rebuilt each render; the value reaching six digits is the trigger.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [value, visible, canSubmit, busy]);
+
+  /** A wrong code: a short shake, and the boxes ready for the next try. */
+  const shake = useRef(new Animated.Value(0)).current;
+  useEffect(() => {
+    if (!error) return;
+    submitting.current = false;
+    Animated.sequence(
+      [-8, 8, -6, 6, -3, 0].map((toValue) =>
+        Animated.timing(shake, { toValue, duration: 50, useNativeDriver: true })
+      )
+    ).start();
+    boxes.current?.focus();
+  }, [error, shake]);
+
+  /** The card's own resend wait, used when the caller does not count one. */
+  const [ownWait, setOwnWait] = useState(0);
+  useEffect(() => {
+    if (visible && resendIn === undefined) setOwnWait(RESEND_WAIT_S);
+  }, [visible, resendIn]);
+  useEffect(() => {
+    if (ownWait <= 0) return;
+    const t = setTimeout(() => setOwnWait((s) => s - 1), 1000);
+    return () => clearTimeout(t);
+  }, [ownWait]);
+  const wait = resendIn ?? ownWait;
+
+  const resend = async () => {
+    await onResend?.();
+    if (resendIn === undefined) setOwnWait(RESEND_WAIT_S);
+    boxes.current?.focus();
+  };
+
+  const masked = maskPhone(sentTo);
+
   return (
     <Modal
-      visible={visible}
+      visible={shown}
       transparent
-      animationType="slide"
-      // The Android back button closes it, as a rider would expect of anything
-      // that slid up over the screen.
-      onRequestClose={onClose}
+      animationType="fade"
+      // The Android back button closes it, as a rider would expect of a popup.
+      onRequestClose={close}
       /**
        * The keyboard is raised here rather than by `autoFocus` on the input.
        *
        * On Android `autoFocus` runs while the modal is still mounting, before
-       * its window exists, and the focus request is dropped — the panel opens
+       * its window exists, and the focus request is dropped — the card opens
        * and no keyboard ever appears. `onShow` is the callback that means the
        * window is really up, so the request lands.
        */
       onShow={() => boxes.current?.focus()}
       statusBarTranslucent
     >
-      <View style={{ flex: 1, justifyContent: 'flex-end' }}>
-        {/* Tapping away is a cancel. The panel below stops the press, so a
-            mistyped digit does not close everything. */}
+      <View
+        style={{
+          flex: 1,
+          backgroundColor: 'rgba(0,0,0,0.4)',
+          alignItems: 'center',
+          justifyContent: 'center',
+          paddingHorizontal: SCREEN_MARGIN,
+          // Centred in what the keyboard leaves, not in the whole screen.
+          paddingBottom: keyboard,
+        }}
+      >
+        {/* Tapping away is a cancel. The card sits on top, so a press on it
+            never reaches this. */}
         <Pressable
-          onPress={onClose}
+          onPress={close}
           accessibilityRole="button"
           accessibilityLabel="Close"
-          style={{ flex: 1, backgroundColor: 'rgba(15,23,42,0.45)' }}
+          style={StyleSheet.absoluteFill}
         />
 
         <View
           style={{
-            backgroundColor: glass.fillStrong,
-            borderTopLeftRadius: gradius.card,
-            borderTopRightRadius: gradius.card,
-            paddingHorizontal: gspace.xl,
-            paddingTop: gspace.xl,
-            // The keyboard first, then the gesture bar when there is no keyboard
-            // over it.
-            paddingBottom: gspace.xl + (keyboard || insets.bottom),
+            width: cardW,
+            backgroundColor: glass.white,
+            borderRadius: 16,
+            borderWidth: 1,
+            borderColor: glass.border,
+            paddingVertical: 32,
+            paddingHorizontal: padH,
+            alignItems: 'center',
+            // The app draws no shadows elsewhere; a card floating over a dimmed
+            // screen is the one place a soft one helps it lift.
+            shadowColor: '#000000',
+            shadowOpacity: 0.18,
+            shadowRadius: 18,
+            shadowOffset: { width: 0, height: 8 },
+            elevation: 10,
           }}
         >
-          <View
-            style={{
-              flexDirection: 'row',
+          <Pressable
+            onPress={close}
+            accessibilityRole="button"
+            accessibilityLabel="Close"
+            hitSlop={12}
+            style={({ pressed }) => ({
+              position: 'absolute',
+              top: 12,
+              right: 12,
+              width: 32,
+              height: 32,
+              borderRadius: 16,
               alignItems: 'center',
-              justifyContent: 'space-between',
-            }}
+              justifyContent: 'center',
+              backgroundColor: pressed ? glass.fill : 'transparent',
+            })}
           >
-            <GlassText variant="label" tone="soft" upper>
-              {title}
-            </GlassText>
-            {right}
-          </View>
+            <GlassIcon name="close" size={20} color={glass.inkSoft} />
+          </Pressable>
 
-          <GlassText variant="body" tone="soft" style={{ marginTop: gspace.xs }}>
-            {hint}
-          </GlassText>
+          {success ? (
+            <View style={{ alignItems: 'center', paddingVertical: gspace.lg }}>
+              <View
+                style={{
+                  width: 56,
+                  height: 56,
+                  borderRadius: 28,
+                  backgroundColor: glass.greenSoft,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                }}
+              >
+                <GlassIcon name="check" size={30} color={glass.green} />
+              </View>
+              <GlassText
+                variant="subtitle"
+                accessibilityLiveRegion="polite"
+                style={{ marginTop: gspace.md, color: glass.green }}
+              >
+                Code accepted
+              </GlassText>
+            </View>
+          ) : (
+            <>
+              <GlassText variant="subtitle" style={{ fontSize: 18, textAlign: 'center' }}>
+                {title}
+              </GlassText>
+              <GlassText
+                variant="body"
+                tone="soft"
+                style={{ fontSize: 13, textAlign: 'center', marginTop: gspace.sm }}
+              >
+                {hint}
+              </GlassText>
+              {masked ? (
+                <GlassText
+                  variant="body"
+                  tone="soft"
+                  nums
+                  style={{ fontSize: 13, textAlign: 'center', marginTop: 2 }}
+                >
+                  Sent to {masked}
+                </GlassText>
+              ) : null}
 
-          {/* Centred, unlike the old inline version: six 46px boxes pinned to
-              the left of a 1100px tablet sheet read as a rendering fault. */}
-          <View style={{ alignItems: 'center', marginTop: gspace.xl }}>
-            <OtpBoxes ref={boxes} value={value} onChange={onChange} error={error} />
-          </View>
+              <Animated.View
+                style={{ marginTop: gspace.xl, transform: [{ translateX: shake }] }}
+              >
+                <OtpBoxes
+                  ref={boxes}
+                  value={value}
+                  onChange={onChange}
+                  error={error}
+                  boxSize={boxSize}
+                  disabled={busy}
+                />
+              </Animated.View>
 
-          <GlassButton
-            title={submitLabel}
-            kind={submitKind}
-            icon="check"
-            onPress={onSubmit}
-            loading={busy}
-            disabled={!canSubmit}
-            style={{ marginTop: gspace.xl }}
-          />
+              <GlassButton
+                title={submitLabel}
+                kind={submitKind}
+                icon="check"
+                onPress={submit}
+                loading={busy}
+                disabled={!canSubmit}
+                style={{ marginTop: gspace.xl, alignSelf: 'stretch' }}
+              />
+
+              {onResend ? (
+                <ResendFooter wait={wait} disabled={!!busy} onPress={resend} />
+              ) : right ? (
+                <View style={{ marginTop: gspace.lg }}>{right}</View>
+              ) : null}
+            </>
+          )}
         </View>
       </View>
     </Modal>
   );
+}
+
+/** "Didn't receive the code? Resend in 0:30", then a tappable "Resend". */
+function ResendFooter({
+  wait,
+  disabled,
+  onPress,
+}: {
+  wait: number;
+  disabled: boolean;
+  onPress: () => void;
+}) {
+  const ready = wait <= 0;
+  return (
+    <View
+      style={{
+        flexDirection: 'row',
+        flexWrap: 'wrap',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginTop: gspace.lg,
+      }}
+    >
+      <GlassText variant="caption" tone="soft" style={{ fontSize: 13 }}>
+        Didn&rsquo;t receive the code?{' '}
+      </GlassText>
+      {ready ? (
+        <Pressable
+          onPress={onPress}
+          disabled={disabled}
+          accessibilityRole="button"
+          hitSlop={10}
+          style={({ pressed }) => ({ opacity: disabled ? 0.5 : pressed ? 0.6 : 1 })}
+        >
+          <GlassText variant="caption" tone="orange" style={{ fontSize: 13, fontWeight: '700' }}>
+            Resend
+          </GlassText>
+        </Pressable>
+      ) : (
+        <GlassText variant="caption" tone="orange" nums style={{ fontSize: 13 }}>
+          Resend in {clock(wait)}
+        </GlassText>
+      )}
+    </View>
+  );
+}
+
+/** 30 → "0:30", 75 → "1:15". */
+function clock(seconds: number): string {
+  const s = Math.max(0, Math.ceil(seconds));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+
+/** "+968 9123 4521" → "•••• •••• 4521": every digit but the last four hidden. */
+function maskPhone(raw: string | null | undefined): string | null {
+  const digits = (raw ?? '').replace(/\D/g, '');
+  if (digits.length < 4) return null;
+  return `•••• •••• ${digits.slice(-4)}`;
 }

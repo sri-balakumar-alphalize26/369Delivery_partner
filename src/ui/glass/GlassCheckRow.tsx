@@ -12,8 +12,8 @@ import { GlassText } from './GlassText';
  * is how the two lists drift apart — the tickable one grows a padding the plain
  * one does not, and the same parcel reads differently on two screens.
  *
- * Ticking is the rider's own aid and is never sent anywhere: no field on the
- * contract carries it, and Odoo alone decides whether the pickup may proceed.
+ * Ticking is never sent anywhere - no field on the contract carries it - but on
+ * the job screen it does hold Collect back until every line is ticked.
  */
 export function GlassCheckRow({
   name,

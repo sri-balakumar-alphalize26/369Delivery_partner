@@ -28,6 +28,7 @@ const MAP = {
   box: 'cube-outline',
   cash: 'cash-outline',
   compass: 'compass-outline',
+  north: 'caret-up',
   eye: 'eye-outline',
   eyeOff: 'eye-off-outline',
   lock: 'lock-closed-outline',
@@ -40,6 +41,9 @@ const MAP = {
   play: 'play-circle-outline',
   bike: 'bicycle-outline',
   car: 'car-outline',
+  whatsapp: 'logo-whatsapp',
+  close: 'close',
+  offline: 'cloud-offline-outline',
 } as const;
 
 export type GlassIconName = keyof typeof MAP;

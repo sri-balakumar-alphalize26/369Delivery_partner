@@ -1,13 +1,15 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Alert,
+  BackHandler,
   KeyboardAvoidingView,
   Linking,
   Pressable,
   ScrollView,
   useWindowDimensions,
+  Vibration,
   View,
 } from 'react-native';
 import { initialWindowMetrics, useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -15,19 +17,30 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { peekServer } from '../../../src/api/config';
 import { api } from '../../../src/api/endpoints';
 import {
+  enqueue,
+  isQueueable,
+  OutboxEntry,
+  stepLabel,
+  usePendingStep,
+} from '../../../src/api/outbox';
+import { openNavigation, openWhatsApp, whatsappUrl } from '../../../src/lib/navigate';
+import {
   ACTION_LABEL,
   Action,
   ActionResult,
   ApiError,
   DeliveryOrder,
+  DECLINE_REASONS,
   DELIVERY_REASONS,
   headingFor,
   isAtShop,
   PRIMARY_ACTIONS,
+  trackingWanted,
 } from '../../../src/api/types';
 import {
   dueIn,
   money,
+  coords,
   promisedAt,
   routeSummary,
   shopInfo,
@@ -36,10 +49,13 @@ import {
   timeOnly,
 } from '../../../src/lib/format';
 import { useNow } from '../../../src/hooks/useNow';
+import { secondsUntil } from '../../../src/lib/clock';
 import {
   hasLocationPermission,
+  keepTracking,
   startTracking,
   stopTracking,
+  trackedOrderId,
 } from '../../../src/location/tracking';
 import { stopOfferAlert } from '../../../src/hooks/useOfferAlert';
 import { useSession } from '../../../src/store/session';
@@ -59,10 +75,12 @@ import { OtpInput } from '../../../src/ui/OtpInput';
 import { MAP_ENABLED, RouteMap } from '../../../src/ui/RouteMap';
 import { ProofPhoto, proofSent } from '../../../src/ui/ProofPhoto';
 import { currentFix } from '../../../src/location/currentFix';
+import { metresBetween } from '../../../src/lib/routeGeometry';
 import { hasFeature } from '../../../src/api/features';
 import { GlassButton } from '../../../src/ui/glass/GlassButton';
 import { GlassCard } from '../../../src/ui/glass/GlassCard';
 import { GlassCheckRow } from '../../../src/ui/glass/GlassCheckRow';
+import { GlassHeader } from '../../../src/ui/glass/GlassHeader';
 import { GlassIcon, GlassIconName } from '../../../src/ui/glass/GlassIcon';
 import { GlassPill } from '../../../src/ui/glass/GlassPill';
 import { GlassProgress } from '../../../src/ui/glass/GlassProgress';
@@ -88,16 +106,40 @@ import { GlassText } from '../../../src/ui/glass/GlassText';
  */
 
 /**
- * Navigate by written address, always.
+ * Navigate to wherever the rider is heading next: the shop until the parcel is
+ * collected (or while it goes back), the customer after.
  *
- * The backend settled this: nothing in the flow geocodes an address, so
- * `latitude` and `longitude` will always be null — "stop drawing the map and
- * navigate on delivery_address". A coordinate branch here would be dead code
- * pretending to be a fallback.
+ * This always opened the customer's address — including from the button beside
+ * the SHOP's name on the pickup sheet, sending a rider on their way to collect
+ * straight past the shop. The shop's pin is real; customer rows still carry no
+ * coordinates, so they fall back to the written address inside
+ * `openNavigation`.
+ *
+ * The start is filled in too: where the rider is, from the map's own fix; or,
+ * on the way to the customer before a fix arrives, the shop they just left.
+ * With neither, Google Maps uses its own "Your location".
  */
-function navigateTo(order: DeliveryOrder) {
-  const url = `https://maps.google.com/?q=${encodeURIComponent(order.delivery_address)}`;
-  Linking.openURL(url).catch(() => {});
+function navigateTo(
+  order: DeliveryOrder,
+  riderAt: { latitude: number; longitude: number } | null
+) {
+  const shop = shopInfo(order.shop);
+  if (headingFor(order.delivery_status) === 'shop') {
+    void openNavigation({
+      latitude: shop?.latitude,
+      longitude: shop?.longitude,
+      address: shop?.address || shopName(order.shop),
+      origin: riderAt,
+    });
+  } else {
+    const shopAt = coords(shop?.latitude, shop?.longitude);
+    void openNavigation({
+      latitude: order.latitude,
+      longitude: order.longitude,
+      address: order.delivery_address,
+      origin: riderAt ?? shopAt,
+    });
+  }
 }
 
 /**
@@ -118,6 +160,65 @@ const SHEET_MAX_W = 720;
  * does not send a second code that voids the one the shop is holding.
  */
 const shopToldFor = new Set<number>();
+
+/** Arrival prompts already announced with a buzz, per job - once each. */
+const buzzedFor = new Set<string>();
+
+/** How close counts, per prompt: the shop door, the street, the doorstep. */
+const AT_SHOP_M = 150;
+const NEAR_CUSTOMER_M = 300;
+const AT_DOOR_M = 50;
+
+/** Metres as a rider reads them: "650 m", "1.2 km". */
+function distanceText(m: number): string {
+  return m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${Math.round(m / 10) * 10} m`;
+}
+
+/**
+ * One line of the bag check, by what it is as well as where it sits: when the
+ * office edits an order, a tick must not carry over to a different item that
+ * has moved into its place.
+ */
+function tickKey(p: { name: string; quantity: number }, i: number): string {
+  return `${i}|${p.name}|${p.quantity}`;
+}
+
+type ArrivalPrompt = { kind: 'shop' | 'near' | 'door'; metres: number };
+
+/**
+ * Which arrival prompt applies, if any: at the shop with the pickup code due,
+ * close to the customer before "near", at the door before "Reached". Only a
+ * prompt - the rider still taps. GPS wanders by tens of metres, and a wrong
+ * "near" would message the customer for nothing; the big delivery apps gate
+ * these steps on distance but leave the swipe to the rider for the same reason.
+ */
+function arrivalPrompt(
+  order: DeliveryOrder,
+  override: Action[] | null,
+  at: { latitude: number; longitude: number } | null,
+  reachedHere: boolean
+): ArrivalPrompt | null {
+  if (!at) return null;
+  const actions = override ?? order.allowed_actions;
+  const primary = PRIMARY_ACTIONS.find((a) => actions.includes(a)) ?? null;
+  const shop = shopInfo(order.shop);
+  const shopAt = coords(shop?.latitude, shop?.longitude);
+  const customerAt = coords(order.latitude, order.longitude);
+  if (primary === 'verify_pickup_otp' && shopAt) {
+    const m = metresBetween(at, shopAt);
+    return m <= AT_SHOP_M ? { kind: 'shop', metres: m } : null;
+  }
+  if (primary === 'start_delivery' && customerAt) {
+    const m = metresBetween(at, customerAt);
+    return m <= NEAR_CUSTOMER_M ? { kind: 'near', metres: m } : null;
+  }
+  const reached = reachedHere || !!order.reached_customer_on;
+  if (primary === 'verify_delivery_otp' && !reached && customerAt) {
+    const m = metresBetween(at, customerAt);
+    return m <= AT_DOOR_M ? { kind: 'door', metres: m } : null;
+  }
+  return null;
+}
 
 /** Why tracking would not start, in words a rider can act on. */
 const TRACKING_ERROR: Record<
@@ -162,6 +263,12 @@ export default function Job() {
   const [otpError, setOtpError] = useState<string | null>(null);
   /** Set from a 409 so a stale screen re-renders without a reload. */
   const [override, setOverride] = useState<Action[] | null>(null);
+  /**
+   * The deadline of the offer whose time ran out on this screen. A deadline,
+   * not a flag: the same job offered again comes with a new one, and must not
+   * open with its buttons still greyed from the round before.
+   */
+  const [expiredOffer, setExpiredOffer] = useState<string | null>(null);
   /** Seconds left on the server's resend window, counted down locally. */
   const [cooldown, setCooldown] = useState(0);
   /** Which action is waiting on a reason, if any. */
@@ -199,7 +306,15 @@ export default function Job() {
    * before there was any source for these at all.
    */
   const [leg, setLeg] = useState<{ distanceM: number; durationS: number } | null>(null);
-  const [picked, setPicked] = useState<Set<number>>(new Set());
+  /**
+   * Where the phone is: from the job map every few seconds, or on an offer one
+   * fix of its own. Drives the arrival prompts and the offer's distances.
+   */
+  const [riderAt, setRiderAt] = useState<{ latitude: number; longitude: number } | null>(null);
+  /** Lines of the bag check ticked, by `tickKey`. */
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  /** Said once the shop has been told what is missing from the bag. */
+  const [bagNote, setBagNote] = useState<string | null>(null);
   const pickKey = `d369.picklist.${orderId}`;
 
   /**
@@ -233,6 +348,31 @@ export default function Job() {
     };
   }, [reachedKey]);
 
+  /**
+   * A step this job tapped with no signal, waiting in the outbox.
+   *
+   * When a queued "Reached" goes through, `useOutbox` records it under the same
+   * key as a live one; re-read it then, so a rider still standing at the door
+   * sees the code panel open by itself rather than a button asking to send a
+   * code the customer already has.
+   */
+  const pending = usePendingStep(orderId);
+  const pendingBefore = useRef<OutboxEntry | undefined>(undefined);
+  useEffect(() => {
+    const before = pendingBefore.current;
+    pendingBefore.current = pending;
+    if (!before || pending || before.step !== 'reached') return;
+    AsyncStorage.getItem(reachedKey)
+      .then((raw) => {
+        if (!raw) return;
+        setReachedHere(true);
+        setNotice('The customer has been sent their code on WhatsApp.');
+        setOtp('');
+        setCodeOpen(true);
+      })
+      .catch(() => {});
+  }, [pending, reachedKey]);
+
   useEffect(() => {
     if (cooldown <= 0) return;
     const t = setTimeout(() => setCooldown((s) => s - 1), 1000);
@@ -244,7 +384,8 @@ export default function Job() {
     AsyncStorage.getItem(pickKey)
       .then((raw) => {
         if (!live || !raw) return;
-        setPicked(new Set(JSON.parse(raw) as number[]));
+        const saved = JSON.parse(raw) as unknown[];
+        setPicked(new Set(saved.filter((x): x is string => typeof x === 'string')));
       })
       // An unreadable list is an empty one — never a screen that will not open.
       .catch(() => {});
@@ -260,6 +401,27 @@ export default function Job() {
   useEffect(() => stopOfferAlert, []);
 
   /**
+   * Android's back closes the reason picker or the location explainer, not
+   * the job. Both are full-screen early returns rather than modals, so without
+   * this the system back popped the whole job — from one question away from
+   * the door. The code sheet is a Modal and closes itself.
+   */
+  useEffect(() => {
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (reasonFor) {
+        setReasonFor(null);
+        return true;
+      }
+      if (primerFor) {
+        setPrimerFor(null);
+        return true;
+      }
+      return false;
+    });
+    return () => sub.remove();
+  }, [reasonFor, primerFor]);
+
+  /**
    * Expo Router reuses this component from one job to the next, so everything
    * above belongs to whichever job was open last until it is cleared. Without
    * this, the empty `allowed_actions` of a job just delivered blanks out every
@@ -270,6 +432,7 @@ export default function Job() {
   if (shownFor !== orderId) {
     setShownFor(orderId);
     setOverride(null);
+    setExpiredOffer(null);
     setOtp('');
     setError(null);
     setOtpError(null);
@@ -277,6 +440,8 @@ export default function Job() {
     setCodeOpen(false);
     setPicked(new Set());
     setLeg(null);
+    setRiderAt(null);
+    setBagNote(null);
   }
 
   const { data: order, isLoading } = useQuery({
@@ -284,6 +449,41 @@ export default function Job() {
     queryFn: () => api.order(orderId),
     refetchInterval: 15_000,
   });
+
+  /**
+   * A job opened while it is already on the road — the shop dispatched it on
+   * its own screen, or the app restarted mid-trip — picks its reporting back
+   * up. Never asks for permission here; the next step's tap does that, behind
+   * the explainer.
+   */
+  const shouldTrack = !!order && trackingWanted(order.delivery_status, order.tracking);
+  useEffect(() => {
+    if (shouldTrack) void keepTracking(orderId);
+  }, [shouldTrack, orderId]);
+
+  /** An offer has no live map to report from: one fix, for its distances. */
+  const isOffer = order?.delivery_status === 'offered';
+  useEffect(() => {
+    if (!isOffer) return;
+    let live = true;
+    currentFix().then((f) => {
+      if (live && f) setRiderAt({ latitude: f.latitude, longitude: f.longitude });
+    });
+    return () => {
+      live = false;
+    };
+  }, [isOffer, orderId]);
+
+  /** The arrival prompt now showing, if any; it buzzes once when it first does. */
+  const prompt = order ? arrivalPrompt(order, override, riderAt, reachedHere) : null;
+  const promptKind = prompt?.kind ?? null;
+  useEffect(() => {
+    if (!promptKind) return;
+    const key = `${orderId}:${promptKind}`;
+    if (buzzedFor.has(key)) return;
+    buzzedFor.add(key);
+    Vibration.vibrate(300);
+  }, [promptKind, orderId]);
 
   if (isLoading) {
     return (
@@ -340,16 +540,48 @@ export default function Job() {
   const collecting = primary === 'verify_pickup_otp';
 
   /**
+   * Every line ticked, or nothing to tick. Collect waits for it: these are
+   * mostly high-value electronics, and a bag that leaves the counter short is
+   * a second trip and an unhappy customer. It can never strand a job - the
+   * shop can still press Dispatch on its own screen, and the job then arrives
+   * here already collected.
+   */
+  const products = order.products ?? [];
+  const unticked = products.filter((p, i) => !picked.has(tickKey(p, i)));
+  const allChecked = unticked.length === 0;
+
+  /** One tap to tell the shop exactly what is not in the bag. */
+  function reportMissing() {
+    const list = unticked.map((p) => `${p.name} x${p.quantity}`).join('; ');
+    Alert.alert(
+      'Tell the shop these are missing?',
+      unticked.map((p) => `• ${p.name} ×${p.quantity}`).join('\n'),
+      [
+        { text: 'Look again', style: 'cancel' },
+        {
+          text: 'Tell the shop',
+          onPress: () =>
+            void fire('report_issue', `item_missing: ${list}`).then(() =>
+              setBagNote(
+                'The shop has been told. Wait for them to hand it over and tick it, or for the office to change the order.'
+              )
+            ),
+        },
+      ]
+    );
+  }
+
+  /**
    * Tick one item off.
    *
-   * Never sent anywhere, and deliberately never gates the button below: Odoo
-   * decides whether the pickup may go ahead, and a checklist able to block a
-   * server-permitted action would be the app inventing workflow of its own.
+   * Never sent anywhere. It does hold Collect back until every line is ticked
+   * (see `allChecked`) - the owner's call for high-value stock - and the
+   * shop's own Dispatch stays the way round it.
    */
-  function togglePicked(i: number) {
+  function togglePicked(key: string) {
     const next = new Set(picked);
-    if (next.has(i)) next.delete(i);
-    else next.add(i);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
     setPicked(next);
     AsyncStorage.setItem(pickKey, JSON.stringify([...next])).catch(() => {});
   }
@@ -359,14 +591,16 @@ export default function Job() {
     setOverride(res.allowed_actions);
     setOtp('');
 
-    if (res.tracking?.enabled) {
-      // The ONLY place tracking may start. Sending GPS before this is forbidden.
+    // From Accept until Delivered the customer's map follows this phone. A
+    // reply saying nothing about either (a code request) changes nothing.
+    const says = res.tracking !== undefined || !!res.status;
+    if (says && trackingWanted(res.status, res.tracking)) {
       const started = await startTracking(orderId);
       // One message per cause. This was a single sentence about Settings, which
       // was wrong advice for a rider whose permissions were fine and whose
       // location switch was simply off.
       if (!started.ok) setError(TRACKING_ERROR[started.reason]);
-    } else {
+    } else if (says && trackedOrderId() === orderId) {
       await stopTracking();
     }
 
@@ -389,25 +623,21 @@ export default function Job() {
     // The rider is dealing with the job, so whatever is buzzing can stop.
     stopOfferAlert();
 
-    if (action === 'return_to_shop' || action === 'report_issue') {
-      setError(null);
-      setOtpError(null);
-      setReasonNote('');
-      setReasonFor(action);
+    // One step at a time: the next one is only possible once Odoo has heard
+    // the one still waiting, and its buttons come from the answer to it.
+    if (pending) {
+      setError(`Still waiting for signal to send "${stepLabel(pending.step)}".`);
       return;
     }
 
     // Declining cannot be undone — the job goes to someone else and is never
-    // offered back — so it asks first. A stray tap beside Accept is easy.
-    if (action === 'decline') {
-      Alert.alert(
-        'Decline this job?',
-        'It will be offered to another rider, and not to you again.',
-        [
-          { text: 'Keep it', style: 'cancel' },
-          { text: 'Decline', style: 'destructive', onPress: () => void fire('decline') },
-        ]
-      );
+    // offered back — so it too goes through the reason screen, whose "Never
+    // mind" is the way out of a stray tap beside Accept.
+    if (action === 'return_to_shop' || action === 'report_issue' || action === 'decline') {
+      setError(null);
+      setOtpError(null);
+      setReasonNote('');
+      setReasonFor(action);
       return;
     }
 
@@ -445,7 +675,7 @@ export default function Job() {
           res = await api.accept(orderId);
           break;
         case 'decline':
-          res = await api.decline(orderId);
+          res = await api.decline(orderId, reason);
           break;
         case 'verify_pickup_otp':
           res = await api.verifyPickupOtp(orderId, otp);
@@ -457,11 +687,16 @@ export default function Job() {
             try {
               res = await api.dispatch(orderId);
             } catch (err) {
-              setError(
-                err instanceof ApiError
-                  ? err.message
-                  : 'Code accepted. Tap "Collected – leaving the shop" to carry on.'
-              );
+              if (err instanceof ApiError && err.code === 'network') {
+                // The code is accepted; "Collected" goes by itself with the signal.
+                await enqueue(orderId, 'dispatch');
+              } else {
+                setError(
+                  err instanceof ApiError
+                    ? err.message
+                    : 'Code accepted. Tap "Collected – leaving the shop" to carry on.'
+                );
+              }
             }
           }
           break;
@@ -501,7 +736,23 @@ export default function Job() {
       setNotice(null);
       await applyResult(res);
     } catch (err) {
-      if (err instanceof ApiError) {
+      if (err instanceof ApiError && err.code === 'network' && isQueueable(action)) {
+        // No signal: the step waits in the outbox and goes by itself later.
+        // The banner under the job says so; nothing here is an error.
+        await enqueue(orderId, action, reason);
+        setCodeOpen(false);
+      } else if (
+        err instanceof ApiError &&
+        (action === 'accept' || action === 'decline') &&
+        (err.code === 'offer_expired' || err.code === 'not_found')
+      ) {
+        // Too late: the time ran out and the next rider has it. Nothing here
+        // is this rider's any more.
+        stopOfferAlert();
+        await qc.invalidateQueries({ queryKey: ['orders'] });
+        Alert.alert('Offer expired', 'It went to another rider.');
+        router.replace('/');
+      } else if (err instanceof ApiError) {
         // Their message is written for riders — never replace it.
         if (err.code === 'bad_otp') {
           setOtpError(err.message);
@@ -567,7 +818,10 @@ export default function Job() {
       setOtp('');
       setCodeOpen(true);
     } catch (err) {
-      if (err instanceof ApiError) {
+      if (err instanceof ApiError && err.code === 'network') {
+        // Sent by the outbox once there is signal; the code panel opens then.
+        await enqueue(orderId, 'reached');
+      } else if (err instanceof ApiError) {
         setError(err.message);
         if (err.allowedActions) setOverride(err.allowedActions);
       } else {
@@ -642,6 +896,11 @@ export default function Job() {
   };
   const callCustomer = () => dial(order.customer_mobile);
   const callShop = () => dial(shopPhone(order.shop));
+  // The orders arrive over WhatsApp, so it is the channel both already use.
+  const canMessageCustomer = !!whatsappUrl(order.customer_mobile);
+  const canMessageShop = !!whatsappUrl(shopPhone(order.shop));
+  const messageCustomer = () => openWhatsApp(order.customer_mobile);
+  const messageShop = () => openWhatsApp(shopPhone(order.shop));
 
   /** Set on Connect. With no number the link is not drawn at all. */
   const supportNumber = peekServer().supportPhone;
@@ -682,6 +941,10 @@ export default function Job() {
    * ----------------------------------------------------------------- */
   if (reasonFor) {
     const returning = reasonFor === 'return_to_shop';
+    const declining = reasonFor === 'decline';
+    const reasons: readonly { code: string; label: string }[] = declining
+      ? DECLINE_REASONS
+      : DELIVERY_REASONS;
     return (
       <GlassScreen>
         <ScrollView
@@ -693,16 +956,22 @@ export default function Job() {
           keyboardShouldPersistTaps="handled"
         >
           <GlassText variant="title">
-            {returning ? 'Why are you returning it?' : 'What is the problem?'}
+            {declining
+              ? 'Why decline this job?'
+              : returning
+                ? 'Why are you returning it?'
+                : 'What is the problem?'}
           </GlassText>
           <GlassText variant="body" tone="soft" style={{ marginTop: gspace.sm }}>
-            {returning
-              ? 'The shop closes the return. This tells them what happened.'
-              : 'This is logged against the job. It does not change anything you can do.'}
+            {declining
+              ? 'It goes to the next rider at once, and is not offered to you again.'
+              : returning
+                ? 'The shop closes the return. This tells them what happened.'
+                : 'This is logged against the job. It does not change anything you can do.'}
           </GlassText>
 
           <View style={{ marginTop: gspace.xl, gap: gspace.sm }}>
-            {DELIVERY_REASONS.map((r) => (
+            {reasons.map((r) => (
               <Pressable
                 key={r.code}
                 disabled={busy}
@@ -757,6 +1026,18 @@ export default function Job() {
             </View>
           ) : null}
 
+          {/* A reason helps the shop choose who to call next, but it is the
+              rider's to give: the decline itself never waits on one. */}
+          {declining ? (
+            <GhostLink
+              label="Decline without a reason"
+              disabled={busy}
+              onPress={() => {
+                setReasonFor(null);
+                void fire('decline', '');
+              }}
+            />
+          ) : null}
           <GhostLink
             label="Never mind"
             disabled={busy}
@@ -773,39 +1054,121 @@ export default function Job() {
   /* ----------------------------------------------------------------- *
    * Offer — not accepted yet.
    *
-   * No Decline button: the contract gives `offered` only `accept`, so a rider
-   * cannot refuse a job, and there is no expiry to count down. The template's
-   * timer pill, "You earn", distance and estimated time are all dropped for
-   * the same reason — no field exists behind any of them.
+   * One rider at a time, against the clock: Accept or Decline before
+   * `offer_expires_at`, or the server calls the next rider. Decline comes
+   * from `allowed_actions` like every other button. The template's "You
+   * earn", distance and estimated time are still dropped — no field exists
+   * behind any of them.
    * ----------------------------------------------------------------- */
   if (primary === 'accept') {
+    const offerGone = !!order.offer_expires_at && expiredOffer === order.offer_expires_at;
+    const expireOffer = () => {
+      setExpiredOffer(order.offer_expires_at ?? null);
+      stopOfferAlert();
+      void qc.invalidateQueries({ queryKey: ['orders'] });
+      void qc.invalidateQueries({ queryKey: ['order', orderId] });
+    };
+    const offerShop = shopInfo(order.shop);
+    const offerShopAt = coords(offerShop?.latitude, offerShop?.longitude);
+    const offerCustomerAt = coords(order.latitude, order.longitude);
+    // As the crow flies, said with "≈": a quick sense of the trip before the
+    // road route has loaded, and the only one when it cannot load.
+    const trip = [
+      riderAt && offerShopAt ? `${distanceText(metresBetween(riderAt, offerShopAt))} to the shop` : null,
+      offerShopAt && offerCustomerAt
+        ? `${distanceText(metresBetween(offerShopAt, offerCustomerAt))} shop → customer`
+        : null,
+      !offerShopAt && riderAt && offerCustomerAt
+        ? `${distanceText(metresBetween(riderAt, offerCustomerAt))} to the customer`
+        : null,
+    ]
+      .filter(Boolean)
+      .join('  ·  ');
+    const itemCount = order.products?.reduce((n, p) => n + (p.quantity || 1), 0) ?? 0;
     return (
       <GlassScreen>
+        {/* The same band and back button as Orders, Earnings and a past job,
+            so the offer does not arrive looking like a different app. */}
+        <GlassHeader
+          title="New job offer"
+          onBack={() => router.back()}
+          right={<GlassPill label={band.label} bg={band.bg} fg={band.fg} />}
+        />
         <ScrollView
           contentContainerStyle={{
-            paddingTop: insets.top + gspace.md,
             paddingHorizontal: gspace.xl,
             paddingBottom: gspace.xxxl + bottomInset,
           }}
         >
-          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
-            <RoundButton icon="chev" mirrored onPress={() => router.back()} />
-            <GlassText variant="label" tone="orange" upper style={{ marginLeft: gspace.md }}>
-              New job offer
-            </GlassText>
-          </View>
-
-          <GlassText variant="hero" style={{ marginTop: gspace.lg }} numberOfLines={2}>
+          <GlassText variant="hero" numberOfLines={2}>
             {shopName(order.shop)} → {order.customer_name}
           </GlassText>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: gspace.sm, marginTop: gspace.xs }}>
+            <GlassText variant="caption" tone="soft" nums>
+              {order.delivery_order_name}
+              {order.job_code ? ` · ${order.job_code}` : ''}
+            </GlassText>
+            {order.delivery_type ? <GlassPill label={order.delivery_type} tone="soft" /> : null}
+          </View>
 
-          <GlassCard style={{ marginTop: gspace.xl }}>
+          {/* What a rider weighs an offer on, in one glance: the money, the
+              load, and the clock. All three ship on the offer already. */}
+          <View style={{ flexDirection: 'row', gap: gspace.md, marginTop: gspace.lg }}>
+            <Tile
+              label={cod ? 'Collect cash' : 'Payment'}
+              value={cod ? money(order.amount_to_collect, order.currency) : 'Paid'}
+              tone={cod ? glass.red : glass.green}
+            />
+            <Tile label="Items" value={String(itemCount || order.products?.length || '—')} />
+            <Tile
+              label="Due"
+              value={due?.text ?? '—'}
+              tone={due?.late ? glass.red : undefined}
+            />
+          </View>
+
+          {/* Where the shop is from here. The shop's pin is real on the live
+              server even while customer rows carry none; `heading` resolves to
+              the shop for an offer, so the line drawn is the ride to collect. */}
+          {trip ? (
+            <GlassText variant="bodyStrong" tone="indigo" nums style={{ marginTop: gspace.md }}>
+              ≈ {trip}
+            </GlassText>
+          ) : null}
+
+          {MAP_ENABLED && (offerShopAt || offerCustomerAt) ? (
+            <GlassCard padding={0} style={{ marginTop: gspace.lg, overflow: 'hidden' }}>
+              <RouteMap
+                latitude={order.latitude}
+                longitude={order.longitude}
+                shopLatitude={offerShop?.latitude ?? null}
+                shopLongitude={offerShop?.longitude ?? null}
+                heading={headingFor(order.delivery_status)}
+                onRoute={setLeg}
+                onRiderMove={setRiderAt}
+                height={Math.round(screenH * 0.26)}
+              />
+            </GlassCard>
+          ) : null}
+
+          <GlassCard style={{ marginTop: gspace.lg }}>
             <GlassText variant="label" tone="soft" upper>
               Pick up from
             </GlassText>
             <GlassText variant="bodyStrong" style={{ marginTop: gspace.xs }}>
-              {shopName(order.shop)}
+              {shopName(order.shop) || 'Shop not recorded'}
             </GlassText>
+            {offerShop?.address ? (
+              <GlassText variant="caption" tone="soft" style={{ marginTop: 2 }}>
+                {offerShop.address}
+              </GlassText>
+            ) : null}
+            {/* By road, from the route the map drew; absent until it has one. */}
+            {leg && leg.distanceM > 0 ? (
+              <GlassText variant="caption" tone="indigo" nums style={{ marginTop: gspace.xs }}>
+                {routeSummary(leg.distanceM, leg.durationS)} from here
+              </GlassText>
+            ) : null}
             {/* The counter has already packed it: the parcel is waiting, not
                 being got ready. */}
             {packedAt ? (
@@ -838,27 +1201,47 @@ export default function Job() {
             ) : null}
           </GlassCard>
 
-          <View style={{ alignItems: 'center', marginTop: gspace.xxl }}>
-            {cod ? (
-              <>
-                <GlassText variant="body" tone="soft">
-                  Cash to collect from customer
-                </GlassText>
-                <GlassText variant="amount" nums style={{ marginTop: gspace.xs }}>
-                  {money(order.amount_to_collect, order.currency)}
-                </GlassText>
-              </>
-            ) : (
-              <GlassText variant="subtitle" tone="green">
-                Already paid — collect nothing
+          {/* What is in the bag. Products ship on the list since N2; older
+              servers send only the one-line summary. */}
+          {order.products?.length || order.items_summary ? (
+            <GlassCard style={{ marginTop: gspace.lg }}>
+              <GlassText variant="label" tone="soft" upper>
+                Items
               </GlassText>
-            )}
-          </View>
+              {order.products?.length ? (
+                order.products.map((p, i) => (
+                  <View
+                    key={`${p.name}-${i}`}
+                    style={{ flexDirection: 'row', marginTop: i === 0 ? gspace.sm : gspace.xs }}
+                  >
+                    <GlassText variant="body" style={{ flex: 1, paddingRight: gspace.md }}>
+                      {p.name}
+                    </GlassText>
+                    <GlassText variant="bodyStrong" nums>
+                      ×{p.quantity}
+                      {p.uom ? ` ${p.uom}` : ''}
+                    </GlassText>
+                  </View>
+                ))
+              ) : (
+                <GlassText variant="body" style={{ marginTop: gspace.sm }}>
+                  {order.items_summary}
+                </GlassText>
+              )}
+            </GlassCard>
+          ) : null}
 
           {error ? (
             <GlassText variant="bodyStrong" tone="red" style={{ marginTop: gspace.lg }}>
               {error}
             </GlassText>
+          ) : null}
+          {pending ? <PendingLine entry={pending} /> : null}
+
+          {order.offer_expires_at ? (
+            <View style={{ alignItems: 'center', marginTop: gspace.xxl }}>
+              <OfferCountdown expiresAt={order.offer_expires_at} onExpired={expireOffer} />
+            </View>
           ) : null}
 
           <GlassButton
@@ -867,7 +1250,8 @@ export default function Job() {
             icon="check"
             onPress={() => run(primary)}
             loading={busy}
-            style={{ marginTop: gspace.xxl }}
+            disabled={offerGone}
+            style={{ marginTop: order.offer_expires_at ? gspace.lg : gspace.xxl }}
           />
 
           {/* Side by side rather than stacked. Full-width one under another,
@@ -881,7 +1265,12 @@ export default function Job() {
             }}
           >
             {secondary.map((a) => (
-              <GhostLink key={a} label={ACTION_LABEL[a]} onPress={() => run(a)} disabled={busy} />
+              <GhostLink
+                key={a}
+                label={ACTION_LABEL[a]}
+                onPress={() => run(a)}
+                disabled={busy || offerGone}
+              />
             ))}
             {/* Last, and only when a number is configured. A rider reaches for
                 this when the job itself has stopped working. */}
@@ -933,6 +1322,7 @@ export default function Job() {
           shopLongitude={shopInfo(order.shop)?.longitude ?? null}
           heading={headingFor(order.delivery_status)}
           onRoute={setLeg}
+                onRiderMove={setRiderAt}
           height={Math.round(screenH * 0.32)}
         />
 
@@ -978,7 +1368,7 @@ export default function Job() {
                 title="Navigate"
                 kind="dark"
                 icon="nav"
-                onPress={() => navigateTo(order)}
+                onPress={() => navigateTo(order, riderAt)}
                 style={{ flex: 1 }}
               />
               <GlassButton
@@ -988,6 +1378,7 @@ export default function Job() {
                 onPress={callCustomer}
                 style={{ flex: 1 }}
               />
+              {canMessageCustomer ? <WhatsAppSquare onPress={messageCustomer} /> : null}
             </View>
           </GlassCard>
 
@@ -1034,8 +1425,9 @@ export default function Job() {
               end up looking like different controls. */}
           <CodeSheet
             visible={codeOpen && primary === 'verify_delivery_otp'}
-            title="Delivery code"
+            title="Enter the customer's code"
             hint={notice ?? 'Ask the customer for the 6-digit code Odoo sent them on WhatsApp.'}
+            sentTo={order.customer_mobile}
             value={otp}
             onChange={setOtp}
             error={otpError}
@@ -1045,19 +1437,18 @@ export default function Job() {
             submitKind="green"
             onSubmit={() => run('verify_delivery_otp')}
             onClose={() => setCodeOpen(false)}
-            right={
-              <ResendLink
-                label="Send the customer a new code"
-                disabled={busy}
-                onPress={resendCustomerCode}
-              />
-            }
+            onResend={resendCustomerCode}
           />
 
           {error ? (
             <GlassText variant="bodyStrong" tone="red" style={{ marginTop: gspace.lg }}>
               {error}
             </GlassText>
+          ) : null}
+          {pending ? <PendingLine entry={pending} /> : null}
+
+          {prompt?.kind === 'door' ? (
+            <ArrivalBanner text="You're at the door. Send the customer their code." />
           ) : null}
 
           {/* At the door first: Odoo sends the customer their code only now,
@@ -1122,6 +1513,10 @@ export default function Job() {
    * `RouteMap` returns null with no style URL configured, and the sheet then
    * takes the whole screen exactly as it did before.
    * ----------------------------------------------------------------- */
+  // The sheet leads with whoever the rider is on the way to, and only they get
+  // buttons. Both ends had their own call and WhatsApp before, so a collected
+  // job showed two sets, with Navigate beside a shop it no longer went to.
+  const toCustomer = headingFor(order.delivery_status) === 'customer';
   return (
     <GlassScreen>
       {/* The shop is an object since N2 but a bare string on older captures,
@@ -1133,6 +1528,7 @@ export default function Job() {
         shopLongitude={shopInfo(order.shop)?.longitude ?? null}
         heading={headingFor(order.delivery_status)}
         onRoute={setLeg}
+                onRiderMove={setRiderAt}
         /* Smaller at the counter: a rider entering the pickup code is standing
            at the shop, so a map half the screen tall is showing them where they
            already are. */
@@ -1217,16 +1613,28 @@ export default function Job() {
                 Order {order.delivery_order_name}
               </GlassText>
               <GlassText variant="title" style={{ marginTop: 2 }} numberOfLines={1}>
-                {shopName(order.shop)}
+                {toCustomer ? order.customer_name : shopName(order.shop)}
               </GlassText>
+              {toCustomer && order.delivery_address ? (
+                <GlassText variant="caption" tone="soft" style={{ marginTop: 2 }} numberOfLines={2}>
+                  {order.delivery_address}
+                </GlassText>
+              ) : null}
             </View>
             <View style={{ flexDirection: 'row', gap: gspace.sm }}>
-              <RoundButton icon="phone" onPress={callShop} />
-              <RoundButton icon="nav" filled onPress={() => navigateTo(order)} />
+              <RoundButton icon="phone" onPress={toCustomer ? callCustomer : callShop} />
+              {(toCustomer ? canMessageCustomer : canMessageShop) ? (
+                <RoundButton
+                  icon="whatsapp"
+                  onPress={toCustomer ? messageCustomer : messageShop}
+                />
+              ) : null}
+              <RoundButton icon="nav" filled onPress={() => navigateTo(order, riderAt)} />
             </View>
           </View>
 
-          {/* Where the parcel goes once the shop is done. */}
+          {/* The other end of the job, as a plain line: where the parcel goes
+              next, or where it came from. */}
           <View
             style={{
               flexDirection: 'row',
@@ -1239,9 +1647,15 @@ export default function Job() {
               marginTop: gspace.lg,
             }}
           >
-            <GlassIcon name="pin" color={glass.orange} size={18} />
+            <GlassIcon
+              name={toCustomer ? 'store' : 'pin'}
+              color={toCustomer ? glass.inkSoft : glass.orange}
+              size={18}
+            />
             <GlassText variant="body" style={{ flex: 1, marginLeft: gspace.sm }} numberOfLines={2}>
-              Then: {order.customer_name} · {order.delivery_address}
+              {toCustomer
+                ? `From: ${shopName(order.shop) || 'the shop'}`
+                : `Then: ${order.customer_name} · ${order.delivery_address}`}
             </GlassText>
           </View>
 
@@ -1290,9 +1704,20 @@ export default function Job() {
                     Check the bag
                   </GlassText>
                   <GlassText variant="caption" tone="soft" nums>
-                    {picked.size} of {order.products.length}
+                    {products.length - unticked.length} of {products.length}
                   </GlassText>
                 </View>
+              ) : null}
+              {collecting ? (
+                <GlassText
+                  variant="caption"
+                  tone={allChecked ? 'green' : 'orange'}
+                  style={{ marginBottom: gspace.xs }}
+                >
+                  {allChecked
+                    ? `All ${products.length} checked - ready to collect.`
+                    : 'Tick each item once it is in the bag.'}
+                </GlassText>
               ) : null}
 
               {order.products.map((p, i) => (
@@ -1300,18 +1725,32 @@ export default function Job() {
                   key={`${p.name}-${i}`}
                   name={p.name}
                   quantity={p.quantity}
-                  checked={collecting && picked.has(i)}
-                  onToggle={collecting ? () => togglePicked(i) : undefined}
+                  checked={collecting && picked.has(tickKey(p, i))}
+                  onToggle={collecting ? () => togglePicked(tickKey(p, i)) : undefined}
                 />
               ))}
             </View>
+          ) : null}
+
+          {prompt?.kind === 'shop' ? (
+            <ArrivalBanner
+              text={
+                allChecked
+                  ? "You're at the shop. Ask the counter for the pickup code."
+                  : "You're at the shop. Check the bag, then enter the pickup code."
+              }
+            />
+          ) : prompt?.kind === 'near' ? (
+            <ArrivalBanner
+              text={`About ${distanceText(prompt.metres)} from the customer. Tap "I am near the customer" so they get ready.`}
+            />
           ) : null}
 
           {/* The code has its own panel now. See src/ui/CodeSheet.tsx for why it
               stopped living at the foot of this sheet, under everything else. */}
           <CodeSheet
             visible={codeOpen && primary === 'verify_pickup_otp'}
-            title="Pickup code"
+            title="Enter the pickup code"
             hint={
               notice ?? 'The shop staff will read this out when they hand the parcel over.'
             }
@@ -1321,17 +1760,13 @@ export default function Job() {
             busy={busy}
             canSubmit={otp.length === 6}
             submitLabel={ACTION_LABEL.verify_pickup_otp}
-            onSubmit={() => run('verify_pickup_otp')}
-            onClose={() => setCodeOpen(false)}
-            right={
-              <ResendLink
-                label={
-                  cooldown > 0 ? `Ask the shop for a code (${cooldown}s)` : 'Ask the shop for a code'
-                }
-                disabled={busy || cooldown > 0}
-                onPress={requestOtp}
-              />
+            onSubmit={() =>
+              allChecked ? run('verify_pickup_otp') : setOtpError('Tick every item in the bag first.')
             }
+            onClose={() => setCodeOpen(false)}
+            // The shop's own wait, from the server, rather than the card's 30s.
+            onResend={requestOtp}
+            resendIn={cooldown}
           />
 
           {error ? (
@@ -1339,6 +1774,7 @@ export default function Job() {
               {error}
             </GlassText>
           ) : null}
+          {pending ? <PendingLine entry={pending} /> : null}
 
           {/* Only what Odoo permits, in the order Odoo permits it. */}
           {primary ? (
@@ -1348,6 +1784,7 @@ export default function Job() {
               icon="check"
               onPress={() => (needsOtp ? openCode() : run(primary))}
               loading={busy}
+              disabled={collecting && !allChecked}
               style={{ marginTop: gspace.xl }}
             />
           ) : (
@@ -1363,6 +1800,15 @@ export default function Job() {
                   : 'This job is finished. Nothing left to do.'}
             </GlassText>
           )}
+
+          {collecting && !allChecked && actions.includes('report_issue') ? (
+            <GhostLink label="Item missing? Tell the shop" onPress={reportMissing} disabled={busy} />
+          ) : null}
+          {collecting && bagNote ? (
+            <GlassText variant="body" tone="soft" style={{ marginTop: gspace.sm, textAlign: 'center' }}>
+              {bagNote}
+            </GlassText>
+          ) : null}
 
           {/* Side by side rather than stacked. Full-width one under another,
               they read as three primary actions competing with the real one. */}
@@ -1387,6 +1833,73 @@ export default function Job() {
       </ScrollView>
       </KeyboardAvoidingView>
     </GlassScreen>
+  );
+}
+
+/**
+ * "You're at the shop" and its kin: a nudge when the phone is close enough,
+ * never a step taken for the rider (see `arrivalPrompt`).
+ */
+function ArrivalBanner({ text }: { text: string }) {
+  return (
+    <View
+      style={{
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginTop: gspace.lg,
+        paddingVertical: gspace.md,
+        paddingHorizontal: gspace.lg,
+        borderRadius: gradius.card,
+        backgroundColor: glass.greenSoft,
+        borderWidth: 1,
+        borderColor: glass.green,
+      }}
+    >
+      <GlassIcon name="pin" color={glass.green} size={18} />
+      <GlassText variant="bodyStrong" tone="green" style={{ flex: 1, marginLeft: gspace.sm }}>
+        {text}
+      </GlassText>
+    </View>
+  );
+}
+
+/**
+ * "Accept within 0:42", counted once a second against the server's clock.
+ *
+ * Its own component so the per-second tick redraws one line rather than the
+ * whole job screen and its map. Says so once the time is up, and tells the
+ * screen, which greys the buttons out and lets the next poll take the job away.
+ */
+function OfferCountdown({
+  expiresAt,
+  onExpired,
+}: {
+  expiresAt: string;
+  onExpired: () => void;
+}) {
+  const now = useNow(1000);
+  const left = secondsUntil(expiresAt, now);
+  const gone = left === 0;
+
+  useEffect(() => {
+    if (gone) onExpired();
+    // Once, when the time runs out — not again on every re-render after.
+  }, [gone]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  if (left === null) return null;
+  if (gone) {
+    return (
+      <GlassText variant="bodyStrong" tone="red">
+        Offer expired – it went to another rider.
+      </GlassText>
+    );
+  }
+  const mins = Math.floor(left / 60);
+  const secs = String(left % 60).padStart(2, '0');
+  return (
+    <GlassText variant="title" tone={left <= 10 ? 'red' : 'orange'} nums>
+      Accept within {mins}:{secs}
+    </GlassText>
   );
 }
 
@@ -1419,36 +1932,6 @@ function Tile({ label, value, tone }: { label: string; value: string; tone?: str
 }
 
 /** A quiet secondary action, as the template draws them. */
-/**
- * The resend, sized to sit on a label row rather than stand on its own line.
- *
- * `GhostLink` pads itself out to a full-width tap target, which is right for a
- * secondary action at the foot of a screen and wrong beside a heading.
- */
-function ResendLink({
-  label,
-  onPress,
-  disabled,
-}: {
-  label: string;
-  onPress: () => void;
-  disabled?: boolean;
-}) {
-  return (
-    <Pressable
-      onPress={onPress}
-      disabled={disabled}
-      accessibilityRole="button"
-      hitSlop={8}
-      style={({ pressed }) => ({ opacity: disabled ? 0.4 : pressed ? 0.6 : 1 })}
-    >
-      <GlassText variant="caption" tone="orange" nums>
-        {label}
-      </GlassText>
-    </Pressable>
-  );
-}
-
 function GhostLink({
   label,
   onPress,
@@ -1477,6 +1960,58 @@ function GhostLink({
 }
 
 /** Circular glass button — back, call, navigate. */
+/** WhatsApp's own green: riders find it by colour before they read it. */
+const WHATSAPP_GREEN = '#25D366';
+
+/** Square, so it sits beside the Navigate and Call buttons without a label. */
+function WhatsAppSquare({ onPress }: { onPress: () => void }) {
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="button"
+      accessibilityLabel="Message on WhatsApp"
+      style={({ pressed }) => ({
+        width: 52,
+        height: 52,
+        borderRadius: gradius.button,
+        borderWidth: 1,
+        borderColor: glass.border,
+        backgroundColor: glass.white,
+        alignItems: 'center',
+        justifyContent: 'center',
+        opacity: pressed ? 0.85 : 1,
+      })}
+    >
+      <GlassIcon name="whatsapp" size={24} color={WHATSAPP_GREEN} />
+    </Pressable>
+  );
+}
+
+/** A step tapped with no signal, and the promise that it will go by itself. */
+function PendingLine({ entry }: { entry: OutboxEntry }) {
+  return (
+    <View
+      accessibilityRole="alert"
+      style={{
+        flexDirection: 'row',
+        alignItems: 'flex-start',
+        backgroundColor: glass.fill,
+        borderRadius: gradius.chip,
+        borderWidth: 1,
+        borderColor: glass.border,
+        padding: gspace.md,
+        marginTop: gspace.lg,
+      }}
+    >
+      <GlassIcon name="offline" size={18} color={glass.inkSoft} style={{ marginTop: 1 }} />
+      <GlassText variant="body" tone="soft" style={{ flex: 1, marginLeft: gspace.sm }}>
+        No signal. &ldquo;{stepLabel(entry.step)}&rdquo; will send by itself when you&rsquo;re
+        back online.
+      </GlassText>
+    </View>
+  );
+}
+
 function RoundButton({
   icon,
   onPress,

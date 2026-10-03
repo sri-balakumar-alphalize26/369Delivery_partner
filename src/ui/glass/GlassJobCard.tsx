@@ -4,6 +4,7 @@ import { DeliveryOrder, isAtShop } from '../../api/types';
 import { dueIn, money, shopInfo, shopName } from '../../lib/format';
 import { useNow } from '../../hooks/useNow';
 import { useJobDistance } from '../../hooks/useJobDistance';
+import { usePendingStep } from '../../api/outbox';
 import { GlassBarState, glass, glassBand, gspace } from '../../theme/glass';
 import { GlassButton } from './GlassButton';
 import { GlassCard } from './GlassCard';
@@ -48,6 +49,8 @@ export function GlassJobCard({
 
   /** How far this job is by road. Null until it resolves, and null without coordinates. */
   const metres = useJobDistance(job);
+
+  const waiting = !!usePendingStep(job.delivery_order_id);
 
   /** Only the object form carries an image; older captures send a bare string. */
   const logo = shopInfo(job.shop)?.image_url ?? null;
@@ -114,6 +117,8 @@ export function GlassJobCard({
           {job.delivery_type ? (
             <GlassPill label={job.delivery_type} tone="soft" />
           ) : null}
+          {/* A step tapped with no signal; it goes by itself once there is one. */}
+          {waiting ? <GlassPill label="WAITING FOR SIGNAL" tone="soft" /> : null}
         </View>
       </View>
 

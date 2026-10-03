@@ -90,7 +90,10 @@ const RIDER_W = 27;
  * pointing. A square box has the same bounds at every angle, so the anchor
  * cannot move. The scooter is centred inside it.
  */
-const RIDER_BOX = RIDER_H;
+export const RIDER_BOX = RIDER_H;
+
+/** Street level: close enough to read the turn, wide enough to see the next. */
+const FOLLOW_ZOOM = 16;
 
 /** Re-split the polyline every 25 metres rather than every frame. */
 const SPLIT_GRAIN_M = 25;
@@ -104,6 +107,7 @@ export function RouteMapView({
   height,
   style,
   onRoute,
+  onRiderMove,
 }: {
   latitude: number | null | undefined;
   longitude: number | null | undefined;
@@ -113,8 +117,13 @@ export function RouteMapView({
   heading: 'shop' | 'customer';
   height: number;
   style?: ViewStyle;
-  /** Real distance and time, once a route is in hand. Null when there is none. */
+  /**
+   * What is LEFT of the route, as the rider moves along it - so an ETA under
+   * the map counts down instead of quoting the whole trip. Null with no route.
+   */
   onRoute?: (summary: { distanceM: number; durationS: number } | null) => void;
+  /** Where the phone is, every few seconds - for the screen's arrival prompts. */
+  onRiderMove?: (at: LatLng) => void;
 }) {
   const map = useRef<MapView>(null);
 
@@ -261,10 +270,6 @@ export function RouteMapView({
    */
   }, [legKey, target, riderFound, refetchTick]);
 
-  /** Hand the real distance and time up, so the screen can show an honest ETA. */
-  useEffect(() => {
-    onRoute?.(route ? { distanceM: route.distanceM, durationS: route.durationS } : null);
-  }, [route, onRoute]);
 
   /* ----------------------------------------------------------------- *
    * Moving the rider.
@@ -338,6 +343,29 @@ export function RouteMapView({
    * second for a difference nobody can see.
    */
   const grain = Math.round(along / SPLIT_GRAIN_M);
+
+  /**
+   * Hand up what is left of the route, re-read every 25 m rather than every
+   * frame. The road distance and time are scaled by the share of the line
+   * still ahead, so the ETA falls as the rider rides instead of staying at the
+   * figure quoted when the route was fetched.
+   */
+  useEffect(() => {
+    if (!route) return onRoute?.(null);
+    const total = route.leg.length;
+    const share = total > 0 ? Math.max(0, Math.min(1, 1 - (grain * SPLIT_GRAIN_M) / total)) : 1;
+    onRoute?.({ distanceM: route.distanceM * share, durationS: route.durationS * share });
+  }, [route, grain, onRoute]);
+
+  /** The phone's own position for the screen, at most every 2 s. */
+  const lastReported = useRef(0);
+  useEffect(() => {
+    if (!onRiderMove || !fix) return;
+    const now = Date.now();
+    if (now - lastReported.current < 2_000) return;
+    lastReported.current = now;
+    onRiderMove(fix.coordinate);
+  }, [fix, onRiderMove]);
   const drawn = useMemo(
     () => (route ? splitAt(route.leg, grain * SPLIT_GRAIN_M) : null),
     [route, grain]
@@ -351,6 +379,22 @@ export function RouteMapView({
    * ----------------------------------------------------------------- */
   const lastCamera = useRef(0);
 
+  /**
+   * North-up by default: rotating the map turns every street label with it.
+   * Heading-up is the rider's choice, from the compass button - the road ahead
+   * then always points up the screen, as in a navigation app.
+   */
+  const [headingUp, setHeadingUp] = useState(false);
+  /** Which way the map is turned now, for the compass needle. */
+  const [mapBearing, setMapBearing] = useState(0);
+  /**
+   * The first follow sets a street-level zoom. Without it the camera kept
+   * whatever zoom the map opened at - on the tablet, a whole district - and
+   * followed the scooter across it as a dot. After that the rider's own
+   * pinch is left alone.
+   */
+  const zoomSet = useRef(false);
+
   useEffect(() => {
     if (!following || !riderPoint) return;
     const now = Date.now();
@@ -358,10 +402,27 @@ export function RouteMapView({
     // already running and drains the battery the job depends on.
     if (now - lastCamera.current < 500) return;
     lastCamera.current = now;
-    // Centre only, never `heading`: rotating the map turns every street label
-    // with it, and the marker already says which way the rider is facing.
-    map.current?.animateCamera({ center: riderPoint }, { duration: 500 });
-  }, [riderPoint, following]);
+    const first = !zoomSet.current;
+    zoomSet.current = true;
+    map.current?.animateCamera(
+      {
+        center: riderPoint,
+        ...(first ? { zoom: FOLLOW_ZOOM } : {}),
+        ...(headingUp ? { heading: riderBearing } : {}),
+      },
+      { duration: 500 }
+    );
+  }, [riderPoint, following, headingUp, riderBearing]);
+
+  /** Back to following, at street zoom, the right way up for the mode. */
+  const recentre = (up = headingUp) => {
+    setFollowing(true);
+    if (!riderPoint) return;
+    map.current?.animateCamera(
+      { center: riderPoint, zoom: FOLLOW_ZOOM, heading: up ? riderBearing : 0 },
+      { duration: 400 }
+    );
+  };
 
   /** Frame both ends of the leg — used before there is a rider to follow. */
   const fitLeg = () => {
@@ -467,6 +528,12 @@ export function RouteMapView({
          */
         onRegionChangeComplete={(_region, details) => {
           if (details?.isGesture) setFollowing(false);
+          // A two-finger twist turns the map too; the compass shows it, and a
+          // tap on it turns the map back.
+          map.current
+            ?.getCamera()
+            .then((c) => setMapBearing(c.heading ?? 0))
+            .catch(() => {});
         }}
         showsMyLocationButton={false}
         toolbarEnabled={false}
@@ -540,19 +607,58 @@ export function RouteMapView({
         ) : null}
       </MapView>
 
+      {/*
+        The compass. Tap: heading-up, the road ahead pointing up the screen.
+        Tap again, or after turning the map by hand: north-up. The needle
+        always points to north, so a turned map is never a mystery.
+      */}
+      {riderPoint ? (
+        <Pressable
+          onPress={() => {
+            const next = !headingUp && Math.abs(mapBearing) < 1;
+            setHeadingUp(next);
+            recentre(next);
+          }}
+          accessibilityRole="button"
+          accessibilityLabel={headingUp ? 'Turn the map north-up' : 'Turn the map to my direction'}
+          style={({ pressed }) => [
+            {
+              position: 'absolute',
+              right: 12,
+              bottom: 12,
+              width: 40,
+              height: 40,
+              borderRadius: 20,
+              alignItems: 'center',
+              justifyContent: 'center',
+              backgroundColor: headingUp ? glass.accent : glass.white,
+              opacity: pressed ? 0.7 : 1,
+            },
+            gshadow.glass,
+          ]}
+        >
+          <View style={{ alignItems: 'center', transform: [{ rotate: `${-mapBearing}deg` }] }}>
+            <GlassText
+              variant="label"
+              style={{ fontSize: 9, lineHeight: 10, color: headingUp ? glass.accentInk : glass.red }}
+            >
+              N
+            </GlassText>
+            <GlassIcon name="north" color={headingUp ? glass.accentInk : glass.red} size={16} />
+          </View>
+        </Pressable>
+      ) : null}
+
       {/* Only offered once the rider has taken the map somewhere else. */}
       {!following && riderPoint ? (
         <Pressable
-          onPress={() => {
-            setFollowing(true);
-            map.current?.animateCamera({ center: riderPoint }, { duration: 400 });
-          }}
+          onPress={() => recentre()}
           accessibilityRole="button"
           accessibilityLabel="Centre the map on me"
           style={({ pressed }) => [
             {
               position: 'absolute',
-              right: 12,
+              right: 60,
               bottom: 12,
               flexDirection: 'row',
               alignItems: 'center',
@@ -636,7 +742,7 @@ export function RouteMapView({
  * exactly how the font produced an empty white circle. Tracking is held until
  * this fires.
  */
-function Rider({ onReady }: { onReady: () => void }) {
+export function Rider({ onReady }: { onReady: () => void }) {
   return (
     /**
      * A wrapper of a known size.
@@ -672,7 +778,7 @@ function Rider({ onReady }: { onReady: () => void }) {
  * riding on it. Its own marker, centred on the route point, so it also shows
  * exactly where the line believes the rider is.
  */
-function RiderShadow() {
+export function RiderShadow() {
   return (
     <View
       style={{

@@ -1,6 +1,6 @@
 import { forwardRef, useImperativeHandle, useRef, useState } from 'react';
 import { Pressable, TextInput, View } from 'react-native';
-import { glass, gradius, gspace } from '../theme/glass';
+import { glass, gspace } from '../theme/glass';
 import { GlassText } from './glass/GlassText';
 
 const LENGTH = 6;
@@ -28,10 +28,14 @@ type OtpBoxesProps = {
   onChange: (v: string) => void;
   error?: string | null;
   autoFocus?: boolean;
+  /** Box width; the code popup sizes it to the space it has. Height is 6px more. */
+  boxSize?: number;
+  /** While a code is being checked: digits can't change under it. */
+  disabled?: boolean;
 };
 
 export const OtpBoxes = forwardRef<OtpBoxesHandle, OtpBoxesProps>(function OtpBoxes(
-  { value, onChange, error, autoFocus },
+  { value, onChange, error, autoFocus, boxSize = BOX_W, disabled },
   ref
 ) {
   const input = useRef<TextInput>(null);
@@ -59,25 +63,29 @@ export const OtpBoxes = forwardRef<OtpBoxesHandle, OtpBoxesProps>(function OtpBo
         style={{ flexDirection: 'row', gap: gspace.sm }}
       >
         {Array.from({ length: LENGTH }).map((_, i) => {
-          const active = focused && i === cursor;
+          const active = focused && !disabled && i === cursor;
           return (
             <View
               key={i}
+              accessibilityLabel={`Digit ${i + 1} of ${LENGTH}${digits[i] ? `, ${digits[i]}` : ''}`}
               style={{
                 // Fixed rather than flex:1. Stretching to the container made
                 // each box about 190px wide on a full-width tablet — six
                 // enormous panels for six digits.
-                width: BOX_W,
-                height: BOX_H,
-                borderRadius: gradius.chip,
-                backgroundColor: glass.bg,
-                borderWidth: 1.5,
-                borderColor: error ? glass.red : active ? glass.orange : glass.border,
+                width: boxSize,
+                height: boxSize === BOX_W ? BOX_H : boxSize + 6,
+                borderRadius: 8,
+                // The box being typed into wears the app's primary, green on a
+                // pale lime fill, so it reads as "here" at a glance.
+                backgroundColor: error ? glass.redSoft : active ? glass.accentSoft : glass.bg,
+                borderWidth: 2,
+                borderColor: error ? glass.red : active ? glass.band : glass.border,
                 alignItems: 'center',
                 justifyContent: 'center',
+                opacity: disabled ? 0.6 : 1,
               }}
             >
-              <GlassText variant="subtitle" nums style={{ color: glass.ink }}>
+              <GlassText variant="title" nums style={{ color: glass.ink, fontSize: 24 }}>
                 {digits[i] ?? ''}
               </GlassText>
             </View>
@@ -96,13 +104,21 @@ export const OtpBoxes = forwardRef<OtpBoxesHandle, OtpBoxesProps>(function OtpBo
         autoComplete="sms-otp"
         maxLength={LENGTH}
         autoFocus={autoFocus}
+        editable={!disabled}
+        accessibilityLabel={`${LENGTH}-digit code`}
         // Off-screen rather than `display: none` — a hidden input cannot hold
         // focus, and the keyboard would never open.
         style={{ position: 'absolute', opacity: 0, height: 1, width: 1 }}
       />
 
       {error ? (
-        <GlassText variant="caption" style={{ color: glass.red, marginTop: gspace.sm }}>
+        <GlassText
+          variant="caption"
+          // Read out by a screen reader the moment it appears.
+          accessibilityLiveRegion="polite"
+          accessibilityRole="alert"
+          style={{ color: glass.red, marginTop: gspace.sm, textAlign: 'center' }}
+        >
           {error}
         </GlassText>
       ) : null}

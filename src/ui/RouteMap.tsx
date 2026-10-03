@@ -42,8 +42,10 @@ export function RouteMap(props: {
   shopLongitude?: number | null;
   /** Which end of the job the rider is travelling to right now. */
   heading: 'shop' | 'customer';
-  /** Real distance and time once a route is in hand, so the screen can show an ETA. */
+  /** What is left of the route as the rider rides it, so the screen's ETA counts down. */
   onRoute?: (summary: { distanceM: number; durationS: number } | null) => void;
+  /** Where the phone is, every few seconds, for the arrival prompts. */
+  onRiderMove?: (at: { latitude: number; longitude: number }) => void;
   height: number;
   style?: ViewStyle;
 }) {
