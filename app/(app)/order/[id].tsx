@@ -30,6 +30,7 @@ import {
   money,
   promisedAt,
   routeSummary,
+  shopInfo,
   shopName,
   shopPhone,
   timeOnly,
@@ -928,8 +929,8 @@ export default function Job() {
         <RouteMap
           latitude={order.latitude}
           longitude={order.longitude}
-          shopLatitude={typeof order.shop === 'object' ? order.shop.latitude : null}
-          shopLongitude={typeof order.shop === 'object' ? order.shop.longitude : null}
+          shopLatitude={shopInfo(order.shop)?.latitude ?? null}
+          shopLongitude={shopInfo(order.shop)?.longitude ?? null}
           heading={headingFor(order.delivery_status)}
           onRoute={setLeg}
           height={Math.round(screenH * 0.32)}
@@ -1128,8 +1129,8 @@ export default function Job() {
       <RouteMap
         latitude={order.latitude}
         longitude={order.longitude}
-        shopLatitude={typeof order.shop === 'object' ? order.shop.latitude : null}
-        shopLongitude={typeof order.shop === 'object' ? order.shop.longitude : null}
+        shopLatitude={shopInfo(order.shop)?.latitude ?? null}
+        shopLongitude={shopInfo(order.shop)?.longitude ?? null}
         heading={headingFor(order.delivery_status)}
         onRoute={setLeg}
         /* Smaller at the counter: a rider entering the pickup code is standing

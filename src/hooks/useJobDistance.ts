@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { peekServer } from '../api/config';
 import { DeliveryOrder } from '../api/types';
-import { coords } from '../lib/format';
+import { coords, shopInfo } from '../lib/format';
 import { fetchRoute } from '../lib/route';
 
 /**
@@ -25,7 +25,8 @@ import { fetchRoute } from '../lib/route';
 export function useJobDistance(job: DeliveryOrder): number | null {
   const [metres, setMetres] = useState<number | null>(null);
 
-  const shop = typeof job.shop === 'object' ? coords(job.shop.latitude, job.shop.longitude) : null;
+  const info = shopInfo(job.shop);
+  const shop = info ? coords(info.latitude, info.longitude) : null;
   const customer = coords(job.latitude, job.longitude);
 
   // Primitives, so the effect does not re-run on a fresh object each render —

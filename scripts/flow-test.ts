@@ -20,7 +20,7 @@ import {
   headingFor,
   inBucket,
 } from '../src/api/types';
-import { coords, shopName } from '../src/lib/format';
+import { coords, shopInfo, shopName } from '../src/lib/format';
 
 let passed = 0;
 let failed = 0;
@@ -143,7 +143,7 @@ async function main() {
     coords(job.latitude, job.longitude) !== null,
     JSON.stringify([job.latitude, job.longitude]));
   check('demo shop is geocoded too, so the map has a from as well as a to',
-    typeof job.shop === 'object' && coords(job.shop.latitude, job.shop.longitude) !== null);
+    coords(shopInfo(job.shop)?.latitude, shopInfo(job.shop)?.longitude) !== null);
 
   // Terminal work belongs to /history. The server used to leak it into
   // /orders — a real bug, since fixed on their side and verified live — so

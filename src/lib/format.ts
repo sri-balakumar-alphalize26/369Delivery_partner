@@ -66,7 +66,7 @@ export function promisedAt(raw: string | undefined, timeZone?: string): string {
  * example ("2026-09-02T17:35:00") omits it. Treat a naked timestamp as UTC,
  * per the stated rule, rather than letting the runtime read it as local.
  */
-function asUtc(raw: string): string {
+export function asUtc(raw: string): string {
   return /[Zz]$|[+-]\d{2}:?\d{2}$/.test(raw) ? raw : `${raw}Z`;
 }
 
@@ -79,9 +79,19 @@ function asUtc(raw: string): string {
  * same failure the currency object caused. Both shapes resolve here, so no
  * screen has to know which one it was handed.
  */
-export function shopName(shop: Shop | string | undefined): string {
+export function shopName(shop: Shop | string | null | undefined): string {
   if (!shop) return '';
   return typeof shop === 'string' ? shop : (shop.name ?? '');
+}
+
+/**
+ * The shop object, or null when there is none to read fields off.
+ *
+ * `typeof shop === 'object'` was the check everywhere, and it is true for null:
+ * the first live job without a shop crashed the job card on `shop.latitude`.
+ */
+export function shopInfo(shop: Shop | string | null | undefined): Shop | null {
+  return shop && typeof shop === 'object' ? shop : null;
 }
 
 /**
@@ -135,7 +145,7 @@ export function timeOnly(raw: string | undefined, timeZone?: string): string {
  * string carries no phone at all. A caller that reached for `shop.phone`
  * directly would get `undefined` on those captures and dial the string "tel:".
  */
-export function shopPhone(shop: Shop | string | undefined): string {
+export function shopPhone(shop: Shop | string | null | undefined): string {
   if (!shop || typeof shop === 'string') return '';
   return shop.phone ?? '';
 }

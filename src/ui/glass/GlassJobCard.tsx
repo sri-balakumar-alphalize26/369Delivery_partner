@@ -1,7 +1,7 @@
 import { View } from 'react-native';
 import { Image } from 'expo-image';
 import { DeliveryOrder, isAtShop } from '../../api/types';
-import { dueIn, money, shopName } from '../../lib/format';
+import { dueIn, money, shopInfo, shopName } from '../../lib/format';
 import { useNow } from '../../hooks/useNow';
 import { useJobDistance } from '../../hooks/useJobDistance';
 import { GlassBarState, glass, glassBand, gspace } from '../../theme/glass';
@@ -50,7 +50,7 @@ export function GlassJobCard({
   const metres = useJobDistance(job);
 
   /** Only the object form carries an image; older captures send a bare string. */
-  const logo = typeof job.shop === 'object' ? job.shop.image_url : null;
+  const logo = shopInfo(job.shop)?.image_url ?? null;
   // One source of truth for what each delivery state looks like.
   const band = glassBand[job.delivery_status as GlassBarState] ?? glassBand.idle;
 
