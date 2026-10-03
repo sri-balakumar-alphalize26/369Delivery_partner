@@ -1,4 +1,5 @@
 import * as Location from 'expo-location';
+import { useIsFocused } from '@react-navigation/native';
 import { useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { Modal, Pressable, RefreshControl, ScrollView, Switch, View, ViewStyle } from 'react-native';
@@ -13,6 +14,9 @@ import { useWide } from '../../src/ui/useWide';
 import { VehicleSheet } from '../../src/ui/VehicleSheet';
 import { LocationPrimer } from '../../src/ui/LocationPrimer';
 import { SharingRow } from '../../src/ui/SharingRow';
+import { DutyWatchRow } from '../../src/ui/DutyWatchRow';
+import { HereMap } from '../../src/ui/HereMap';
+import { MAP_ENABLED } from '../../src/ui/RouteMap';
 import {
   needsDutyLocationPermission,
   notifyLocationPermission,
@@ -23,7 +27,6 @@ import {
  * again every time Home remounts; the next launch may ask once more.
  */
 let askedDutyLocation = false;
-import { GlassButton } from '../../src/ui/glass/GlassButton';
 import { GlassCard } from '../../src/ui/glass/GlassCard';
 import { GlassIcon } from '../../src/ui/glass/GlassIcon';
 import { GlassJobCard } from '../../src/ui/glass/GlassJobCard';
@@ -50,9 +53,12 @@ export default function Home() {
   const insets = useSafeAreaInsets();
   const rider = useSession((s) => s.rider);
   const timezone = useSession((s) => s.timezone);
+  const area = useSession((s) => s.area);
   const { data, isLoading, isError, error, isRefetching, refetch } = useOrders();
   const duty = useDuty();
   const wide = useWide();
+  // Tabs stay mounted, so the "you are here" map is told when Home is out of view.
+  const focused = useIsFocused();
   // Only a server with delivery_fleet_ops sends this; without it the switch
   // clocks on directly, as it always has.
   const fleet = useSession((s) => s.fleet);
@@ -202,6 +208,13 @@ export default function Home() {
                     {shift} on duty
                   </GlassText>
                 ) : null}
+                {/* Where the server placed the clock-on fix — the same place the
+                    shop ranks this rider from. */}
+                {onDuty && area ? (
+                  <GlassText variant="caption" tone="soft" numberOfLines={1}>
+                    You are in {area}
+                  </GlassText>
+                ) : null}
               </View>
             </View>
             <Switch
@@ -258,6 +271,8 @@ export default function Home() {
 
           {/* Whether the office's live map can see this rider. */}
           {onDuty ? <SharingRow /> : null}
+          {/* Whether a new job will ring with the phone locked. */}
+          {onDuty ? <DutyWatchRow /> : null}
         </GlassCard>
 
         <VehicleSheet
@@ -293,6 +308,14 @@ export default function Home() {
             </View>
           </View>
         </Modal>
+
+        {/* Where the rider is right now. On duty only, and its GPS pauses
+            whenever another tab is in view. */}
+        {onDuty && MAP_ENABLED ? (
+          <GlassCard padding={12} style={{ marginTop: gspace.lg }}>
+            <HereMap active={focused} />
+          </GlassCard>
+        ) : null}
 
         <GlassCard style={{ marginTop: gspace.lg }}>
           {/* Alone among the four, this one does not open anything: delivered
@@ -432,17 +455,9 @@ export default function Home() {
             </GlassText>
             <GlassText variant="body" tone="soft" style={{ marginTop: gspace.sm }}>
               {onDuty
-                ? 'New jobs appear here automatically. Keep the app open.'
+                ? 'New jobs appear here by themselves, and the phone rings when one arrives.'
                 : 'Go online to pick up whatever is waiting.'}
             </GlassText>
-            {onDuty ? (
-              <GlassButton
-                title="Check again"
-                kind="ghost"
-                onPress={() => refetch()}
-                style={{ marginTop: gspace.lg }}
-              />
-            ) : null}
           </GlassCard>
         )}
 
