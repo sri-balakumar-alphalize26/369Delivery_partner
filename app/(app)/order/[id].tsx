@@ -801,27 +801,6 @@ export default function Job() {
   }
 
   /**
-   * The customer has no code, or lost it: Odoo sends a fresh one and the old
-   * one stops working - the shop guide's "Resend Customer Code".
-   */
-  async function resendCustomerCode() {
-    setOtpError(null);
-    setBusy(true);
-    try {
-      const res = await api.reachedCustomer(orderId);
-      markReached(true);
-      setNotice(res.message ?? 'A new code has been sent to the customer.');
-      setOtp('');
-    } catch (err) {
-      setOtpError(
-        err instanceof ApiError ? err.message : 'Could not send a new code. Try again.'
-      );
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  /**
    * Open the code panel. For the pickup code, this is also the moment the
    * rider is at the counter, so the shop is sent its code — once per job; see
    * `shopToldFor`.
@@ -1431,7 +1410,6 @@ export default function Job() {
             submitKind="green"
             onSubmit={() => run('verify_delivery_otp')}
             onClose={() => setCodeOpen(false)}
-            onResend={resendCustomerCode}
           />
 
           {error ? (

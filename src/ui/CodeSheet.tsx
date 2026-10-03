@@ -1,4 +1,4 @@
-import { ReactNode, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Animated,
   Keyboard,
@@ -20,7 +20,8 @@ import { GlassText } from './glass/GlassText';
  * The boxes once sat at the foot of the job sheet, under everything else, and
  * the keyboard covered them; then they moved to a bottom sheet. Now the code
  * gets a card of its own, centred in the space above the keyboard: a title, a
- * line saying where the code came from, the boxes, one button, and the resend.
+ * line saying where the code came from, the boxes, and one button. No resend:
+ * neither code can be sent again from the rider's side.
  *
  * It submits by itself on the sixth digit, shakes and clears on a wrong code,
  * and shows a tick on a right one before it closes.
@@ -37,10 +38,10 @@ const SCREEN_MARGIN = 16;
 const BOX_MAX = 48;
 const BOX_GAP = gspace.sm;
 const DIGITS = 6;
-/** How long before a new code may be asked for, when the server gives no wait. */
-const RESEND_WAIT_S = 30;
 /** How long the tick shows after a right code, before the card goes. */
 const SUCCESS_MS = 700;
+/** When the keyboard is asked for a second time, after the card is up. */
+const REFOCUS_MS = 300;
 
 export function CodeSheet({
   visible,
@@ -55,9 +56,6 @@ export function CodeSheet({
   submitKind = 'indigo',
   onSubmit,
   onClose,
-  right,
-  onResend,
-  resendIn,
   sentTo,
 }: {
   visible: boolean;
@@ -73,16 +71,6 @@ export function CodeSheet({
   submitKind?: 'indigo' | 'green';
   onSubmit: () => void;
   onClose: () => void;
-  /** An older caller's own resend link, shown in the footer when there is no `onResend`. */
-  right?: ReactNode;
-  /** Ask for a new code. Turns the footer into "Resend" once the wait is over. */
-  onResend?: () => void | Promise<void>;
-  /**
-   * Seconds left before a new code may be asked for, counted by the caller —
-   * the server's own wait. Without it the card waits 30s from opening, and
-   * again after each resend.
-   */
-  resendIn?: number;
   /** The number the code went to, shown with all but its last four digits hidden. */
   sentTo?: string | null;
 }) {
@@ -184,23 +172,20 @@ export function CodeSheet({
     boxes.current?.focus();
   }, [error, shake]);
 
-  /** The card's own resend wait, used when the caller does not count one. */
-  const [ownWait, setOwnWait] = useState(0);
+  /**
+   * The keyboard, asked for once more a moment after the card is up.
+   *
+   * Android drops a focus request made before the popup's window has focus,
+   * and `onShow` can come that early: the customer-code card, opened straight
+   * after "Reached" came back from the server, showed with no keyboard the
+   * first time. Asking again while the boxes are live costs nothing if the
+   * first request landed.
+   */
   useEffect(() => {
-    if (visible && resendIn === undefined) setOwnWait(RESEND_WAIT_S);
-  }, [visible, resendIn]);
-  useEffect(() => {
-    if (ownWait <= 0) return;
-    const t = setTimeout(() => setOwnWait((s) => s - 1), 1000);
+    if (!shown || busy) return;
+    const t = setTimeout(() => boxes.current?.focus(), REFOCUS_MS);
     return () => clearTimeout(t);
-  }, [ownWait]);
-  const wait = resendIn ?? ownWait;
-
-  const resend = async () => {
-    await onResend?.();
-    if (resendIn === undefined) setOwnWait(RESEND_WAIT_S);
-    boxes.current?.focus();
-  };
+  }, [shown, busy]);
 
   const masked = maskPhone(sentTo);
 
@@ -348,69 +333,12 @@ export function CodeSheet({
                 disabled={!canSubmit}
                 style={{ marginTop: gspace.xl, alignSelf: 'stretch' }}
               />
-
-              {onResend ? (
-                <ResendFooter wait={wait} disabled={!!busy} onPress={resend} />
-              ) : right ? (
-                <View style={{ marginTop: gspace.lg }}>{right}</View>
-              ) : null}
             </>
           )}
         </View>
       </View>
     </Modal>
   );
-}
-
-/** "Didn't receive the code? Resend in 0:30", then a tappable "Resend". */
-function ResendFooter({
-  wait,
-  disabled,
-  onPress,
-}: {
-  wait: number;
-  disabled: boolean;
-  onPress: () => void;
-}) {
-  const ready = wait <= 0;
-  return (
-    <View
-      style={{
-        flexDirection: 'row',
-        flexWrap: 'wrap',
-        justifyContent: 'center',
-        alignItems: 'center',
-        marginTop: gspace.lg,
-      }}
-    >
-      <GlassText variant="caption" tone="soft" style={{ fontSize: 13 }}>
-        Didn&rsquo;t receive the code?{' '}
-      </GlassText>
-      {ready ? (
-        <Pressable
-          onPress={onPress}
-          disabled={disabled}
-          accessibilityRole="button"
-          hitSlop={10}
-          style={({ pressed }) => ({ opacity: disabled ? 0.5 : pressed ? 0.6 : 1 })}
-        >
-          <GlassText variant="caption" tone="orange" style={{ fontSize: 13, fontWeight: '700' }}>
-            Resend
-          </GlassText>
-        </Pressable>
-      ) : (
-        <GlassText variant="caption" tone="orange" nums style={{ fontSize: 13 }}>
-          Resend in {clock(wait)}
-        </GlassText>
-      )}
-    </View>
-  );
-}
-
-/** 30 → "0:30", 75 → "1:15". */
-function clock(seconds: number): string {
-  const s = Math.max(0, Math.ceil(seconds));
-  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
 }
 
 /** "+968 9123 4521" → "•••• •••• 4521": every digit but the last four hidden. */
