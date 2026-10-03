@@ -161,7 +161,6 @@ export const restAdapter: ApiAdapter = {
       earnings?: HistoryResponse['earnings'];
     }>(`/api/delivery/history?limit=${limit}`);
     const rows = r.history ?? r.orders ?? [];
-    console.log('[TMP history]', JSON.stringify({ top: Object.keys(r), row: rows[0] }));
     const out: HistoryResponse = {
       jobs: rows.map((row) => ({ ...fixOrder(row), finished_at: row.finished_at })),
       timezone: r.timezone,
