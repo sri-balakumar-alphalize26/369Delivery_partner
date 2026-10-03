@@ -134,6 +134,11 @@ export interface RequestOptions {
    * whose first answer was lost on the way back cannot run the step twice.
    */
   idempotencyKey?: string;
+  /**
+   * A multipart body instead of JSON — the door photo. `fetch` writes its
+   * own Content-Type with the boundary, so none is set here.
+   */
+  form?: FormData;
 }
 
 interface Raw {
@@ -158,7 +163,7 @@ async function send(path: string, opts: RequestOptions, token: string | null, ke
   };
   if (token) headers.Authorization = `Bearer ${token}`;
   if (method !== 'GET') headers['Idempotency-Key'] = key;
-  if (opts.body) headers['Content-Type'] = 'application/json';
+  if (opts.body && !opts.form) headers['Content-Type'] = 'application/json';
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? DEFAULT_TIMEOUT_MS);
@@ -168,7 +173,7 @@ async function send(path: string, opts: RequestOptions, token: string | null, ke
     res = await fetch(`${url}${path}`, {
       method,
       headers,
-      body: opts.body ? JSON.stringify(opts.body) : undefined,
+      body: opts.form ?? (opts.body ? JSON.stringify(opts.body) : undefined),
       signal: controller.signal,
     });
   } catch {

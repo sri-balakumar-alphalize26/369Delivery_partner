@@ -84,6 +84,14 @@ export function makeOffer(): DeliveryOrder {
     payment_status: cod ? "cod" : "paid",
     amount_to_collect: cod ? 12.5 : 0,
     currency: OMR,
+    // Delivery 19.0.21.4.0: the customer's note from the chat, and the pay page
+    // on cash jobs only. Empty and null as the server sends them when absent.
+    delivery_note: ["Opposite the mosque, blue gate", "", "Flat 402, ring twice"][seq % 3],
+    pay_url: cod ? `https://example.com/pay/demo-${seq}` : null,
+    location_source: "customer_pin",
+    shop_to_customer_m: [1730, 2410, 3120][seq % 3],
+    // The demo rider is an own rider: on salary, so no fee, as on DUBAI_TEST.
+    rider_fee: null,
     delivery_status: "offered",
     delivery_type: seq % 2 === 0 ? "quick" : "express",
     /**

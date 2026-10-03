@@ -42,6 +42,11 @@ interface SessionState {
    * `track_from_accept` — from `me.features`. Empty on an older server.
    */
   features: string[];
+  /**
+   * Whether the shop is using Delivery Partners at all (`/auth/me`). False
+   * means a partner is offered nothing; undefined on an older server.
+   */
+  thirdPartyEnabled: boolean | undefined;
   /** Where the rider clocked on, as the server named it ("al Azaiba, Muscat"). */
   area: string | undefined;
   /** False until storage has been read — gates the router. */
@@ -79,6 +84,7 @@ export const useSession = create<SessionState>((set) => ({
   currency: undefined,
   fleet: undefined,
   features: [],
+  thirdPartyEnabled: undefined,
   area: undefined,
   ready: false,
   connected: false,
@@ -93,8 +99,16 @@ export const useSession = create<SessionState>((set) => ({
     );
 
     try {
-      const { rider, timezone, currency, fleet, features } = await api.me();
-      set({ rider, timezone, currency, fleet, features: features ?? [], connected: true });
+      const { rider, timezone, currency, fleet, features, third_party_enabled } = await api.me();
+      set({
+        rider,
+        timezone,
+        currency,
+        fleet,
+        features: features ?? [],
+        thirdPartyEnabled: third_party_enabled,
+        connected: true,
+      });
       console.log(`[login] launch: session good, rider ${rider.name} (#${rider.id})`);
     } catch (err) {
       // No session yet, or an expired one — land on Connect rather than a
@@ -128,8 +142,16 @@ export const useSession = create<SessionState>((set) => ({
 
     try {
       if (!server.useMock) await api.verifyCode(server.login, code);
-      const { rider, timezone, currency, fleet, features } = await api.me();
-      set({ rider, timezone, currency, fleet, features: features ?? [], connected: true });
+      const { rider, timezone, currency, fleet, features, third_party_enabled } = await api.me();
+      set({
+        rider,
+        timezone,
+        currency,
+        fleet,
+        features: features ?? [],
+        thirdPartyEnabled: third_party_enabled,
+        connected: true,
+      });
       console.log(
         `[login] connected${server.useMock ? ' (demo)' : ''}: rider ${rider.name} (#${rider.id}), ` +
           `timezone ${timezone ?? 'unset'}, currency ${currency?.code ?? 'unset'}`
@@ -169,8 +191,15 @@ export const useSession = create<SessionState>((set) => ({
   async refresh() {
     if (!useSession.getState().connected) return;
     try {
-      const { rider, timezone, currency, fleet, features } = await api.me();
-      set({ rider, timezone, currency, fleet, features: features ?? [] });
+      const { rider, timezone, currency, fleet, features, third_party_enabled } = await api.me();
+      set({
+        rider,
+        timezone,
+        currency,
+        fleet,
+        features: features ?? [],
+        thirdPartyEnabled: third_party_enabled,
+      });
     } catch {
       // Offline, or the session ended — the latter is handled by the expiry
       // path in the client. Keep what we have.
@@ -199,6 +228,7 @@ export const useSession = create<SessionState>((set) => ({
       currency: undefined,
       fleet: undefined,
       features: [],
+      thirdPartyEnabled: undefined,
       area: undefined,
       connected: false,
     });

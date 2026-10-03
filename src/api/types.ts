@@ -244,6 +244,18 @@ export interface Shop {
   longitude: number | null;
   address: string;
   phone: string;
+  /**
+   * The job has no shop, so the warehouse is the pickup point (delivery
+   * 19.0.21.4.0). `id` is then null and `name` is the warehouse's.
+   */
+  is_warehouse?: boolean;
+}
+
+/** Money as the server formats it, with its own currency and separators. */
+export interface Money {
+  amount: number;
+  /** e.g. "₹1,630.00" — shown as it is, never rebuilt in the app. */
+  formatted: string;
 }
 
 export interface DeliveryOrder {
@@ -313,18 +325,51 @@ export interface DeliveryOrder {
    * Read when the server sends it; the job screen also remembers it per job.
    */
   reached_customer_on?: string;
+
+  /*
+   * Added by delivery 19.0.21.4.0 / 19.0.21.5.0 (Rider_App_Last_3_Updates.pdf).
+   * Optional, so an older server that sends none of them still type-checks.
+   */
+  /**
+   * The customer's landmark, flat or gate note, from the WhatsApp chat: "Opposite
+   * the Murugan temple, blue gate". One free-text answer; shown in bold under
+   * the address. (`landmark` and `door` also ship, always empty.)
+   */
+  delivery_note?: string;
+  /** Where the customer pin came from. `geocoded` is the typed address looked up: approximate. */
+  location_source?: 'customer_pin' | 'geocoded' | null;
+  /** Shop to customer, in metres, as the server measured it. */
+  shop_to_customer_m?: number | null;
+  /**
+   * Pay for this trip: Delivery Partners (`rider.kind = "third_party"`) only,
+   * null for own riders, who are on salary. Never worked out in the app.
+   */
+  rider_fee?: Money | null;
+  /**
+   * The customer's online pay page, on cash jobs only; null once paid. Shown
+   * as a QR for the customer's own phone — never opened in the rider's app.
+   */
+  pay_url?: string | null;
 }
 
-/** The four dashboard figures. */
+/** The dashboard figures. */
 export interface OrderCounts {
   assigned: number;
   picked_up: number;
   out_for_delivery: number;
+  /** All time — not today, whatever an older label said. */
   delivered: number;
+  /** In the rider's timezone; the week starts Monday (delivery 19.0.21.5.0). */
+  delivered_today?: number;
+  delivered_week?: number;
+  delivered_month?: number;
 }
 
-/** The bucket behind each of those figures. */
-export type CountBucket = keyof OrderCounts;
+/**
+ * The bucket behind each of the four status figures. Named rather than
+ * `keyof OrderCounts`, which would now take in the dated counts too.
+ */
+export type CountBucket = 'assigned' | 'picked_up' | 'out_for_delivery' | 'delivered';
 
 /**
  * Which statuses each of the four counts covers.
@@ -373,18 +418,37 @@ export interface PastJob extends DeliveryOrder {
   finished_at?: string;
 }
 
+/**
+ * A Delivery Partner's pay on `/history` (delivery 19.0.21.5.0), formatted by
+ * the server with separators ("₹1,630.00"). All zero for own riders.
+ */
+export interface HistoryEarnings {
+  today?: Money;
+  week?: Money;
+  month?: Money;
+  total?: Money;
+  amount?: number;
+  formatted?: string;
+}
+
 export interface HistoryResponse {
   jobs: PastJob[];
   timezone?: string;
-  /** Always 0 today: Odoo has no pay model yet. Never shown as money. */
-  earnings?: number;
+  /**
+   * A plain number on servers before 19.0.21.5.0 (always 0, no pay model);
+   * the per-period object since. Shown only to Delivery Partners.
+   */
+  earnings?: number | HistoryEarnings;
 }
 
 export interface Rider {
   id: number;
   name: string;
   mobile: string;
-  /** "own" for staff riders; freelancers differ. */
+  /**
+   * `own` for staff riders, on salary; `third_party` for Delivery Partners,
+   * paid per trip (`rider_fee`).
+   */
   kind: string;
   /** No work is offered at all while this is false. */
   on_duty: boolean;
@@ -619,6 +683,12 @@ export interface Identity {
    * API carries no such list of its own.
    */
   features?: string[];
+  /**
+   * Whether the shop is using Delivery Partners at all (delivery 19.0.21.5.0).
+   * Off: a partner can still sign in and see history and pay, but is offered
+   * nothing. Own riders are not affected. Absent on an older server.
+   */
+  third_party_enabled?: boolean;
 }
 
 /**
@@ -722,8 +792,13 @@ export interface ApiAdapter {
   /** Deactivate a token on sign-out. */
   unregisterPush(token: string): Promise<void>;
 
-  /** A photo of the parcel at the door, base64 JPEG. Needs the `proof` feature. */
-  uploadProof(id: number, imageBase64: string): Promise<{ attachment_id: number }>;
+  /**
+   * A photo of the parcel at the door. Optional: the server accepts it in any
+   * state while the job is the rider's, several per job, and never requires
+   * one before Delivered (delivery 19.0.21.4.0). The REST API takes the file
+   * itself (`uri`, multipart, 8 MB at most); base64 is for older servers.
+   */
+  uploadProof(id: number, imageBase64: string, uri?: string): Promise<{ attachment_id: number }>;
 
   /** Into Fleet's service log, against the vehicle in hand. Needs `fuel`. */
   fuelReport(input: {

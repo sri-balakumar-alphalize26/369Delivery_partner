@@ -332,6 +332,11 @@ export const mockAdapter: ApiAdapter = {
           inBucket(o.delivery_status, 'out_for_delivery')
         ).length,
         delivered: live.filter((o) => inBucket(o.delivery_status, 'delivered')).length,
+        // Every demo delivery happens in this session, so all are today's.
+        // The failed fixture is not delivered and counts in none of them.
+        delivered_today: live.filter((o) => o.delivery_status === 'delivered').length,
+        delivered_week: live.filter((o) => o.delivery_status === 'delivered').length,
+        delivered_month: live.filter((o) => o.delivery_status === 'delivered').length,
       },
       // All four terminal states are dropped, matching the server again.
       //

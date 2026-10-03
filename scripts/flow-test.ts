@@ -7,10 +7,19 @@
  *
  * Run:  npx tsc scripts/flow-test.ts --outDir <dir> --module commonjs \
  *         --target es2020 --skipLibCheck --esModuleInterop && node <dir>/scripts/flow-test.js
+ *
+ * With <dir> outside the project, set NODE_PATH=<project>/node_modules so the
+ * one package it imports (qrcode-generator) is found.
  */
 
 import { mockAdapter as api, mockFlags } from '../src/api/mock/adapter';
-import { MOCK_DELIVERY_OTP, MOCK_PICKUP_OTP, mockFailedId } from '../src/api/mock/fixtures';
+import createQr from 'qrcode-generator';
+import {
+  MOCK_DELIVERY_OTP,
+  MOCK_PICKUP_OTP,
+  makeOffer,
+  mockFailedId,
+} from '../src/api/mock/fixtures';
 import {
   Action,
   ApiError,
@@ -463,6 +472,35 @@ async function main() {
   check('unlocked: a saved address still wins (the test tunnel moves)', openCfg.url === 'https://test.example.com');
   check('unlocked: a saved demo choice still wins', openCfg.useMock === true);
   check('nothing saved: the build as it is', resolveServer(build, null, true).url === build.url);
+
+  console.log('\n=== 16. The senior\'s 19.0.21.5.0 fields ===');
+  const now16 = await api.orders();
+  check(
+    'Delivered today is its own count, not the all-time one',
+    typeof now16.counts.delivered_today === 'number' &&
+      now16.counts.delivered_today === now16.counts.delivered,
+    JSON.stringify(now16.counts)
+  );
+  const fresh16 = makeOffer();
+  check('a job carries the delivery note as a string', typeof fresh16.delivery_note === 'string');
+  check(
+    'pay_url only on a cash job, null on a paid one',
+    fresh16.payment_status === 'cod' ? !!fresh16.pay_url : fresh16.pay_url === null,
+    `${fresh16.payment_status} ${fresh16.pay_url}`
+  );
+  check('an own rider gets no fee', fresh16.rider_fee === null);
+  // The live pay link is a long wrapper URL; it must still make a QR a phone
+  // camera reads from arm's length (version 10 or below, 57 modules a side).
+  const wrapper =
+    'https://dubai.369ai.biz/scoped_app/wa-link?db=DUBAI_TEST&token=' + 'a1b2c3d4'.repeat(12);
+  const code16 = createQr(0, 'M');
+  code16.addData(wrapper);
+  code16.make();
+  check(
+    'a long pay link fits a readable QR',
+    code16.getModuleCount() <= 57,
+    `${code16.getModuleCount()} modules for ${wrapper.length} chars`
+  );
 
   console.log(`\n${passed} passed, ${failed} failed\n`);
   process.exit(failed === 0 ? 0 : 1);

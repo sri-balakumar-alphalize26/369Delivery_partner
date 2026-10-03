@@ -157,7 +157,8 @@ export const restAdapter: ApiAdapter = {
       history?: PastJob[];
       orders?: PastJob[];
       timezone?: string;
-      earnings?: number;
+      // A number before 19.0.21.5.0, the per-period object since.
+      earnings?: HistoryResponse['earnings'];
     }>(`/api/delivery/history?limit=${limit}`);
     const rows = r.history ?? r.orders ?? [];
     const out: HistoryResponse = {
@@ -255,7 +256,25 @@ export const restAdapter: ApiAdapter = {
   async registerPush() {},
   async unregisterPush() {},
 
-  uploadProof: () => notHere(),
+  /**
+   * The door photo as a multipart upload: `delivery_order_id` and `file`, 8 MB
+   * at most (a larger one is refused `too_large`). Never required by the
+   * server; the rider may add several.
+   */
+  async uploadProof(id, _imageBase64, uri) {
+    if (!uri) return notHere();
+    const form = new FormData();
+    form.append('delivery_order_id', String(id));
+    // React Native's FormData takes a file as {uri, name, type}.
+    form.append('file', { uri, name: `proof-${id}.jpg`, type: 'image/jpeg' } as unknown as Blob);
+    const r = await request<{ attachment_id: number }>('/api/delivery/proof', {
+      method: 'POST',
+      form,
+      // A photo on a weak signal takes longer than a JSON call.
+      timeoutMs: 60_000,
+    });
+    return { attachment_id: r.attachment_id };
+  },
   fuelReport: () => notHere(),
   vehicleIssue: () => notHere(),
 
