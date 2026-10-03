@@ -37,6 +37,13 @@ interface SessionState {
    * means "no fleet here", and every vehicle control stays hidden.
    */
   fleet: FleetInfo | undefined;
+  /**
+   * What the rider API offers beyond the fleet block — `location`,
+   * `track_from_accept` — from `me.features`. Empty on an older server.
+   */
+  features: string[];
+  /** Where the rider clocked on, as the server named it ("al Azaiba, Muscat"). */
+  area: string | undefined;
   /** False until storage has been read — gates the router. */
   ready: boolean;
   /** True once `me` has succeeded against the current server. */
@@ -71,6 +78,8 @@ export const useSession = create<SessionState>((set) => ({
   timezone: undefined,
   currency: undefined,
   fleet: undefined,
+  features: [],
+  area: undefined,
   ready: false,
   connected: false,
 
@@ -84,8 +93,8 @@ export const useSession = create<SessionState>((set) => ({
     );
 
     try {
-      const { rider, timezone, currency, fleet } = await api.me();
-      set({ rider, timezone, currency, fleet, connected: true });
+      const { rider, timezone, currency, fleet, features } = await api.me();
+      set({ rider, timezone, currency, fleet, features: features ?? [], connected: true });
       console.log(`[login] launch: session good, rider ${rider.name} (#${rider.id})`);
     } catch (err) {
       // No session yet, or an expired one — land on Connect rather than a
@@ -119,8 +128,8 @@ export const useSession = create<SessionState>((set) => ({
 
     try {
       if (!server.useMock) await api.verifyCode(server.login, code);
-      const { rider, timezone, currency, fleet } = await api.me();
-      set({ rider, timezone, currency, fleet, connected: true });
+      const { rider, timezone, currency, fleet, features } = await api.me();
+      set({ rider, timezone, currency, fleet, features: features ?? [], connected: true });
       console.log(
         `[login] connected${server.useMock ? ' (demo)' : ''}: rider ${rider.name} (#${rider.id}), ` +
           `timezone ${timezone ?? 'unset'}, currency ${currency?.code ?? 'unset'}`
@@ -147,6 +156,7 @@ export const useSession = create<SessionState>((set) => ({
               on_duty: result.on_duty,
               duty_since: result.duty_since,
             },
+            area: result.on_duty ? result.address_short || s.area : undefined,
             // Only a fleet server answers with `vehicle`; leave the rest alone.
             ...(s.fleet && result.vehicle !== undefined
               ? { fleet: { ...s.fleet, vehicle: result.vehicle } }
@@ -159,8 +169,8 @@ export const useSession = create<SessionState>((set) => ({
   async refresh() {
     if (!useSession.getState().connected) return;
     try {
-      const { rider, timezone, currency, fleet } = await api.me();
-      set({ rider, timezone, currency, fleet });
+      const { rider, timezone, currency, fleet, features } = await api.me();
+      set({ rider, timezone, currency, fleet, features: features ?? [] });
     } catch {
       // Offline, or the session ended — the latter is handled by the expiry
       // path in the client. Keep what we have.
@@ -188,6 +198,8 @@ export const useSession = create<SessionState>((set) => ({
       timezone: undefined,
       currency: undefined,
       fleet: undefined,
+      features: [],
+      area: undefined,
       connected: false,
     });
   },
@@ -200,4 +212,4 @@ setSessionExpiredHandler(() => useSession.getState().expire());
 
 // The adapters ask `hasFeature` before sending a parameter an older server
 // would reject; keep its list in step with whatever `me` said last.
-useSession.subscribe((s) => setFeatures(s.fleet?.features));
+useSession.subscribe((s) => setFeatures([...(s.fleet?.features ?? []), ...s.features]));

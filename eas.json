@@ -20,6 +20,10 @@
     },
     "production": {
       "autoIncrement": true,
+      "env": {
+        "EXPO_PUBLIC_LOCK_SERVER": "1",
+        "EXPO_PUBLIC_API_MODE": "real"
+      },
       "android": {
         "buildType": "app-bundle"
       }

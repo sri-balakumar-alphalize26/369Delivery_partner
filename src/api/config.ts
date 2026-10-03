@@ -1,4 +1,5 @@
 import { getItem, setItem } from '../lib/storage';
+import { normaliseServer as normalise, resolveServer } from './serverConfig';
 import { ServerConfig } from './types';
 
 /**
@@ -16,6 +17,14 @@ import { ServerConfig } from './types';
 
 const KEY = 'd369.server';
 
+/**
+ * Set by the `production` build profile in eas.json. The server, database and
+ * support number are then the build's, not the rider's: Connect shows only
+ * the WhatsApp sign-in, and nothing saved on the phone can point it elsewhere
+ * (see `resolveServer`).
+ */
+export const SERVER_LOCKED = process.env.EXPO_PUBLIC_LOCK_SERVER === '1';
+
 const FROM_ENV: ServerConfig = {
   url: process.env.EXPO_PUBLIC_API_URL ?? '',
   db: process.env.EXPO_PUBLIC_ODOO_DB ?? '',
@@ -23,25 +32,11 @@ const FROM_ENV: ServerConfig = {
   supportPhone: process.env.EXPO_PUBLIC_SUPPORT_PHONE ?? '',
   orsKey: process.env.EXPO_PUBLIC_ORS_KEY ?? '',
   // Demo data until someone signs in to a real server, so a fresh install is
-  // never a dead screen.
-  useMock: process.env.EXPO_PUBLIC_API_MODE !== 'real',
+  // never a dead screen — except in a locked build, which riders install.
+  useMock: !SERVER_LOCKED && process.env.EXPO_PUBLIC_API_MODE !== 'real',
 };
 
 let cached: ServerConfig | null = null;
-
-function normalise(cfg: ServerConfig): ServerConfig {
-  return {
-    // A trailing slash would produce `//api/delivery/...` and a confusing 404.
-    url: cfg.url.trim().replace(/\/+$/, ''),
-    db: cfg.db.trim(),
-    // Absent from a config saved when the app still pasted a token.
-    login: cfg.login?.trim() ?? '',
-    // Optional and absent from every config saved before it existed.
-    supportPhone: cfg.supportPhone?.trim() ?? '',
-    orsKey: cfg.orsKey?.trim() ?? '',
-    useMock: cfg.useMock,
-  };
-}
 
 export async function getServer(): Promise<ServerConfig> {
   if (cached) return cached;
@@ -50,14 +45,14 @@ export async function getServer(): Promise<ServerConfig> {
     const raw = await getItem(KEY);
     if (raw) {
       const saved = JSON.parse(raw) as Partial<ServerConfig>;
-      cached = normalise({ ...FROM_ENV, ...saved });
+      cached = resolveServer(FROM_ENV, saved, SERVER_LOCKED);
       return cached;
     }
   } catch {
     // Corrupt or unreadable — fall back rather than trapping the rider.
   }
 
-  cached = normalise(FROM_ENV);
+  cached = resolveServer(FROM_ENV, null, SERVER_LOCKED);
   return cached;
 }
 

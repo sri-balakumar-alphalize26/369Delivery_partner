@@ -11,7 +11,7 @@ import {
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { ENV_DEFAULTS } from '../src/api/config';
+import { ENV_DEFAULTS, SERVER_LOCKED } from '../src/api/config';
 import { MOCK_DELIVERY_OTP, MOCK_PICKUP_OTP } from '../src/api/mock/fixtures';
 import { listDatabases, normalisePhone } from '../src/api/rest/client';
 import { ApiError } from '../src/api/types';
@@ -46,7 +46,17 @@ import { OtpBoxes } from '../src/ui/OtpBoxes';
  *
  * It stays outside the tabs group, so it is not a tab — reached only from
  * Profile or by the Gate redirect.
+ *
+ * In a locked build (the one riders install, `SERVER_LOCKED`) the server is the
+ * build's, so the screen is only the sign-in: no link, no database, no demo, no
+ * settings. Seven taps on the logo reveal them for this session, for whoever
+ * from the office is setting a phone up — the Android "developer options"
+ * gesture, which riders do not stumble on.
  */
+
+/** Taps on the logo, within this window, that reveal the server fields. */
+const REVEAL_TAPS = 7;
+const REVEAL_WINDOW_MS = 4000;
 
 /** Wide enough for a phone in landscape, narrow enough not to sprawl on a tablet. */
 const FORM_MAX_W = 480;
@@ -100,6 +110,20 @@ export default function Connect() {
   const [attempt, setAttempt] = useState(0);
   const [dbPickerOpen, setDbPickerOpen] = useState(false);
 
+  /** Revealed by tapping the logo; only ever matters in a locked build. */
+  const [revealed, setRevealed] = useState(false);
+  const locked = SERVER_LOCKED && !revealed;
+  const logoTaps = useRef<number[]>([]);
+  function tapLogo() {
+    if (!SERVER_LOCKED || revealed) return;
+    const now = Date.now();
+    logoTaps.current = [...logoTaps.current, now].filter((t) => now - t < REVEAL_WINDOW_MS);
+    if (logoTaps.current.length >= REVEAL_TAPS) {
+      logoTaps.current = [];
+      setRevealed(true);
+    }
+  }
+
   // Filled once from the saved config. Not on every change to it: "Send code"
   // saves the config while the rider is still on this screen, and refilling
   // then would swap the typed number for its saved digits-only form and a
@@ -112,7 +136,7 @@ export default function Connect() {
     setLogin(server?.login ?? '');
     setSupportPhone(server?.supportPhone ?? ENV_DEFAULTS.supportPhone);
     setOrsKey(server?.orsKey ?? ENV_DEFAULTS.orsKey);
-    setUseMock(server?.useMock ?? true);
+    setUseMock(SERVER_LOCKED ? false : (server?.useMock ?? true));
     if (server) filled.current = true;
   }, [server]);
 
@@ -122,6 +146,11 @@ export default function Connect() {
   // cleared on every new address, so a name left over from another server can
   // never ride along into the sign-in.
   useEffect(() => {
+    // Locked: the build's database stands, and there is no list to fetch.
+    if (locked) {
+      setServerState({ kind: 'idle' });
+      return;
+    }
     setDb('');
     const link = url.trim();
     if (useMock || !link) {
@@ -153,7 +182,7 @@ export default function Connect() {
       alive = false;
       clearTimeout(timer);
     };
-  }, [url, useMock, attempt]);
+  }, [url, useMock, attempt, locked]);
 
   const target = `${url.trim()}|${db.trim()}|${normalisePhone(login)}`;
   const stage: 'number' | 'code' = !useMock && sentFor === target ? 'code' : 'number';
@@ -169,11 +198,17 @@ export default function Connect() {
   // or half-typed number has to be caught here or the rider waits for nothing.
   function missingField(): string | null {
     if (useMock) return null;
-    if (!url.trim()) return 'Enter the server link.';
-    if (serverState.kind === 'invalid') return 'Enter the full server link, starting with https://';
-    if (serverState.kind === 'checking') return 'Still loading databases. One moment.';
-    if (serverState.kind === 'failed') return COULD_NOT_LOAD;
-    if (!db.trim()) return 'Choose a database.';
+    if (locked) {
+      // A release built before its server was decided. Nothing the rider types
+      // can fix it, so say who can.
+      if (!url.trim() || !db.trim()) return 'This app is not set up for a server yet. Ask the office.';
+    } else {
+      if (!url.trim()) return 'Enter the server link.';
+      if (serverState.kind === 'invalid') return 'Enter the full server link, starting with https://';
+      if (serverState.kind === 'checking') return 'Still loading databases. One moment.';
+      if (serverState.kind === 'failed') return COULD_NOT_LOAD;
+      if (!db.trim()) return 'Choose a database.';
+    }
     if (normalisePhone(login).length < 8) {
       return 'Enter your WhatsApp number with the country code, e.g. 968 9123 4567.';
     }
@@ -275,7 +310,10 @@ export default function Connect() {
           <View style={{ width: '100%', maxWidth: FORM_MAX_W, alignSelf: 'center' }}>
             {/* ── Brand ─────────────────────────────────────────────── */}
             <View style={{ alignItems: 'center' }}>
-              <View
+              {/* Not announced as a button: the taps are for the office, not the rider. */}
+              <Pressable
+                onPress={tapLogo}
+                accessible={false}
                 style={{
                   backgroundColor: glass.fillStrong,
                   borderRadius: gradius.card,
@@ -289,8 +327,14 @@ export default function Connect() {
                   style={{ width: 72, height: 72 }}
                   resizeMode="contain"
                 />
-              </View>
-              <GlassText variant="hero" style={{ marginTop: gspace.lg, textAlign: 'center' }}>
+              </Pressable>
+              {/* Stretched, not shrink-wrapped: the 800 face's "W" and "k" ink
+                  past their advance widths, and Android clips a Text box sized
+                  to exactly those widths. */}
+              <GlassText
+                variant="hero"
+                style={{ marginTop: gspace.lg, textAlign: 'center', alignSelf: 'stretch' }}
+              >
                 {useMock ? 'Try the app' : 'Welcome back'}
               </GlassText>
               <GlassText
@@ -324,50 +368,54 @@ export default function Connect() {
                 </>
               ) : (
                 <>
-                  <Field
-                    label="Server link"
-                    icon="link"
-                    value={url}
-                    onChangeText={setUrl}
-                    autoCapitalize="none"
-                    autoCorrect={false}
-                    keyboardType="url"
-                    placeholder="https://your-server.com"
-                    style={{ fontSize: 16 }}
-                  />
-                  <ServerStatus state={serverState} onRetry={() => setAttempt((n) => n + 1)} />
+                  {locked ? null : (
+                    <>
+                      <Field
+                        label="Server link"
+                        icon="link"
+                        value={url}
+                        onChangeText={setUrl}
+                        autoCapitalize="none"
+                        autoCorrect={false}
+                        keyboardType="url"
+                        placeholder="https://your-server.com"
+                        style={{ fontSize: 16 }}
+                      />
+                      <ServerStatus state={serverState} onRetry={() => setAttempt((n) => n + 1)} />
 
-                  {serverState.kind !== 'hidden' ? (
-                    <DbField
-                      value={db}
-                      placeholder={dbPlaceholder}
-                      loading={serverState.kind === 'checking'}
-                      failed={serverState.kind === 'failed'}
-                      enabled={!!dbs}
-                      onPress={() => setDbPickerOpen(true)}
-                    />
-                  ) : (
-                    <Field
-                      label="Database"
-                      icon="database"
-                      value={db}
-                      onChangeText={setDb}
-                      autoCapitalize="none"
-                      autoCorrect={false}
-                      placeholder="Ask the office for the name"
-                    />
+                      {serverState.kind !== 'hidden' ? (
+                        <DbField
+                          value={db}
+                          placeholder={dbPlaceholder}
+                          loading={serverState.kind === 'checking'}
+                          failed={serverState.kind === 'failed'}
+                          enabled={!!dbs}
+                          onPress={() => setDbPickerOpen(true)}
+                        />
+                      ) : (
+                        <Field
+                          label="Database"
+                          icon="database"
+                          value={db}
+                          onChangeText={setDb}
+                          autoCapitalize="none"
+                          autoCorrect={false}
+                          placeholder="Ask the office for the name"
+                        />
+                      )}
+                      <DbPicker
+                        visible={dbPickerOpen}
+                        options={dbs ?? []}
+                        value={db}
+                        onChoose={(name) => {
+                          setDb(name);
+                          setDbPickerOpen(false);
+                          setError(null);
+                        }}
+                        onClose={() => setDbPickerOpen(false)}
+                      />
+                    </>
                   )}
-                  <DbPicker
-                    visible={dbPickerOpen}
-                    options={dbs ?? []}
-                    value={db}
-                    onChoose={(name) => {
-                      setDb(name);
-                      setDbPickerOpen(false);
-                      setError(null);
-                    }}
-                    onClose={() => setDbPickerOpen(false)}
-                  />
 
                   <Field
                     label="WhatsApp number"
@@ -427,47 +475,51 @@ export default function Connect() {
             </GlassCard>
 
             {/* ── Mode switch ───────────────────────────────────────── */}
-            <Pressable
-              onPress={() => switchMode(!useMock)}
-              hitSlop={8}
-              accessibilityRole="button"
-              style={({ pressed }) => ({
-                alignSelf: 'center',
-                marginTop: gspace.xl,
-                paddingVertical: gspace.sm,
-                opacity: pressed ? 0.6 : 1,
-              })}
-            >
-              <GlassText variant="body" tone="soft" style={{ textAlign: 'center' }}>
-                {useMock ? 'Have a rider login? ' : 'No login yet? '}
-                <GlassText variant="bodyStrong" tone="orange">
-                  {useMock ? 'Sign in instead' : 'Try the demo'}
+            {locked ? null : (
+              <Pressable
+                onPress={() => switchMode(!useMock)}
+                hitSlop={8}
+                accessibilityRole="button"
+                style={({ pressed }) => ({
+                  alignSelf: 'center',
+                  marginTop: gspace.xl,
+                  paddingVertical: gspace.sm,
+                  opacity: pressed ? 0.6 : 1,
+                })}
+              >
+                <GlassText variant="body" tone="soft" style={{ textAlign: 'center' }}>
+                  {useMock ? 'Have a rider login? ' : 'No login yet? '}
+                  <GlassText variant="bodyStrong" tone="orange">
+                    {useMock ? 'Sign in instead' : 'Try the demo'}
+                  </GlassText>
                 </GlassText>
-              </GlassText>
-            </Pressable>
+              </Pressable>
+            )}
 
             {/* ── More settings ─────────────────────────────────────── */}
-            <Pressable
-              onPress={() => setMoreOpen((v) => !v)}
-              accessibilityRole="button"
-              accessibilityState={{ expanded: moreOpen }}
-              style={({ pressed }) => ({
-                flexDirection: 'row',
-                alignItems: 'center',
-                justifyContent: 'center',
-                marginTop: gspace.md,
-                paddingVertical: gspace.sm,
-                opacity: pressed ? 0.6 : 1,
-              })}
-            >
-              <GlassIcon name="settings" size={16} color={glass.inkSoft} />
-              <GlassText variant="caption" tone="soft" style={{ marginHorizontal: gspace.xs }}>
-                More settings
-              </GlassText>
-              <GlassIcon name={moreOpen ? 'chevUp' : 'chevDown'} size={14} color={glass.inkSoft} />
-            </Pressable>
+            {locked ? null : (
+              <Pressable
+                onPress={() => setMoreOpen((v) => !v)}
+                accessibilityRole="button"
+                accessibilityState={{ expanded: moreOpen }}
+                style={({ pressed }) => ({
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  marginTop: gspace.md,
+                  paddingVertical: gspace.sm,
+                  opacity: pressed ? 0.6 : 1,
+                })}
+              >
+                <GlassIcon name="settings" size={16} color={glass.inkSoft} />
+                <GlassText variant="caption" tone="soft" style={{ marginHorizontal: gspace.xs }}>
+                  More settings
+                </GlassText>
+                <GlassIcon name={moreOpen ? 'chevUp' : 'chevDown'} size={14} color={glass.inkSoft} />
+              </Pressable>
+            )}
 
-            {moreOpen ? (
+            {moreOpen && !locked ? (
               <GlassCard style={{ marginTop: gspace.sm }} padding={gspace.xl}>
                 {/* Outside the demo branch on purpose: who a rider calls when
                     they are stuck has nothing to do with which server the app
