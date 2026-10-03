@@ -1,4 +1,6 @@
+import { Platform } from 'react-native';
 import { getServer } from '../config';
+import { syncClock } from '../../lib/clock';
 import { Action, ApiError, ApiErrorCode, DeliveryStatus } from '../types';
 import { clearTokens, getTokens, saveTokens, Tokens } from './auth';
 
@@ -53,6 +55,9 @@ const KNOWN_CODES: ApiErrorCode[] = [
   'bad_input',
   'proof_needed',
   'disabled',
+  'offer_expired',
+  'no_device',
+  'bad_request',
 ];
 
 function toCode(raw: unknown): ApiErrorCode {
@@ -123,6 +128,12 @@ export interface RequestOptions {
    * stop", on a location fix.
    */
   allowRefusal?: boolean;
+  /**
+   * The Idempotency-Key to send instead of a fresh one. Only the outbox sets
+   * it: a queued step keeps the key it was first queued with, so a re-send
+   * whose first answer was lost on the way back cannot run the step twice.
+   */
+  idempotencyKey?: string;
 }
 
 interface Raw {
@@ -222,12 +233,24 @@ function readTokens(payload: Envelope, previous?: Tokens | null): Tokens | null 
 }
 
 /**
+ * The phone, as Odoo lists the session under Delivery ▸ App Sessions — so the
+ * office can tell one rider's tablet from their phone. Sent with sign-in and
+ * every refresh.
+ */
+function deviceName(): string {
+  const c = Platform.constants as { Brand?: string; Model?: string } | undefined;
+  return [c?.Brand, c?.Model].filter(Boolean).join(' ') || Platform.OS;
+}
+
+/**
  * One refresh at a time: every call that met the 401 waits on the same one.
  *
- * `auth/refresh` takes the token itself - in the header, and in the body too in
+ * `auth/refresh` trades the `refresh_token` from sign-in, and both tokens
+ * rotate. The access token goes along too - in the header, and in the body in
  * case an expired one no longer passes the header check. Resolves to the new
- * token, or `null` when Odoo refused it - the only proof the session is over. A
- * transport fault rejects instead, so a rider in a dead spot is not signed out.
+ * tokens, or `null` when Odoo refused them - the only proof the session is
+ * over. A transport fault rejects instead, so a rider in a dead spot is not
+ * signed out.
  */
 let refreshing: Promise<Tokens | null> | null = null;
 
@@ -239,8 +262,11 @@ function refreshTokens(previous: Tokens): Promise<Tokens | null> {
         {
           method: 'POST',
           body: {
-            token: previous.access,
+            // The contract trades the refresh token; the old access token rides
+            // along for a server that predates it.
             ...(previous.refresh ? { refresh_token: previous.refresh } : {}),
+            token: previous.access,
+            device: deviceName(),
           },
         },
         previous.access,
@@ -270,7 +296,7 @@ async function expireSession(): Promise<never> {
 }
 
 export async function request<T>(path: string, opts: RequestOptions = {}): Promise<T> {
-  const key = uuid();
+  const key = opts.idempotencyKey ?? uuid();
   const tokens = opts.anonymous ? null : await getTokens();
   if (!opts.anonymous && !tokens) {
     throw new ApiError('unauthorized', 'Sign in to continue.');
@@ -287,6 +313,12 @@ export async function request<T>(path: string, opts: RequestOptions = {}): Promi
     raw = await send(path, opts, next.access, key);
     if (isUnauthorized(raw)) return expireSession();
   }
+
+  // Every reply that carries the server's clock sets ours, not only the orders
+  // poll: the offer countdown reads it, and a poll that stalls left it on the
+  // phone's own clock - the test tablet ran two minutes fast and showed a live
+  // offer as expired.
+  if (typeof raw.payload.server_time === 'string') syncClock(raw.payload.server_time);
 
   const failed = raw.status >= 400 || raw.payload.success === false;
   if (failed && !(opts.allowRefusal && raw.status < 500 && !isUnauthorized(raw))) {
@@ -333,7 +365,7 @@ export async function verifyCode(phone: string, code: string): Promise<void> {
   try {
     r = await request<Envelope>('/api/delivery/auth/verify-code', {
       method: 'POST',
-      body: { mobile, code: code.trim() },
+      body: { mobile, code: code.trim(), device: deviceName() },
       anonymous: true,
     });
   } catch (err) {

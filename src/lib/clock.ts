@@ -54,6 +54,17 @@ export function serverNow(): number {
   return Date.now() + offsetMs;
 }
 
+/**
+ * Whole seconds from the server's now until `raw`, never below zero. Null
+ * when there is no time to count to.
+ */
+export function secondsUntil(raw: string | undefined, now = serverNow()): number | null {
+  if (!raw) return null;
+  const at = Date.parse(asUtc(raw));
+  if (Number.isNaN(at)) return null;
+  return Math.max(0, Math.ceil((at - now) / 1000));
+}
+
 /** How far the phone's clock is out, in milliseconds. Diagnostics only. */
 export function clockOffsetMs(): number {
   return offsetMs;

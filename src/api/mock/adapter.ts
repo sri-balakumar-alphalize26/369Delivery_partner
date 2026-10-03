@@ -6,6 +6,7 @@ import {
   DeliveryOrder,
   DeliveryStatus,
   DutyResult,
+  HistoryResponse,
   Identity,
   inBucket,
   LocationResult,
@@ -175,10 +176,14 @@ const TIMESTAMP_FOR: Partial<Record<DeliveryStatus, keyof OrderTimestamps>> = {
   delivered: 'delivered',
 };
 
+/** When each job reached a terminal state, for /history's `finished_at`. */
+const finishedAt = new Map<number, string>();
+
 function advance(o: DeliveryOrder, to: DeliveryStatus): ActionResult {
   o.delivery_status = to;
   o.allowed_actions = ACTIONS_FOR[to];
   o.tracking = { enabled: state.tracking };
+  if (TERMINAL.includes(to)) finishedAt.set(o.delivery_order_id, utcNow());
 
   /**
    * Stamp the step, as res-test1 does.
@@ -342,6 +347,20 @@ export const mockAdapter: ApiAdapter = {
       timezone: MOCK_TIMEZONE,
       server_time: utcNow(),
     };
+  },
+
+  /** What `orders()` drops: every terminal job, newest first. */
+  async history(limit = 50): Promise<HistoryResponse> {
+    guard();
+    const jobs = [...state.orders, ...state.finished]
+      .filter((o) => TERMINAL.includes(o.delivery_status))
+      .map((o) => ({
+        ...o,
+        finished_at: finishedAt.get(o.delivery_order_id) ?? o.delivered_at ?? o.promised_by,
+      }))
+      .sort((a, b) => b.finished_at.localeCompare(a.finished_at))
+      .slice(0, limit);
+    return { jobs, timezone: MOCK_TIMEZONE, earnings: 0 };
   },
 
   async order(id) {

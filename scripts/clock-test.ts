@@ -11,7 +11,14 @@
  *         --target es2020 --skipLibCheck --esModuleInterop && node <dir>/scripts/clock-test.js
  */
 
-import { clockOffsetMs, clockSynced, resetClock, serverNow, syncClock } from '../src/lib/clock';
+import {
+  clockOffsetMs,
+  clockSynced,
+  resetClock,
+  secondsUntil,
+  serverNow,
+  syncClock,
+} from '../src/lib/clock';
 import { dueIn, onDutyFor } from '../src/lib/format';
 
 let passed = 0;
@@ -99,6 +106,14 @@ eq('two and a quarter hours', onDutyFor('2026-09-08T09:45:00Z', BASE), '2h 15m')
 eq('under an hour is minutes only', onDutyFor('2026-09-08T11:20:00Z', BASE), '40m');
 check('off duty sends an empty string, and gets nothing', onDutyFor('', BASE) === null);
 check('a future start is refused rather than shown negative', onDutyFor('2026-09-08T13:00:00Z', BASE) === null);
+
+console.log('\nOffer countdown');
+eq('42 s left on the offer', secondsUntil('2026-09-08T12:00:42Z', BASE), 42);
+eq('a part second rounds up, never shows 0 early', secondsUntil('2026-09-08T12:00:00.300Z', BASE), 1);
+eq('past the limit is zero, not negative', secondsUntil('2026-09-08T11:59:30Z', BASE), 0);
+eq('a naked timestamp is read as UTC', secondsUntil('2026-09-08T12:01:00', BASE), 60);
+check('no expiry means no countdown', secondsUntil(undefined, BASE) === null);
+check('an unparseable expiry means no countdown', secondsUntil('soon', BASE) === null);
 
 console.log(`\n${passed} passed, ${failed} failed\n`);
 process.exit(failed === 0 ? 0 : 1);

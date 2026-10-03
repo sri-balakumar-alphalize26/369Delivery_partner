@@ -106,6 +106,27 @@ export function isAtShop(status: DeliveryStatus): boolean {
   return AT_SHOP_STATES.includes(status);
 }
 
+/**
+ * The states Odoo wants positions in: from Accept until Delivered (rider plan
+ * rev 2, section 6b). The customer's tracking page and the shop's Live Tracking
+ * draw nothing else.
+ */
+export const TRACKED_STATES: readonly DeliveryStatus[] = [
+  'accepted',
+  'picked',
+  'dispatched',
+  'out_for_delivery',
+];
+
+/**
+ * Whether a reply or a job wants the location service on. The server's own
+ * `tracking` flag wins; the state answers for a reply that carries none.
+ */
+export function trackingWanted(status: DeliveryStatus | undefined, tracking?: Tracking): boolean {
+  if (tracking) return tracking.enabled;
+  return !!status && TRACKED_STATES.includes(status);
+}
+
 export type DeliveryStatus =
   /**
    * The store flow's three steps before a rider is called — the rider is
@@ -153,6 +174,17 @@ export const DELIVERY_REASONS = [
 ] as const;
 
 export type DeliveryReason = (typeof DELIVERY_REASONS)[number]['code'];
+
+/**
+ * Why a rider turns an offer down. Free text on the server, read by the shop
+ * deciding who to call next, so plain words rather than codes.
+ */
+export const DECLINE_REASONS = [
+  { code: 'too far', label: 'Too far from me' },
+  { code: 'busy', label: 'I am busy right now' },
+  { code: 'vehicle problem', label: 'Problem with my vehicle' },
+  { code: 'other', label: 'Something else' },
+] as const;
 
 export type PaymentStatus = 'cod' | 'paid';
 export type DeliveryType = 'quick' | 'express';
@@ -223,8 +255,12 @@ export interface DeliveryOrder {
   customer_name: string;
   customer_mobile: string;
   delivery_address: string;
-  /** Object since N2; string before it. Render via `shopName()`. */
-  shop: Shop | string;
+  /**
+   * Object since N2; string before it; null when the job has no shop, which
+   * DUBAI_TEST sends for every job made before a shop existed. Render via
+   * `shopName()`, read fields via `shopInfo()`.
+   */
+  shop: Shop | string | null;
   /** e.g. "1 item(s) - 2 unit(s)". Ships alongside the shop object. */
   items_summary?: string;
 
@@ -240,6 +276,15 @@ export interface DeliveryOrder {
    * not match the server's.
    */
   promised_by: string;
+
+  /**
+   * While `offered`: when the offer lapses and goes to the next rider (UTC,
+   * `Z`). Count down against the server's clock (`lib/clock`), never the
+   * phone's. The shop sets the limit, 60 s by default.
+   */
+  offer_expires_at?: string;
+  /** Which call this is for the job: 1 for the first rider asked. */
+  offer_round?: number;
 
   allowed_actions: Action[];
 
@@ -318,6 +363,23 @@ export interface OrdersResponse {
   server_time?: string;
 }
 
+/**
+ * A finished job on `GET /history`: the same shape as a live one, plus when it
+ * ended. Live it has only been seen through `scripts/live-check.mjs`, which
+ * reads rows from `history`, falling back to `orders` — so both are accepted.
+ */
+export interface PastJob extends DeliveryOrder {
+  /** UTC, ending in `Z`, like `promised_by`. */
+  finished_at?: string;
+}
+
+export interface HistoryResponse {
+  jobs: PastJob[];
+  timezone?: string;
+  /** Always 0 today: Odoo has no pay model yet. Never shown as money. */
+  earnings?: number;
+}
+
 export interface Rider {
   id: number;
   name: string;
@@ -366,6 +428,10 @@ export interface DutyResult {
   duty_since: string;
   jobs_picked_up: number;
   message?: string;
+  /** `off`, `idle` (on duty, free) or `busy` (a job in hand) — what the shop sees. */
+  fleet_state?: 'off' | 'idle' | 'busy';
+  /** The area the clock-on fix fell in, e.g. "al Azaiba, Muscat". Only with a fix. */
+  address_short?: string;
   /** With `delivery_fleet_ops`: the vehicle now in hand, null once given back. */
   vehicle?: Vehicle | null;
 }
@@ -442,6 +508,8 @@ export interface LocationResult {
   /** True means the delivery is over — stop the location service at once. */
   stop: boolean;
   status: DeliveryStatus;
+  /** When to send the next fix: 20 s on the way, 10 s near the customer. */
+  poll_after_seconds?: number;
 }
 
 /** Error codes the server actually returns. */
@@ -470,6 +538,11 @@ export type ApiErrorCode =
   | 'proof_needed'
   // Fuel and problem logs switched off in Delivery Settings.
   | 'disabled'
+  // An Accept that came after the offer's time limit: it has gone to the next rider.
+  | 'offer_expired'
+  // A push token registered without a bearer session.
+  | 'no_device'
+  | 'bad_request'
   | 'no_database'
   | 'network'
   | 'unknown';
@@ -540,6 +613,12 @@ export interface Identity {
   currency: Currency;
   /** Absent on a server without `delivery_fleet_ops`. */
   fleet?: FleetInfo;
+  /**
+   * What the rider API offers beyond the fleet block: `location` (the on-duty
+   * heartbeat) and `track_from_accept`. The REST adapter fills it in — the
+   * API carries no such list of its own.
+   */
+  features?: string[];
 }
 
 /**
@@ -566,8 +645,12 @@ export interface ApiAdapter {
 
   me(): Promise<Identity>;
 
-  /** `vehicleId` only when `me` carried a `fleet` block. */
-  duty(on: boolean, vehicleId?: number): Promise<DutyResult>;
+  /**
+   * `vehicleId` only when `me` carried a `fleet` block. `fix` goes with
+   * clocking on: the shop's "Call a Rider" ranks riders by it from the first
+   * minute, and the answer names the area it fell in.
+   */
+  duty(on: boolean, vehicleId?: number, fix?: Fix | null): Promise<DutyResult>;
 
   /** Vehicles free for this rider. Only when `me` carried a `fleet` block. */
   vehicles(): Promise<VehiclesResponse>;
@@ -590,6 +673,8 @@ export interface ApiAdapter {
 
   orders(): Promise<OrdersResponse>;
   order(id: number): Promise<DeliveryOrder>;
+  /** Finished work, newest first. Jobs leave `orders()` the moment they end. */
+  history(limit?: number): Promise<HistoryResponse>;
 
   accept(id: number): Promise<ActionResult>;
   /** Say no to an offer. On success the job is gone from this rider's list. */
@@ -602,13 +687,18 @@ export interface ApiAdapter {
   arrivedAtShop(id: number, fix?: Fix | null): Promise<ActionResult>;
   requestPickupOtp(id: number): Promise<ActionResult>;
   verifyPickupOtp(id: number, otp: string): Promise<ActionResult>;
-  dispatch(id: number): Promise<ActionResult>;
-  start(id: number): Promise<ActionResult>;
+  /*
+   * `key` on the steps below is the Idempotency-Key. Only the outbox passes
+   * one: a step tapped with no signal is re-sent under the key it was first
+   * queued with, so a send whose answer was lost cannot run twice.
+   */
+  dispatch(id: number, key?: string): Promise<ActionResult>;
+  start(id: number, key?: string): Promise<ActionResult>;
   /**
    * At the door: Odoo sends the customer their code, or a fresh one that voids
    * the last. Never in `allowed_actions`; the job screen calls it itself.
    */
-  reachedCustomer(id: number): Promise<ActionResult>;
+  reachedCustomer(id: number, key?: string): Promise<ActionResult>;
   verifyDeliveryOtp(id: number, otp: string): Promise<ActionResult>;
 
   sendLocation(
@@ -652,7 +742,7 @@ export interface ApiAdapter {
     grounded?: boolean;
   }): Promise<LogResult>;
 
-  returnToShop(id: number, reason?: string): Promise<ActionResult>;
+  returnToShop(id: number, reason?: string, key?: string): Promise<ActionResult>;
   confirmReturn(id: number): Promise<ActionResult>;
-  reportIssue(id: number, note: string): Promise<ActionResult>;
+  reportIssue(id: number, note: string, key?: string): Promise<ActionResult>;
 }

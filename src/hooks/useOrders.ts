@@ -1,7 +1,15 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/endpoints';
 import { syncClock } from '../lib/clock';
-import { DeliveryOrder, DutyResult, OrdersResponse, TakeVehicleResult } from '../api/types';
+import { currentFix } from '../location/currentFix';
+import { riderBeatReset } from '../location/riderBeat';
+import {
+  DeliveryOrder,
+  DutyResult,
+  HistoryResponse,
+  OrdersResponse,
+  TakeVehicleResult,
+} from '../api/types';
 import { useSession } from '../store/session';
 
 /**
@@ -40,6 +48,23 @@ export function useOrders() {
 }
 
 /**
+ * Finished jobs, for the Past list.
+ *
+ * Not polled: the past only grows when this rider finishes something, and the
+ * job screen invalidates `['history']` when they do. Opening the list refetches
+ * it too, which covers a job the office closed.
+ */
+export function useHistory(enabled = true) {
+  const connected = useSession((s) => s.connected);
+
+  return useQuery<HistoryResponse>({
+    queryKey: ['history'],
+    queryFn: () => api.history(),
+    enabled: connected && enabled,
+  });
+}
+
+/**
  * Clocking on or off.
  *
  * The contract is clear that duty is what makes work flow at all: nothing is
@@ -58,7 +83,17 @@ export function useDuty() {
   const applyDuty = useSession((s) => s.applyDuty);
 
   return useMutation<DutyResult, Error, DutyInput, { previous?: OrdersResponse }>({
-    mutationFn: ({ on, vehicleId }) => api.duty(on, vehicleId),
+    /**
+     * Clocking on takes the phone's position along — the one it already holds,
+     * or a fresh one for up to five seconds — so the shop can rank this rider
+     * by distance from the first minute. Never asks for permission, and never
+     * holds the switch up: no fix, and the rider goes on duty without one.
+     */
+    mutationFn: async ({ on, vehicleId }) => {
+      const fix = on ? await currentFix() : null;
+      if (on) riderBeatReset();
+      return api.duty(on, vehicleId, fix);
+    },
 
     /**
      * Show the tap at once, by patching the cached orders response.
