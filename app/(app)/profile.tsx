@@ -1,11 +1,15 @@
+import Constants from 'expo-constants';
 import { useRouter } from 'expo-router';
-import { useState } from 'react';
-import { RefreshControl, ScrollView, Switch, View } from 'react-native';
+import { useEffect, useState } from 'react';
+import { Pressable, RefreshControl, ScrollView, Switch, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { isMock } from '../../src/api/endpoints';
 import { mockFlags } from '../../src/api/mock/adapter';
 import { MOCK_DELIVERY_OTP, MOCK_PICKUP_OTP } from '../../src/api/mock/fixtures';
-import { stopTracking, trackedOrderId } from '../../src/location/tracking';
+import { SERVER_LOCKED } from '../../src/api/config';
+import { clearOutbox } from '../../src/api/outbox';
+import { getNavApp, NAV_APPS, NavApp, setNavApp } from '../../src/lib/navigate';
+import { stopDutyWatch, stopTracking, trackedOrderId } from '../../src/location/tracking';
 import {
   currentPushToken,
   sendTestNotification,
@@ -41,6 +45,15 @@ export default function Profile() {
 
   const [steal, setSteal] = useState(mockFlags.stealNextOrder);
   const [offline, setOffline] = useState(mockFlags.offline);
+
+  const [navApp, setNavAppState] = useState<NavApp>('google');
+  useEffect(() => {
+    getNavApp().then(setNavAppState);
+  }, []);
+  const chooseNavApp = (app: NavApp) => {
+    setNavAppState(app);
+    void setNavApp(app);
+  };
 
   const mock = isMock();
 
@@ -111,17 +124,54 @@ export default function Profile() {
           {/* Read-only here — Home owns the control, so there is one source of
               truth for a state the server holds anyway. */}
           <Row label="Duty" value={rider?.on_duty ? 'On duty' : 'Off duty'} />
-          <Row label="Mode" value={mock ? 'Demo data' : 'Live server'} last={mock} />
+          <Row label="Mode" value={mock ? 'Demo data' : 'Live server'} />
           {!mock ? (
             <>
               <Row label="Database" value={server?.db || '—'} />
-              <Row
-                label="Server"
-                value={server?.url?.replace(/^https?:\/\//, '') || '—'}
-                last
-              />
+              <Row label="Server" value={server?.url?.replace(/^https?:\/\//, '') || '—'} />
             </>
           ) : null}
+          {/* What support asks first: which build the rider is running. */}
+          <Row
+            label="App version"
+            value={Constants.expoConfig?.version ?? '—'}
+            last
+          />
+        </GlassCard>
+
+        {/* Which app the Navigate buttons hand over to. A phone-wide choice,
+            not a server setting, so it lives here and on the phone only. */}
+        <GlassCard style={{ marginTop: gspace.lg }}>
+          <GlassText variant="label" tone="soft" upper>
+            Navigation app
+          </GlassText>
+          <View style={{ flexDirection: 'row', gap: gspace.sm, marginTop: gspace.md }}>
+            {NAV_APPS.map((a) => {
+              const on = navApp === a.key;
+              return (
+                <Pressable
+                  key={a.key}
+                  onPress={() => chooseNavApp(a.key)}
+                  accessibilityRole="radio"
+                  accessibilityState={{ selected: on }}
+                  style={({ pressed }) => ({
+                    flex: 1,
+                    alignItems: 'center',
+                    paddingVertical: gspace.md,
+                    borderRadius: gradius.button,
+                    borderWidth: 1,
+                    borderColor: on ? glass.ink : glass.border,
+                    backgroundColor: on ? glass.ink : glass.fill,
+                    opacity: pressed ? 0.7 : 1,
+                  })}
+                >
+                  <GlassText variant="bodyStrong" style={{ color: on ? glass.white : glass.inkSoft }}>
+                    {a.label}
+                  </GlassText>
+                </Pressable>
+              );
+            })}
+          </View>
         </GlassCard>
 
         {mock ? (
@@ -197,12 +247,15 @@ export default function Profile() {
               onPress={() => router.push('/vehicle')}
             />
           ) : null}
-          <GlassButton
-            title="Change connection"
-            kind="ghost"
-            icon="compass"
-            onPress={() => router.push('/connect')}
-          />
+          {/* A locked build's server is not the rider's to change. */}
+          {SERVER_LOCKED ? null : (
+            <GlassButton
+              title="Change connection"
+              kind="ghost"
+              icon="compass"
+              onPress={() => router.push('/connect')}
+            />
+          )}
           <GlassButton
             title="Sign out"
             kind="danger"
@@ -211,7 +264,10 @@ export default function Profile() {
               // to, a rider who has left. Both happen BEFORE disconnect, while
               // the session can still authenticate the calls.
               if (trackedOrderId() !== null) await stopTracking();
+              await stopDutyWatch();
               await unregisterCurrentPush();
+              // Steps still waiting for signal were this rider's, not the next one's.
+              clearOutbox();
               await disconnect();
               router.replace('/connect');
             }}
