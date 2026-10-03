@@ -17,19 +17,16 @@ import { GlassText } from '../../src/ui/glass/GlassText';
 /**
  * The rider's day.
  *
- * The template shows a week's total, a by-day breakdown, bonuses, tips and a
- * scheduled payout. **None of it exists.** There is no pay model in Odoo: no
- * per-order fee, no bonus, no tip and no payout on any endpoint, and `/orders`
- * returns active jobs only so nothing can be totalled on the client either. A
- * figure invented here would be read by someone deciding whether they can afford
- * petrol, which is the worst possible place to guess.
+ * Since delivery 19.0.21.5.0 the server has a pay model, for Delivery Partners
+ * only (`rider.kind = "third_party"`): a fee per trip, totalled on `/history`
+ * for today, the week, the month and all time. Those lead the screen for a
+ * partner, as the server formats them. The app still never works pay out
+ * itself — a figure guessed here would be read by someone deciding whether they
+ * can afford petrol. Own riders are on salary and see no pay.
  *
- * That refusal stands. What changed is what leads: the screen used to open with
- * a card about the absence, so a rider opening it learned only that the app had
- * nothing for them. Three real things go first instead — what they have
- * delivered, how long they have been out, and how much of someone else's money
- * they are carrying. The last of those is arguably what a rider most wants from
- * this tab, and it has been derivable all along.
+ * Then what every rider has: what they have delivered (today's count, not the
+ * all-time one), how long they have been out, and how much of someone else's
+ * money they are carrying.
  */
 export default function Earnings() {
   const insets = useSafeAreaInsets();
@@ -67,6 +64,11 @@ export default function Earnings() {
     }, [refetchHistory])
   );
   const collected = cashToday(history.data?.jobs, now, history.data?.timezone ?? timezone);
+
+  /** Paid per trip, so this tab shows their pay; own riders are on salary. */
+  const partner = rider?.kind === 'third_party';
+  const rawPay = history.data?.earnings;
+  const pay = rawPay && typeof rawPay === 'object' ? rawPay : null;
 
   return (
     <GlassScreen>
@@ -112,13 +114,50 @@ export default function Earnings() {
           />
         ) : null}
 
+        {/* A Delivery Partner's pay, first, because it is what they open this
+            tab for. Read from /history exactly as the server formats it; the
+            app never works pay out. Own riders are on salary and see none. */}
+        {partner ? (
+          <GlassCard style={{ marginBottom: gspace.lg }}>
+            <GlassText variant="caption" tone="soft">
+              Earned today
+            </GlassText>
+            {pay ? (
+              <>
+                <GlassText variant="amount" tone="green" nums style={{ marginTop: 2 }}>
+                  {pay.today?.formatted ?? '—'}
+                </GlassText>
+                <View style={{ flexDirection: 'row', gap: gspace.sm, marginTop: gspace.lg }}>
+                  <Tile label="This week" value={pay.week?.formatted ?? '—'} />
+                  <Tile label="This month" value={pay.month?.formatted ?? '—'} />
+                  <Tile label="All time" value={pay.total?.formatted ?? pay.formatted ?? '—'} />
+                </View>
+              </>
+            ) : (
+              <GlassText variant="body" tone="soft" style={{ marginTop: gspace.sm }}>
+                {history.isLoading
+                  ? 'Checking your earnings…'
+                  : 'This server does not send pay yet.'}
+              </GlassText>
+            )}
+          </GlassCard>
+        ) : null}
+
         <GlassCard>
+          {/* Today's, not all time: `counts.delivered` counts every job ever,
+              which is why this read high. An older server sends no dated
+              counts, and the all-time figure is then all there is. */}
           <GlassText variant="caption" tone="soft">
             Delivered today
           </GlassText>
           <GlassText variant="amount" nums style={{ marginTop: 2 }}>
-            {counts?.delivered ?? 0}
+            {counts?.delivered_today ?? counts?.delivered ?? 0}
           </GlassText>
+          {counts?.delivered_week !== undefined ? (
+            <GlassText variant="caption" tone="soft" nums style={{ marginTop: 2 }}>
+              {counts.delivered_week} this week · {counts.delivered_month ?? 0} this month
+            </GlassText>
+          ) : null}
 
           <View style={{ flexDirection: 'row', gap: gspace.sm, marginTop: gspace.lg }}>
             <Tile label="On road" value={String(counts?.out_for_delivery ?? 0)} />
@@ -204,16 +243,16 @@ export default function Earnings() {
           once the server supports it.
         </GlassText>
 
-        {/* Quiet, at the foot. It was the whole screen before, which told a
-            rider only what the app could not do for them. */}
-        <GlassText
-          variant="caption"
-          tone="faint"
-          style={{ marginTop: gspace.xxl, textAlign: 'center' }}
-        >
-          Rider pay, bonuses and tips are not sent by the server yet. When they
-          are, they will appear here.
-        </GlassText>
+        {/* Quiet, at the foot: why an own rider sees no pay here. */}
+        {partner ? null : (
+          <GlassText
+            variant="caption"
+            tone="faint"
+            style={{ marginTop: gspace.xxl, textAlign: 'center' }}
+          >
+            You are a staff rider on salary, so trips show no pay here.
+          </GlassText>
+        )}
       </ScrollView>
     </GlassScreen>
   );

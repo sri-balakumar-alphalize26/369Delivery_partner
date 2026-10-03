@@ -62,6 +62,11 @@ export default function Home() {
   // Only a server with delivery_fleet_ops sends this; without it the switch
   // clocks on directly, as it always has.
   const fleet = useSession((s) => s.fleet);
+  // A Delivery Partner with the shop's partner riders switched off: nothing
+  // will be offered, however long they stay on duty, so say so.
+  const partnerIdle = useSession(
+    (s) => s.rider?.kind === 'third_party' && s.thirdPartyEnabled === false
+  );
   // Settings the office changed since this phone opened (vehicles, sharing).
   useRefreshOnFocus();
   const [pickingVehicle, setPickingVehicle] = useState(false);
@@ -275,6 +280,13 @@ export default function Home() {
           {onDuty ? <DutyWatchRow /> : null}
         </GlassCard>
 
+        {partnerIdle ? (
+          <GlassProblem
+            tone="quiet"
+            message="The shop is not using partner riders right now, so no offers will arrive. Your history and pay are still here."
+          />
+        ) : null}
+
         <VehicleSheet
           visible={pickingVehicle}
           onDuty={onDuty}
@@ -318,15 +330,21 @@ export default function Home() {
         ) : null}
 
         <GlassCard style={{ marginTop: gspace.lg }}>
-          {/* Alone among the four, this one does not open anything: delivered
-              rows are dropped from /orders and there is no history call to ask
-              for them, so there is no list behind the number to show. */}
+          {/* Today's deliveries, in the rider's timezone. `counts.delivered`
+              is all time, which is why this read too high; delivery
+              19.0.21.5.0 added the dated counts. An older server sends none,
+              and the all-time figure is then the only one there is. */}
           <GlassText variant="caption" tone="soft">
             Delivered today
           </GlassText>
           <GlassText variant="amount" nums style={{ marginTop: 2 }}>
-            {counts?.delivered ?? 0}
+            {counts?.delivered_today ?? counts?.delivered ?? 0}
           </GlassText>
+          {counts?.delivered_week !== undefined ? (
+            <GlassText variant="caption" tone="soft" nums style={{ marginTop: 2 }}>
+              {counts.delivered_week} this week · {counts.delivered_month ?? 0} this month
+            </GlassText>
+          ) : null}
 
           {/* Cash rides in this card's corner rather than a card of its own at
               the foot of the list: it is a figure about the day, like the ones
