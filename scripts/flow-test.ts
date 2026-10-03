@@ -21,6 +21,7 @@ import {
   inBucket,
 } from '../src/api/types';
 import { coords, shopInfo, shopName } from '../src/lib/format';
+import { resolveServer } from '../src/api/serverConfig';
 
 let passed = 0;
 let failed = 0;
@@ -398,7 +399,70 @@ async function main() {
   console.log('\n=== 13. No signal ===');
   mockFlags.offline = true;
   await expectError('any call while offline -> network', () => api.orders(), 'network');
+  // The outbox queues on exactly this code, so a step must fail with it too.
+  await expectError('a step while offline -> network', () => api.start(secondId), 'network');
+  await expectError('history while offline -> network', () => api.history(), 'network');
   mockFlags.offline = false;
+
+  console.log('\n=== 14. Past jobs ===');
+  const past = await api.history();
+  const TERMINAL_STATES = ['delivered', 'returned', 'cancelled', 'failed'];
+  check(
+    'the delivered job is in the past list',
+    past.jobs.some((j) => j.delivery_order_id === id && j.delivery_status === 'delivered')
+  );
+  check(
+    'only finished jobs are past',
+    past.jobs.every((j) => TERMINAL_STATES.includes(j.delivery_status)),
+    past.jobs.map((j) => j.delivery_status).join(',')
+  );
+  check('every past job says when it finished', past.jobs.every((j) => !!j.finished_at));
+  check(
+    'newest first',
+    past.jobs.every((j, i, a) => i === 0 || (a[i - 1].finished_at ?? '') >= (j.finished_at ?? ''))
+  );
+  const activeNow = await api.orders();
+  check(
+    'a past job is never also active',
+    !activeNow.orders.some((o) => past.jobs.some((j) => j.delivery_order_id === o.delivery_order_id))
+  );
+  check('past rows carry a usable shop name', past.jobs.every((j) => typeof shopName(j.shop) === 'string'));
+  check('history is capped by its limit', (await api.history(1)).jobs.length <= 1);
+  // The Past job page lays the full record over the history row when it can.
+  const pastDetail = await api.order(id);
+  check(
+    'a finished job still opens, with its step times',
+    pastDetail.delivery_status === 'delivered' && !!pastDetail.timestamps?.delivered,
+    pastDetail.delivery_status
+  );
+
+  console.log('\n=== 15. A locked build keeps its own server ===');
+  const build = {
+    url: 'https://live.example.com',
+    db: 'LIVE',
+    login: '',
+    supportPhone: '+971500000000',
+    orsKey: 'build-key',
+    useMock: false,
+  };
+  const savedTest = {
+    url: 'https://test.example.com/',
+    db: 'DUBAI_TEST',
+    login: '971000000369',
+    supportPhone: '',
+    orsKey: '',
+    useMock: true,
+  };
+  const lockedCfg = resolveServer(build, savedTest, true);
+  check('locked: the build\'s address wins over a saved one', lockedCfg.url === build.url, lockedCfg.url);
+  check('locked: the build\'s database wins', lockedCfg.db === 'LIVE', lockedCfg.db);
+  check('locked: demo mode cannot be switched on from storage', lockedCfg.useMock === false);
+  check('locked: support number comes from the build', lockedCfg.supportPhone === build.supportPhone);
+  check('locked: the rider\'s number is still remembered', lockedCfg.login === '971000000369');
+  const openCfg = resolveServer(build, savedTest, false);
+  check('unlocked: a saved address still wins (the test tunnel moves)', openCfg.url === 'https://test.example.com');
+  check('unlocked: a saved demo choice still wins', openCfg.useMock === true);
+  check('nothing saved: the build as it is', resolveServer(build, null, true).url === build.url);
 
   console.log(`\n${passed} passed, ${failed} failed\n`);
   process.exit(failed === 0 ? 0 : 1);

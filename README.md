@@ -61,9 +61,10 @@ The live adapter talks to the WhatsApp delivery module's own rider API
 Odoo's job form ([`src/api/rest/client.ts`](src/api/rest/client.ts)). Every
 call carries `X-Odoo-Database` and the rider's Bearer token.
 
-The contract is the senior's *Delivery_Developer_Flow.pdf*, section 3 (served
-from `/sales_automation_manual/static/manual/`). `/api/sa/*` in
-*Full_Flow_API.pdf* is the shop/admin app's API, not this one's.
+The contract is the senior's *Rider_App_Developer_Plan.pdf* (rev 2, served
+from `/sales_automation_manual/static/manual/`; *Delivery_Developer_Flow.pdf*
+section 3 before it). `/api/sa/*` in *Full_Flow_API.pdf* is the shop/admin
+app's API, not this one's.
 
 A rider signs in with the WhatsApp number on their rider record (Delivery →
 Configuration → Riders & Couriers): `auth/request-code {mobile}` sends a
@@ -82,6 +83,22 @@ accept → pickup/verify-otp → dispatch   Collect (one tap: "Collected by Ride
 
 `arrived` is never in `allowed_actions` - Odoo offers the code from "near" on -
 so the job screen shows "Reached" itself until the code has been sent.
+
+Before those steps, and around them:
+
+- **Duty.** Clocking on sends the phone's position with `POST /duty`; Home
+  shows the area Odoo names it (`address_short`). While on duty the app sends
+  `POST /rider/location` at the server's pace (`poll_after_seconds`: 2 min
+  waiting, 30 s with a job) - the shop's "Call a Rider" ranks riders by it.
+- **Offers.** One rider at a time, with a time limit: the offer screen counts
+  down to `offer_expires_at` against the server's clock. **Decline** asks an
+  optional reason (`POST /decline`); the next rider is called at once. An
+  Accept that comes too late gets `offer_expired`, and the app says so.
+- **Live tracking.** From Accept until Delivered the app sends
+  `POST /location {delivery_order_id, latitude, longitude, accuracy}` at the
+  pace each reply sets (20 s on the way, 10 s near the customer) and stops on
+  `stop: true`. That is the dot on the customer's tracking page and the shop's
+  Live Tracking.
 
 `scripts/live-check.mjs` checks the live shapes against the app's parsers:
 `send-code <phone>` first, then `check <format.js> --phone <phone> --code <code>`.
