@@ -1,8 +1,11 @@
+import { useFocusEffect } from 'expo-router';
+import { useCallback } from 'react';
 import { RefreshControl, ScrollView, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNow } from '../../src/hooks/useNow';
-import { sortForRider, useOrders } from '../../src/hooks/useOrders';
-import { money, onDutyFor } from '../../src/lib/format';
+import { sortForRider, useHistory, useOrders } from '../../src/hooks/useOrders';
+import { cashToday } from '../../src/lib/cash';
+import { money, onDutyFor, timeOnly } from '../../src/lib/format';
 import { useSession } from '../../src/store/session';
 import { CONTENT_MAX_W, glass, gradius, gspace } from '../../src/theme/glass';
 import { GlassCard } from '../../src/ui/glass/GlassCard';
@@ -32,6 +35,7 @@ export default function Earnings() {
   const insets = useSafeAreaInsets();
   const { data, isError, error, isRefetching, refetch } = useOrders();
   const rider = useSession((s) => s.rider);
+  const timezone = useSession((s) => s.timezone);
   const now = useNow();
 
   const counts = data?.counts;
@@ -49,6 +53,21 @@ export default function Earnings() {
   const onDuty = data?.on_duty ?? rider?.on_duty ?? false;
   const shift = onDuty ? onDutyFor(rider?.duty_since, now) : null;
 
+  /**
+   * Cash already taken at the door today: the delivered cash-on-delivery jobs,
+   * from /history. The card above only ever counted cash still to collect.
+   * Refetched whenever the tab comes into view, since a delivery made a minute
+   * ago on the job screen is exactly what a rider opens this tab to see.
+   */
+  const history = useHistory();
+  const refetchHistory = history.refetch;
+  useFocusEffect(
+    useCallback(() => {
+      refetchHistory();
+    }, [refetchHistory])
+  );
+  const collected = cashToday(history.data?.jobs, now, history.data?.timezone ?? timezone);
+
   return (
     <GlassScreen>
       <GlassHeader title="Today" />
@@ -64,7 +83,13 @@ export default function Earnings() {
         }}
         showsVerticalScrollIndicator={false}
         refreshControl={
-          <RefreshControl refreshing={isRefetching} onRefresh={() => refetch()} />
+          <RefreshControl
+            refreshing={isRefetching || history.isRefetching}
+            onRefresh={() => {
+              refetch();
+              refetchHistory();
+            }}
+          />
         }
       >
         {/**
@@ -102,22 +127,82 @@ export default function Earnings() {
           </View>
         </GlassCard>
 
-        {/* Cash gets its own card because it is the one figure here that is
-            somebody else's money. Hidden at zero, where it is only noise. */}
+        {/* Cash already taken at the door today. Somebody else's money, so it
+            gets its own card, with the jobs behind the figure. */}
+        <GlassCard style={{ marginTop: gspace.lg }}>
+          <GlassText variant="caption" tone="soft">
+            Cash collected today
+          </GlassText>
+          {collected.rows.length ? (
+            <>
+              <GlassText variant="amount" tone="orange" nums style={{ marginTop: 2 }}>
+                {money(collected.total, collected.currency)}
+              </GlassText>
+              <GlassText variant="body" tone="soft">
+                {collected.rows.length === 1
+                  ? '1 cash order delivered'
+                  : `${collected.rows.length} cash orders delivered`}
+              </GlassText>
+              <View style={{ marginTop: gspace.md }}>
+                {collected.rows.map((row, i) => (
+                  <View
+                    key={row.orderId}
+                    style={{
+                      flexDirection: 'row',
+                      alignItems: 'center',
+                      paddingVertical: gspace.sm,
+                      borderTopWidth: i === 0 ? 0 : 1,
+                      borderTopColor: glass.divider,
+                    }}
+                  >
+                    <View style={{ flex: 1, minWidth: 0 }}>
+                      <GlassText variant="bodyStrong" numberOfLines={1}>
+                        {row.customer || row.code}
+                      </GlassText>
+                      <GlassText variant="caption" tone="soft" nums numberOfLines={1}>
+                        {[row.code, timeOnly(row.at, history.data?.timezone ?? timezone)]
+                          .filter(Boolean)
+                          .join(' · ')}
+                      </GlassText>
+                    </View>
+                    <GlassText variant="bodyStrong" nums>
+                      {money(row.amount, collected.currency)}
+                    </GlassText>
+                  </View>
+                ))}
+              </View>
+            </>
+          ) : (
+            <GlassText variant="body" tone="soft" style={{ marginTop: gspace.sm }}>
+              {history.isError
+                ? "Could not load today's deliveries. Pull down to try again."
+                : history.isLoading
+                  ? 'Checking today’s deliveries…'
+                  : 'No cash collected yet today.'}
+            </GlassText>
+          )}
+        </GlassCard>
+
+        {/* Cash on the jobs still being carried: not collected yet. This card
+            was titled "Cash in hand", which it never was. Hidden at zero. */}
         {toCollect > 0 ? (
           <GlassCard style={{ marginTop: gspace.lg }}>
             <GlassText variant="caption" tone="soft">
-              Cash in hand
+              Still to collect
             </GlassText>
-            <GlassText variant="amount" tone="orange" nums style={{ marginTop: 2 }}>
+            <GlassText variant="amount" nums style={{ marginTop: 2 }}>
               {money(toCollect, currency)}
             </GlassText>
             <GlassText variant="body" tone="soft" style={{ marginTop: gspace.sm }}>
-              Collected from customers on the jobs you are holding. Hand it over
-              at the shop.
+              On the cash orders you are carrying now.
             </GlassText>
           </GlassCard>
         ) : null}
+
+        <GlassText variant="caption" tone="soft" style={{ marginTop: gspace.md }}>
+          Hand collected cash to the shop. Handovers will be confirmed in the app
+          once the server supports it.
+        </GlassText>
 
         {/* Quiet, at the foot. It was the whole screen before, which told a
             rider only what the app could not do for them. */}
