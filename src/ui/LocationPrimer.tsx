@@ -39,8 +39,13 @@ export function LocationPrimer({
   busy?: boolean;
   purpose?: 'delivery' | 'duty';
 }) {
-  const sharesOnDuty = useSession((s) => !!s.fleet?.features.includes('location'));
-  const fromAccept = useSession((s) => !!s.fleet?.features.includes('track_from_accept'));
+  const sharesOnDuty = useSession(
+    (s) => s.features.includes('location') || !!s.fleet?.features.includes('location')
+  );
+  const fromAccept = useSession(
+    (s) =>
+      s.features.includes('track_from_accept') || !!s.fleet?.features.includes('track_from_accept')
+  );
 
   const copy =
     purpose === 'duty'

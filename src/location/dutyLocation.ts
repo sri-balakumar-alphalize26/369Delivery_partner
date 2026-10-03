@@ -4,20 +4,24 @@ import { useEffect, useState } from 'react';
 import { AppState, Linking, Platform } from 'react-native';
 import { create } from 'zustand';
 import { api, isMock } from '../api/endpoints';
+import { hasFeature } from '../api/features';
 import { OrdersResponse } from '../api/types';
 import { fetchOrders } from '../hooks/useOrders';
 import { useSession } from '../store/session';
-import { trackedOrderId } from './tracking';
+import { riderBeatDue, riderBeatFailed, riderBeatSent, riderBeatWait } from './riderBeat';
+import { onTrackingChange, trackedOrderId } from './tracking';
 
 /**
  * Where an on-duty rider is, for the office's live map.
  *
- * Runs only on a server whose `me` lists the `location` fleet feature, and
- * only while all of these hold:
+ * Runs only on a server with the `location` feature — the REST rider API
+ * always, a fleet server when its `me` lists it — and only while all of these
+ * hold:
  *
  *   - the rider is on duty (the server's word, from the orders poll);
- *   - the app is on screen — the rider chose "on duty, app open" over
- *     tracking a whole shift in the background;
+ *   - the app is on screen. With the screen off, the duty watch's service in
+ *     `tracking.ts` sends the same beat; `riderBeat.ts` keeps the two to one
+ *     clock;
  *   - location permission has already been granted. This never asks: Home
  *     asks behind `LocationPrimer` when the rider clocks on, and its sharing
  *     row offers the fix when something is off.
@@ -74,7 +78,9 @@ export function notifyLocationPermission(): void {
 
 export function useDutyLocation(connected: boolean): void {
   const qc = useQueryClient();
-  const wanted = useSession((s) => !!s.fleet?.features.includes('location'));
+  const wanted = useSession(
+    (s) => s.features.includes('location') || !!s.fleet?.features.includes('location')
+  );
   const riderOnDuty = useSession((s) => s.rider?.on_duty ?? false);
 
   // Read the orders cache without adding a second poll: this observer never
@@ -142,7 +148,13 @@ export function useDutyLocation(connected: boolean): void {
         setStatus({ kind: 'delivery' });
         return schedule(RETRY_MS);
       }
+      // The delivery's own pings were the last word on where the rider is.
+      if (useSharingStatus.getState().status.kind === 'delivery') {
+        setStatus({ kind: 'sharing', sentAt: Date.now() });
+      }
       if (!latest) return schedule(RETRY_MS);
+      // The duty watch beat while the screen was off; wait out its interval.
+      if (!riderBeatDue()) return schedule(riderBeatWait());
       try {
         const res = await api.riderLocation({
           latitude: latest.coords.latitude,
@@ -156,11 +168,13 @@ export function useDutyLocation(connected: boolean): void {
           qc.invalidateQueries({ queryKey: ['orders'] });
           return;
         }
+        riderBeatSent(res.poll_after_seconds);
         setStatus({ kind: 'sharing', sentAt: Date.now() });
         if (res.has_new_offer) qc.invalidateQueries({ queryKey: ['orders'] });
-        schedule(Math.max(res.poll_after_seconds, 15) * 1000);
+        schedule(riderBeatWait());
       } catch {
         // A dropped beat is not worth queueing: the next one is fresher.
+        riderBeatFailed(RETRY_MS);
         if (alive) setStatus({ kind: 'failed', sentAt: lastSentAt() });
         schedule(RETRY_MS);
       }
@@ -228,8 +242,12 @@ export function useDutyLocation(connected: boolean): void {
       }
     })();
 
+    // A delivery starting or ending changes what the row should say now.
+    const offTracking = onTrackingChange(() => schedule(1_000));
+
     return () => {
       alive = false;
+      offTracking();
       if (timer) clearTimeout(timer);
       if (recheck) clearTimeout(recheck);
       if (noFix) clearTimeout(noFix);
@@ -241,7 +259,7 @@ export function useDutyLocation(connected: boolean): void {
 /** Whether to ask for location on clocking on: the feature is on and nothing has been granted yet. */
 export async function needsDutyLocationPermission(): Promise<boolean> {
   if (Platform.OS === 'web' || isMock()) return false;
-  if (!useSession.getState().fleet?.features.includes('location')) return false;
+  if (!hasFeature('location')) return false;
   const perm = await Location.getForegroundPermissionsAsync().catch(() => null);
   return !perm?.granted && perm?.canAskAgain !== false;
 }

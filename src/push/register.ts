@@ -54,6 +54,30 @@ export async function ensureJobsChannel(): Promise<void> {
 }
 
 /**
+ * The channel a new offer rings on, from the duty watch or the open app.
+ *
+ * A channel of its own because Android fixes a channel's sound and vibration
+ * the first time it is created: `jobs` already exists on riders' phones with a
+ * short buzz, and no later call can lengthen it. This one is made for a phone
+ * in a pocket on a bike — a long pattern, the full banner, and the whole
+ * notification on the lock screen, since the job is the point of looking.
+ */
+export const ALARM_CHANNEL = 'jobs-alarm';
+
+export async function ensureAlarmChannel(): Promise<void> {
+  if (Platform.OS !== 'android') return;
+  await Notifications.setNotificationChannelAsync(ALARM_CHANNEL, {
+    name: 'New job offers',
+    description: 'Rings when a job is offered to you, even with the phone locked.',
+    importance: Notifications.AndroidImportance.MAX,
+    vibrationPattern: [0, 800, 400, 800, 400, 800],
+    enableVibrate: true,
+    lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+    lightColor: '#A3E635',
+  });
+}
+
+/**
  * Ask permission, ensure the Android channel exists, mint a token and hand it
  * to Odoo. Returns the token, or null with a logged reason.
  */

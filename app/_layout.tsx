@@ -17,11 +17,16 @@ import { SplashAnimation } from '../src/ui/SplashAnimation';
 import * as Notifications from 'expo-notifications';
 import { useOfferAlert } from '../src/hooks/useOfferAlert';
 import { useDutyLocation } from '../src/location/dutyLocation';
+import { useDutyWatch } from '../src/location/useDutyWatch';
+import { useOutbox } from '../src/hooks/useOutbox';
 import { useSettingsRefresh } from '../src/hooks/useSettingsRefresh';
 import { usePush } from '../src/push/usePush';
 import { useSession } from '../src/store/session';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
+
+// Any screen that throws lands here rather than on a blank page, and is reported.
+export { ErrorBoundary } from '../src/ui/CrashScreen';
 
 /**
  * What a push does while the app is already open.
@@ -89,6 +94,12 @@ function Gate({ children }: { children: ReactNode }) {
   // screen comes up, unless the rider is already inside another job.
   useOfferAlert(connected);
 
+  // The same with the phone locked: while on duty, a foreground service keeps
+  // looking for offers and rings the lock screen. Sends no position.
+  useDutyWatch(connected);
+
+  // Steps tapped with no signal go by themselves once there is one.
+  useOutbox(connected);
   // On a server with the fleet module: where this rider is, for the office's
   // live map, while on duty with the app open.
   useDutyLocation(connected);

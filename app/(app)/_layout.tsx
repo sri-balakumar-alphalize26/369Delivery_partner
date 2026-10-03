@@ -46,6 +46,9 @@ export default function AppLayout() {
 
   return (
     <Tabs
+      // Back goes to the tab the rider came from. The default, `firstRoute`,
+      // sent Android's back from a job or a past job straight to Home.
+      backBehavior="history"
       screenOptions={{
         headerShown: false,
         tabBarActiveTintColor: glass.tabOn,
@@ -125,6 +128,11 @@ export default function AppLayout() {
       <Tabs.Screen name="vehicle" options={{ href: null }} />
       <Tabs.Screen
         name="order/[id]"
+        options={{ href: null, tabBarStyle: { display: 'none' } }}
+      />
+      {/* A finished job, opened from Orders → Past. Read-only. */}
+      <Tabs.Screen
+        name="past/[id]"
         options={{ href: null, tabBarStyle: { display: 'none' } }}
       />
     </Tabs>

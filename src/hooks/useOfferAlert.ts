@@ -4,7 +4,8 @@ import { useEffect, useRef } from 'react';
 import { AppState, Platform, Vibration } from 'react-native';
 import { DeliveryOrder } from '../api/types';
 import { shopName } from '../lib/format';
-import { ensureJobsChannel } from '../push/register';
+import { announced, clearLedger, keepOnly, loadLedger, markAnnounced } from '../push/offerLedger';
+import { ALARM_CHANNEL, ensureAlarmChannel } from '../push/register';
 import { pushArrivedRecently } from '../push/usePush';
 import { useOrders } from './useOrders';
 
@@ -64,7 +65,7 @@ function startBuzzing(): void {
 /** A banner for an offer the rider is too busy to be shown. */
 async function announce(job: DeliveryOrder): Promise<void> {
   try {
-    await ensureJobsChannel();
+    await ensureAlarmChannel();
     await Notifications.scheduleNotificationAsync({
       content: {
         title: 'New job offered',
@@ -73,7 +74,8 @@ async function announce(job: DeliveryOrder): Promise<void> {
         data: { delivery_order_id: job.delivery_order_id },
         sound: true,
       },
-      trigger: null,
+      // `trigger: null` posted on Android's fallback channel, not on any of ours.
+      trigger: { channelId: ALARM_CHANNEL },
     });
   } catch (err) {
     // A missing banner makes the alert quieter, never broken — the phone is
@@ -89,8 +91,14 @@ export function useOfferAlert(connected: boolean): void {
   // then refuses `includes` against a plain string.
   const segments = useSegments() as string[];
 
-  /** Offers already announced, so a poll every 10s does not re-alert. */
-  const announced = useRef<Set<number>>(new Set());
+  /*
+   * Offers already announced live in `offerLedger`, shared with the duty
+   * watch, so a poll every 10s does not re-alert and an offer that rang on the
+   * lock screen does not ring again when the app is opened onto it.
+   */
+  useEffect(() => {
+    void loadLedger();
+  }, []);
 
   /**
    * Whether a baseline has been taken yet.
@@ -147,19 +155,13 @@ export function useOfferAlert(connected: boolean): void {
       // A sign-out and back in should take a fresh baseline, not inherit the
       // last rider's.
       seeded.current = false;
-      announced.current.clear();
+      clearLedger();
       return;
     }
     if (!data) return;
 
     const offered = (data?.orders ?? []).filter((o) => o.delivery_status === 'offered');
-    const live = new Set(offered.map((o) => o.delivery_order_id));
-
-    // Forget anything no longer on offer: the set cannot then grow all shift,
-    // and a job offered a second time announces itself again.
-    for (const id of announced.current) {
-      if (!live.has(id)) announced.current.delete(id);
-    }
+    keepOnly(new Set(offered.map((o) => o.delivery_order_id)));
 
     /**
      * Two ways a list counts as a baseline rather than as news: it is the first
@@ -181,14 +183,14 @@ export function useOfferAlert(connected: boolean): void {
     seeded.current = true;
     if (typeof onDuty === 'boolean') wasOnDuty.current = onDuty;
 
-    const fresh = offered.filter((o) => !announced.current.has(o.delivery_order_id));
+    const fresh = offered.filter((o) => !announced(o.delivery_order_id));
     if (!fresh.length) return;
-    for (const o of fresh) announced.current.add(o.delivery_order_id);
+    for (const o of fresh) markAnnounced(o.delivery_order_id);
     if (baseline) return;
 
     // Foreground only. `useOrders` sets refetchIntervalInBackground: false, so
-    // a backgrounded app reaches this at most once on resume — and a real push
-    // is the path in while it is away.
+    // a backgrounded app reaches this at most once on resume. While it is away
+    // the duty watch's `checkOffers` does the ringing, from the same ledger.
     if (AppState.currentState !== 'active') return;
 
     startBuzzing();
