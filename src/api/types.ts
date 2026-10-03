@@ -15,6 +15,13 @@
 /** Every action Odoo can offer. The app renders these and nothing else. */
 export type Action =
   | 'accept'
+  /**
+   * "I'm at the counter" (Rider_App_Pickup_Flow.pdf, delivery 19.0.22.0.0).
+   * Odoo keeps offering it next to `verify_pickup_otp` after the rider has
+   * pressed it, so the job screen reads `arrived_at_shop` to know whether it
+   * is still due. Never in `PRIMARY_ACTIONS` for that reason.
+   */
+  | 'arrived_shop'
   | 'verify_pickup_otp'
   | 'dispatch'
   | 'start_delivery'
@@ -43,6 +50,7 @@ export type Action =
 export const ACTION_LABEL: Record<Action, string> = {
   accept: 'Accept this job',
   decline: 'Decline',
+  arrived_shop: "I'm at the counter",
   verify_pickup_otp: 'Collect – enter pickup code',
   // Normally fired straight after the pickup code; a button only if that failed.
   dispatch: 'Collected – leaving the shop',
@@ -350,6 +358,37 @@ export interface DeliveryOrder {
    * as a QR for the customer's own phone — never opened in the rider's app.
    */
   pay_url?: string | null;
+
+  /*
+   * Pickup at the branch (Rider_App_Pickup_Flow.pdf, delivery 19.0.22.0.0).
+   * Optional, so an older server that sends none of them reads as before:
+   * unlocked, and the old pickup-code flow.
+   */
+  /**
+   * True until the pickup code is verified. While it is, Odoo sends the
+   * street address, mobile and note as "" and the pins and `pay_url` as null;
+   * only `customer_area`, `customer_name` and `shop_to_customer_m` are real.
+   * A Delivery Settings switch can turn the lock off, so read this, never the
+   * status.
+   */
+  customer_location_locked?: boolean;
+  /** City and pincode, e.g. "Dindigul, 624003". Always sent. */
+  customer_area?: string;
+  /**
+   * Who makes the pickup code. `branch`: the counter presses Dispatch and
+   * reads it out. `rider_request`: the old flow, the code goes to the shop's
+   * WhatsApp. `rider_shows`: the code goes to the rider, the shop types it.
+   */
+  pickup_handover?: 'branch' | 'rider_request' | 'rider_shows';
+  /** UTC time the rider pressed "I'm at the counter", or "". */
+  arrived_at_shop?: string;
+  /** True once the branch has pressed Dispatch and a code waits to be typed. */
+  pickup_code_ready?: boolean;
+}
+
+/** Whether the customer's address, pin, phone and pay link are still withheld. */
+export function isDropLocked(order: Pick<DeliveryOrder, 'customer_location_locked'>): boolean {
+  return order.customer_location_locked === true;
 }
 
 /** The dashboard figures. */
@@ -478,6 +517,15 @@ export interface ActionResult {
   resent?: boolean;
   /** On `arrived`: whether the code's WhatsApp went out. */
   otp_sent?: boolean;
+  /**
+   * On `arrived` and the pickup-code request, in branch mode: no code was
+   * made, the counter has been rung and will press Dispatch. Not an error.
+   */
+  waiting_for_branch?: boolean;
+  /** On `arrived`: when the server logged the arrival, UTC. */
+  arrived_at?: string;
+  /** On a verified pickup code: the whole job, now unlocked. */
+  order?: DeliveryOrder;
   /** On `decline`: the job is no longer this rider's. Leave its screen. */
   removed?: boolean;
 }

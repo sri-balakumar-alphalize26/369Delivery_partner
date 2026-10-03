@@ -175,11 +175,11 @@ export function CodeSheet({
   /**
    * The keyboard, asked for once more a moment after the card is up.
    *
-   * Android drops a focus request made before the popup's window has focus,
-   * and `onShow` can come that early: the customer-code card, opened straight
-   * after "Reached" came back from the server, showed with no keyboard the
-   * first time. Asking again while the boxes are live costs nothing if the
-   * first request landed.
+   * Android can take the focus on `onShow` yet drop the keyboard, and the card
+   * then sat there with none until it was closed and opened again. The boxes'
+   * `focus` checks whether the keyboard is really up and, if not, asks again
+   * properly (see `OtpBoxes`); when the first request landed, this does
+   * nothing.
    */
   useEffect(() => {
     if (!shown || busy) return;

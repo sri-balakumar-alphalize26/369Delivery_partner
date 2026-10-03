@@ -98,6 +98,13 @@ const FOLLOW_ZOOM = 16;
 /** Re-split the polyline every 25 metres rather than every frame. */
 const SPLIT_GRAIN_M = 25;
 
+/**
+ * The whole-trip line: `glass.indigo` at half strength. Not a soft orange or
+ * yellow, which Google draws its main roads in - the trip then read as one
+ * more road.
+ */
+const TRIP_COLOR = 'rgba(15, 61, 46, 0.5)';
+
 export function RouteMapView({
   latitude,
   longitude,
@@ -590,7 +597,7 @@ export function RouteMapView({
         {trip ? (
           <Polyline
             coordinates={trip.points}
-            strokeColor={glass.orangeLine}
+            strokeColor={TRIP_COLOR}
             strokeWidth={4}
             lineDashPattern={trip.road ? undefined : [8, 6]}
             zIndex={0}

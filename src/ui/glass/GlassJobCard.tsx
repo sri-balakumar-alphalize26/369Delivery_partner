@@ -1,6 +1,6 @@
 import { View } from 'react-native';
 import { Image } from 'expo-image';
-import { DeliveryOrder, isAtShop } from '../../api/types';
+import { DeliveryOrder, isAtShop, isDropLocked } from '../../api/types';
 import { dueIn, money, shopInfo, shopName } from '../../lib/format';
 import { useNow } from '../../hooks/useNow';
 import { useJobDistance } from '../../hooks/useJobDistance';
@@ -128,7 +128,8 @@ export function GlassJobCard({
         <GlassRoute
           from={shopName(job.shop)}
           to={job.customer_name}
-          toDetail={job.delivery_address}
+          // Before pickup the street address comes as "": the area stands in.
+          toDetail={isDropLocked(job) ? job.customer_area ?? '' : job.delivery_address}
           done={collected ? 'from' : null}
         />
 

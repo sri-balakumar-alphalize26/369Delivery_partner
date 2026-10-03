@@ -74,6 +74,7 @@ function toCode(raw: unknown): ApiErrorCode {
 const KNOWN_ACTIONS: readonly Action[] = [
   'accept',
   'decline',
+  'arrived_shop',
   'verify_pickup_otp',
   'dispatch',
   'start_delivery',

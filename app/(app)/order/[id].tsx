@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import {
+  ActivityIndicator,
   Alert,
   BackHandler,
   KeyboardAvoidingView,
@@ -34,6 +35,7 @@ import {
   DELIVERY_REASONS,
   headingFor,
   isAtShop,
+  isDropLocked,
   Money,
   PRIMARY_ACTIONS,
   trackingWanted,
@@ -159,8 +161,14 @@ const SHEET_MAX_W = 720;
  * had nothing to read out. Opening the panel now tells Odoo the rider has
  * arrived, once per job. Module-level so leaving the screen and coming back
  * does not send a second code that voids the one the shop is holding.
+ *
+ * The older `rider_request` handover only. In branch mode (the default since
+ * delivery 19.0.22.0.0) the arrival is its own button, "I'm at the counter".
  */
 const shopToldFor = new Set<number>();
+
+/** Jobs whose "the counter has your code" has already buzzed - once each. */
+const codeReadyFor = new Set<number>();
 
 /** Arrival prompts already announced with a buzz, per job - once each. */
 const buzzedFor = new Set<string>();
@@ -182,6 +190,20 @@ function distanceText(m: number): string {
  */
 function tickKey(p: { name: string; quantity: number }, i: number): string {
   return `${i}|${p.name}|${p.quantity}`;
+}
+
+/**
+ * At the counter in branch mode, with the arrival told and no code yet: the
+ * branch has still to press Dispatch.
+ */
+function waitingForBranch(order: DeliveryOrder | undefined): boolean {
+  return (
+    !!order &&
+    order.pickup_handover === 'branch' &&
+    !!order.arrived_at_shop &&
+    !order.pickup_code_ready &&
+    order.allowed_actions.includes('verify_pickup_otp')
+  );
 }
 
 type ArrivalPrompt = { kind: 'shop' | 'near' | 'door'; metres: number };
@@ -285,6 +307,14 @@ export default function Job() {
    * the code panel's hint, never in red: this used to go through `error`.
    */
   const [notice, setNotice] = useState<string | null>(null);
+  /**
+   * "I'm at the counter" went through. The job's own `arrived_at_shop` says
+   * so too, but only from the next fetch; this keeps the button from coming
+   * back in between.
+   */
+  const [arrivedHere, setArrivedHere] = useState(false);
+  /** The pickup code was accepted: the drop is unlocked. Said once, in green. */
+  const [unlockedNote, setUnlockedNote] = useState<string | null>(null);
 
   /**
    * Ticks the countdown. Called up here with the other hooks because the
@@ -437,13 +467,41 @@ export default function Job() {
     setLeg(null);
     setRiderAt(null);
     setBagNote(null);
+    setArrivedHere(false);
+    setUnlockedNote(null);
   }
 
   const { data: order, isLoading } = useQuery({
     queryKey: ['order', orderId],
     queryFn: () => api.order(orderId),
-    refetchInterval: 15_000,
+    // Faster while the rider stands at the counter waiting for the branch to
+    // press Dispatch: the code boxes should open while staff are still saying
+    // it. Push wakes this too, when it arrives.
+    refetchInterval: (q) => (waitingForBranch(q.state.data) ? 5_000 : 15_000),
   });
+
+  /**
+   * The branch has pressed Dispatch: buzz, and open the code boxes if the bag
+   * is checked. Once per job - a new code from the counter keeps the flag up.
+   */
+  const codeReady =
+    !!order &&
+    order.pickup_handover === 'branch' &&
+    !!order.pickup_code_ready &&
+    order.allowed_actions.includes('verify_pickup_otp');
+  useEffect(() => {
+    if (!codeReady || !order || codeReadyFor.has(orderId)) return;
+    codeReadyFor.add(orderId);
+    Vibration.vibrate([0, 300, 150, 300]);
+    const bagDone = (order.products ?? []).every((p, i) => picked.has(tickKey(p, i)));
+    if (bagDone) {
+      setOtp('');
+      setOtpError(null);
+      setCodeOpen(true);
+    }
+    // Only the moment the flag goes up; later ticks and polls must not reopen it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [codeReady, orderId]);
 
   /**
    * A job opened while it is already on the road — the shop dispatched it on
@@ -508,8 +566,30 @@ export default function Job() {
   }
 
   const actions = override ?? order.allowed_actions;
-  const primary = PRIMARY_ACTIONS.find((a) => actions.includes(a)) ?? null;
-  const secondary = actions.filter((a) => a !== primary);
+  /**
+   * Pickup at the branch (Rider_App_Pickup_Flow.pdf): the rider says "I'm at
+   * the counter", the branch presses Dispatch and reads out the code. Odoo
+   * offers `arrived_shop` beside `verify_pickup_otp` before and after the
+   * arrival, so whether it is still due is read off `arrived_at_shop`. In the
+   * older handover modes it is left out and the code panel tells the shop, as
+   * before.
+   */
+  const branch = order.pickup_handover === 'branch';
+  const arrivalDue =
+    branch && actions.includes('arrived_shop') && !order.arrived_at_shop && !arrivedHere;
+  const primary: Action | null = arrivalDue
+    ? 'arrived_shop'
+    : (PRIMARY_ACTIONS.find((a) => actions.includes(a)) ?? null);
+  const secondary = actions.filter((a) => a !== primary && a !== 'arrived_shop');
+  /** Arrived, and the branch has not pressed Dispatch yet. */
+  const awaitingCode = branch && primary === 'verify_pickup_otp' && !order.pickup_code_ready;
+  /**
+   * The customer's street address, pin, phone, note and pay link are withheld
+   * until the pickup code is verified; only the area and the distance are real.
+   */
+  const locked = isDropLocked(order);
+  const area = order.customer_area || '';
+  const dropKm = order.shop_to_customer_m ? distanceText(order.shop_to_customer_m) : '';
 
   // The job's state, as the list already shows it. Shared so a chip in a
   // header and a badge on a card can never disagree.
@@ -672,9 +752,20 @@ export default function Job() {
         case 'decline':
           res = await api.decline(orderId, reason);
           break;
+        case 'arrived_shop': {
+          // Where the rider is goes along, for the server's arrival check.
+          // Never queued: "I'm here" sent later from somewhere else would
+          // ring the counter for a rider who is not standing at it.
+          const fix = await currentFix();
+          res = await api.arrivedAtShop(orderId, fix);
+          break;
+        }
         case 'verify_pickup_otp':
           res = await api.verifyPickupOtp(orderId, otp);
-          // The documented sequence: the code, then /dispatch at once, so one
+          // Branch mode: the reply is already `dispatched` and carries the job
+          // unlocked, so the address is on screen without waiting for a fetch.
+          if (res.order) qc.setQueryData(['order', orderId], res.order);
+          // The older handover modes: the code, then /dispatch at once, so one
           // tap is the counter's Dispatch - "Collected by Rider", the one step
           // that messages the customer. Should it fail, Odoo still offers
           // `dispatch` and the screen shows it as the next button.
@@ -729,6 +820,15 @@ export default function Job() {
       setCodeOpen(false);
       // The last panel's words belong to the last step.
       setNotice(null);
+      if (action === 'arrived_shop') {
+        setArrivedHere(true);
+        // "Tell the counter you are here..." - instructions, not an error.
+        setNotice(res.message ?? null);
+      }
+      if (action === 'verify_pickup_otp' && order?.customer_location_locked) {
+        const name = res.order?.customer_name || order.customer_name;
+        setUnlockedNote(res.message ?? `Code accepted. Head to ${name}.`);
+      }
       await applyResult(res);
     } catch (err) {
       if (err instanceof ApiError && err.code === 'network' && isQueueable(action)) {
@@ -807,7 +907,8 @@ export default function Job() {
    */
   function openCode() {
     setCodeOpen(true);
-    if (primary !== 'verify_pickup_otp' || shopToldFor.has(orderId)) return;
+    // Branch mode told the counter with "I'm at the counter" already.
+    if (primary !== 'verify_pickup_otp' || branch || shopToldFor.has(orderId)) return;
     shopToldFor.add(orderId);
     setNotice('Checking with the shop…');
     // Where the rider is goes along, for the fleet module's arrival check.
@@ -826,6 +927,23 @@ export default function Job() {
             : 'Could not reach the server. Ask the counter for the pickup code.'
         );
       });
+  }
+
+  /**
+   * "Remind the counter", in branch mode: rings the Shop Queue card again. It
+   * makes no code - only the branch's Dispatch does.
+   */
+  async function remindCounter() {
+    setError(null);
+    setBusy(true);
+    try {
+      const res = await api.requestPickupOtp(orderId);
+      setNotice(res.message ?? 'The counter has been reminded.');
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not reach the counter. Try again.');
+    } finally {
+      setBusy(false);
+    }
   }
 
   /**
@@ -1023,7 +1141,11 @@ export default function Job() {
       riderAt && offerShopAt ? `${distanceText(metresBetween(riderAt, offerShopAt))} to the shop` : null,
       offerShopAt && offerCustomerAt
         ? `${distanceText(metresBetween(offerShopAt, offerCustomerAt))} shop → customer`
-        : null,
+        : // Before pickup the customer's pin is withheld; the server's own
+          // measure stands in.
+          dropKm
+          ? `${dropKm} shop → customer`
+          : null,
       !offerShopAt && riderAt && offerCustomerAt
         ? `${distanceText(metresBetween(riderAt, offerCustomerAt))} to the customer`
         : null,
@@ -1139,10 +1261,25 @@ export default function Job() {
             <GlassText variant="bodyStrong" style={{ marginTop: gspace.xs }}>
               {order.customer_name}
             </GlassText>
-            <GlassText variant="caption" tone="soft" style={{ marginTop: 2 }}>
-              {order.delivery_address}
-            </GlassText>
-            <DeliveryNote note={order.delivery_note} />
+            {locked ? (
+              <>
+                {area ? (
+                  <GlassText variant="caption" tone="soft" style={{ marginTop: 2 }}>
+                    {area}
+                  </GlassText>
+                ) : null}
+                <GlassText variant="caption" tone="faint" style={{ marginTop: 2 }}>
+                  Full address once the branch hands you the parcel.
+                </GlassText>
+              </>
+            ) : (
+              <>
+                <GlassText variant="caption" tone="soft" style={{ marginTop: 2 }}>
+                  {order.delivery_address}
+                </GlassText>
+                <DeliveryNote note={order.delivery_note} />
+              </>
+            )}
             {order.promised_by ? (
               <GlassText variant="caption" tone="soft" nums style={{ marginTop: gspace.sm }}>
                 Promised {promisedAt(order.promised_by, timezone)}
@@ -1628,7 +1765,9 @@ export default function Job() {
             <GlassText variant="body" style={{ flex: 1, marginLeft: gspace.sm }} numberOfLines={2}>
               {toCustomer
                 ? `From: ${shopName(order.shop) || 'the shop'}`
-                : `Then: ${order.customer_name} · ${order.delivery_address}`}
+                : locked
+                  ? `Then: ${[order.customer_name, area, dropKm].filter(Boolean).join(' · ')}`
+                  : `Then: ${order.customer_name} · ${order.delivery_address}`}
             </GlassText>
           </View>
 
@@ -1705,7 +1844,11 @@ export default function Job() {
             </View>
           ) : null}
 
-          {prompt?.kind === 'shop' ? (
+          {unlockedNote && toCustomer ? <ArrivalBanner text={unlockedNote} /> : null}
+
+          {prompt?.kind === 'shop' && arrivalDue ? (
+            <ArrivalBanner text={`You're at the branch. Tap "${ACTION_LABEL.arrived_shop}".`} />
+          ) : prompt?.kind === 'shop' && !branch ? (
             <ArrivalBanner
               text={
                 allChecked
@@ -1725,8 +1868,10 @@ export default function Job() {
             visible={codeOpen && primary === 'verify_pickup_otp'}
             title="Enter the pickup code"
             hint={
-              notice ??
-              'Ask the counter for the 6-digit pickup code. If the job has no shop, it comes to your WhatsApp.'
+              branch
+                ? 'Type the 6-digit code shown on the branch screen. The counter reads it out once they press Dispatch.'
+                : (notice ??
+                  'Ask the counter for the 6-digit pickup code. If the job has no shop, it comes to your WhatsApp.')
             }
             value={otp}
             onChange={setOtp}
@@ -1750,6 +1895,32 @@ export default function Job() {
             </GlassText>
           ) : null}
           {pending ? <PendingLine entry={pending} /> : null}
+
+          {/* At the counter in branch mode: staff check the rider is there,
+              press Dispatch, and a code pops up on their screen. */}
+          {awaitingCode ? (
+            <View
+              style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                marginTop: gspace.lg,
+                paddingVertical: gspace.md,
+                paddingHorizontal: gspace.lg,
+                borderRadius: gradius.card,
+                backgroundColor: glass.fill,
+                borderWidth: 1,
+                borderColor: glass.border,
+              }}
+            >
+              <ActivityIndicator color={glass.indigo} />
+              <GlassText variant="body" style={{ flex: 1, marginLeft: gspace.md }}>
+                {notice ??
+                  "Tell the counter you're here. They'll press Dispatch and read you the pickup code."}
+              </GlassText>
+            </View>
+          ) : branch && primary === 'verify_pickup_otp' ? (
+            <ArrivalBanner text="The counter has your code. Type the 6 digits they read out." />
+          ) : null}
 
           {/* Only what Odoo permits, in the order Odoo permits it. */}
           {primary ? (
@@ -1775,6 +1946,9 @@ export default function Job() {
             </GlassText>
           )}
 
+          {awaitingCode ? (
+            <GhostLink label="Remind the counter" onPress={remindCounter} disabled={busy} />
+          ) : null}
           {collecting && !allChecked && actions.includes('report_issue') ? (
             <GhostLink label="Item missing? Tell the shop" onPress={reportMissing} disabled={busy} />
           ) : null}

@@ -1,5 +1,5 @@
 import { forwardRef, useImperativeHandle, useRef, useState } from 'react';
-import { Pressable, TextInput, View } from 'react-native';
+import { Keyboard, Pressable, TextInput, View } from 'react-native';
 import { glass, gspace } from '../theme/glass';
 import { GlassText } from './glass/GlassText';
 
@@ -48,7 +48,23 @@ export const OtpBoxes = forwardRef<OtpBoxesHandle, OtpBoxesProps>(function OtpBo
    * the keyboard never appears, which is exactly what a rider reported. A parent
    * that can wait for the modal to be shown calls this instead.
    */
-  useImperativeHandle(ref, () => ({ focus: () => input.current?.focus() }), []);
+  useImperativeHandle(ref, () => ({ focus: wake }), []);
+
+  /**
+   * Focus, and make sure the keyboard really comes up.
+   *
+   * Android sometimes takes the focus but drops the request to show the
+   * keyboard, and React Native then ignores every later `focus()` on an input
+   * it thinks is already focused. A retry, or a tap on the boxes, did nothing:
+   * the card sat there with no keyboard until it was closed and opened again.
+   * Blurring first makes the next focus a real one, which asks again.
+   */
+  function wake() {
+    const i = input.current;
+    if (!i) return;
+    if (i.isFocused() && !Keyboard.isVisible()) i.blur();
+    i.focus();
+  }
   const [focused, setFocused] = useState(false);
 
   const digits = value.split('');
@@ -58,7 +74,7 @@ export const OtpBoxes = forwardRef<OtpBoxesHandle, OtpBoxesProps>(function OtpBo
   return (
     <View>
       <Pressable
-        onPress={() => input.current?.focus()}
+        onPress={wake}
         accessibilityRole="none"
         style={{ flexDirection: 'row', gap: gspace.sm }}
       >

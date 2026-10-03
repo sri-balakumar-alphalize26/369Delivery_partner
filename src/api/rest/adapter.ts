@@ -22,7 +22,8 @@ import { logout, normaliseActions, request, requestCode, verifyCode } from './cl
  * buttons on Odoo's job form (Rider_App_Developer_Plan.pdf rev 2, sections
  * 5-6b; Delivery_Developer_Flow.pdf section 3 before it):
  *
- *   accept → pickup/verify-otp → dispatch    (Collected by Rider)
+ *   accept → arrived {point: "shop"}         (the branch presses Dispatch)
+ *          → pickup/verify-otp               (Collected by Rider, unlocked)
  *          → start                           (Rider Near Customer)
  *          → arrived {point: "customer"}     (the customer is sent their code)
  *          → complete/verify-otp             (Delivered)
@@ -62,7 +63,12 @@ function fixOrder(order: DeliveryOrder): DeliveryOrder {
 }
 
 function fixResult(result: ActionResult): ActionResult {
-  return { ...result, allowed_actions: normaliseActions(result.allowed_actions) };
+  return {
+    ...result,
+    allowed_actions: normaliseActions(result.allowed_actions),
+    // A verified pickup code carries the whole job, now unlocked.
+    ...(result.order ? { order: fixOrder(result.order) } : {}),
+  };
 }
 
 async function step(
@@ -185,12 +191,12 @@ export const restAdapter: ApiAdapter = {
   },
 
   /**
-   * At the counter: the rider asks for the pickup code. The server sends it to
-   * the shop's WhatsApp when the job has a shop, and to the rider's when it has
-   * none. A new code voids the last, but it goes to the same phone, so the
-   * counter just reads the newest. `requestPickupOtp` stays in the API but no
-   * screen uses it: it sends the code to the shop's WhatsApp only, never to the
-   * rider.
+   * At the counter. In branch mode (`pickup_handover: "branch"`, the default
+   * since delivery 19.0.22.0.0) no code is made: the Shop Queue card rings,
+   * staff press Dispatch and read the rider the code off their screen, and the
+   * reply says `waiting_for_branch`. In the older `rider_request` mode the
+   * server sends the code to the shop's WhatsApp, or to the rider's when the
+   * job has no shop.
    */
   async arrivedAtShop(id, fix) {
     const res = await step('/api/delivery/arrived', {
@@ -198,7 +204,7 @@ export const restAdapter: ApiAdapter = {
       point: 'shop',
       ...(fix ? { latitude: fix.latitude, longitude: fix.longitude, accuracy: fix.accuracy } : {}),
     });
-    if (res.otp_sent === false) {
+    if (res.otp_sent === false && !res.waiting_for_branch) {
       return {
         ...res,
         message: `${res.message ?? 'Could not send the pickup code.'} Ask the counter to tap Generate Pickup Code.`,
@@ -207,6 +213,8 @@ export const restAdapter: ApiAdapter = {
     return res;
   },
 
+  // In branch mode: "Remind the counter" - rings the Shop Queue card again and
+  // makes no code.
   requestPickupOtp: (id) => step('/api/delivery/pickup/request-otp', { delivery_order_id: id }),
 
   verifyPickupOtp: (id, otp) =>

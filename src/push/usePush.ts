@@ -44,6 +44,9 @@ export function usePush(connected: boolean) {
     const received = Notifications.addNotificationReceivedListener(() => {
       lastPushAt = Date.now();
       qc.invalidateQueries({ queryKey: ['orders'] });
+      // The open job too: `pickup_code_ready` is the counter having pressed
+      // Dispatch, and the rider is standing there waiting for the code boxes.
+      qc.invalidateQueries({ queryKey: ['order'] });
     });
 
     // Tapping the banner should land on the job it was about.
