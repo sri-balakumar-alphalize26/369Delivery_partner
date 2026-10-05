@@ -5,6 +5,7 @@ import { setFeatures } from '../api/features';
 import { setSessionExpiredHandler } from '../api/rest/client';
 import {
   ApiError,
+  AutoNearCustomer,
   CodeRequestResult,
   Currency,
   DutyResult,
@@ -47,6 +48,8 @@ interface SessionState {
    * means a partner is offered nothing; undefined on an older server.
    */
   thirdPartyEnabled: boolean | undefined;
+  /** When the server marks "near the customer" by itself; undefined on an older server. */
+  autoNear: AutoNearCustomer | undefined;
   /** Where the rider clocked on, as the server named it ("al Azaiba, Muscat"). */
   area: string | undefined;
   /** False until storage has been read — gates the router. */
@@ -85,6 +88,7 @@ export const useSession = create<SessionState>((set) => ({
   fleet: undefined,
   features: [],
   thirdPartyEnabled: undefined,
+  autoNear: undefined,
   area: undefined,
   ready: false,
   connected: false,
@@ -99,7 +103,8 @@ export const useSession = create<SessionState>((set) => ({
     );
 
     try {
-      const { rider, timezone, currency, fleet, features, third_party_enabled } = await api.me();
+      const { rider, timezone, currency, fleet, features, third_party_enabled, auto_near_customer } =
+        await api.me();
       set({
         rider,
         timezone,
@@ -107,6 +112,7 @@ export const useSession = create<SessionState>((set) => ({
         fleet,
         features: features ?? [],
         thirdPartyEnabled: third_party_enabled,
+        autoNear: auto_near_customer,
         connected: true,
       });
       console.log(`[login] launch: session good, rider ${rider.name} (#${rider.id})`);
@@ -142,7 +148,8 @@ export const useSession = create<SessionState>((set) => ({
 
     try {
       if (!server.useMock) await api.verifyCode(server.login, code);
-      const { rider, timezone, currency, fleet, features, third_party_enabled } = await api.me();
+      const { rider, timezone, currency, fleet, features, third_party_enabled, auto_near_customer } =
+        await api.me();
       set({
         rider,
         timezone,
@@ -150,6 +157,7 @@ export const useSession = create<SessionState>((set) => ({
         fleet,
         features: features ?? [],
         thirdPartyEnabled: third_party_enabled,
+        autoNear: auto_near_customer,
         connected: true,
       });
       console.log(
@@ -191,7 +199,8 @@ export const useSession = create<SessionState>((set) => ({
   async refresh() {
     if (!useSession.getState().connected) return;
     try {
-      const { rider, timezone, currency, fleet, features, third_party_enabled } = await api.me();
+      const { rider, timezone, currency, fleet, features, third_party_enabled, auto_near_customer } =
+        await api.me();
       set({
         rider,
         timezone,
@@ -199,6 +208,7 @@ export const useSession = create<SessionState>((set) => ({
         fleet,
         features: features ?? [],
         thirdPartyEnabled: third_party_enabled,
+        autoNear: auto_near_customer,
       });
     } catch {
       // Offline, or the session ended — the latter is handled by the expiry
@@ -229,6 +239,7 @@ export const useSession = create<SessionState>((set) => ({
       fleet: undefined,
       features: [],
       thirdPartyEnabled: undefined,
+      autoNear: undefined,
       area: undefined,
       connected: false,
     });

@@ -170,6 +170,9 @@ const shopToldFor = new Set<number>();
 /** Jobs whose "the counter has your code" has already buzzed - once each. */
 const codeReadyFor = new Set<number>();
 
+/** Jobs whose automatic "near the customer" has already buzzed - once each. */
+const nearAutoFor = new Set<number>();
+
 /** Arrival prompts already announced with a buzz, per job - once each. */
 const buzzedFor = new Set<string>();
 
@@ -281,6 +284,10 @@ export default function Job() {
   // still only the fleet module's setting.
   const proofOn = true;
   const proofRequired = useSession((s) => !!s.fleet?.proof_required);
+  // When the server marks "near the customer" by itself (delivery 19.0.22.1.0).
+  const autoNear = useSession((s) => s.autoNear);
+  /** Set while the rider waits inside the server's radius, for the faster poll. */
+  const waitNearRef = useRef(false);
   const [, setProofTick] = useState(0);
 
   const [busy, setBusy] = useState(false);
@@ -471,14 +478,26 @@ export default function Job() {
     setUnlockedNote(null);
   }
 
-  const { data: order, isLoading } = useQuery({
+  const { data: order, isLoading, dataUpdatedAt } = useQuery({
     queryKey: ['order', orderId],
     queryFn: () => api.order(orderId),
     // Faster while the rider stands at the counter waiting for the branch to
     // press Dispatch: the code boxes should open while staff are still saying
     // it. Push wakes this too, when it arrives.
-    refetchInterval: (q) => (waitingForBranch(q.state.data) ? 5_000 : 15_000),
+    // The same near the customer, while the server is about to mark it.
+    refetchInterval: (q) =>
+      waitingForBranch(q.state.data) || waitNearRef.current ? 5_000 : 15_000,
   });
+
+  /**
+   * A reply's actions stand in for the job's only until the job is read again.
+   * Kept longer, they outlived steps the server took on its own: after the
+   * pickup code, the server's automatic "near the customer" left the screen
+   * offering "I am near the customer" from the old reply.
+   */
+  useEffect(() => {
+    setOverride(null);
+  }, [dataUpdatedAt]);
 
   /**
    * The branch has pressed Dispatch: buzz, and open the code boxes if the bag
@@ -530,6 +549,22 @@ export default function Job() {
   /** The arrival prompt now showing, if any; it buzzes once when it first does. */
   const prompt = order ? arrivalPrompt(order, override, riderAt, reachedHere) : null;
   const promptKind = prompt?.kind ?? null;
+  /**
+   * The server marks the job near by itself once the heartbeat has stayed this
+   * close for its dwell time - only on a real customer pin, never a looked-up one.
+   */
+  const autoNearHere =
+    !!autoNear?.enabled &&
+    order?.location_source === 'customer_pin' &&
+    prompt?.kind === 'near' &&
+    prompt.metres <= autoNear.radius_m;
+  waitNearRef.current = autoNearHere;
+  const nearAuto = !!order?.near_customer_auto;
+  useEffect(() => {
+    if (!nearAuto || nearAutoFor.has(orderId)) return;
+    nearAutoFor.add(orderId);
+    Vibration.vibrate([0, 300, 150, 300]);
+  }, [nearAuto, orderId]);
   useEffect(() => {
     if (!promptKind) return;
     const key = `${orderId}:${promptKind}`;
@@ -1556,6 +1591,13 @@ export default function Job() {
           ) : null}
           {pending ? <PendingLine entry={pending} /> : null}
 
+          {order.near_customer_auto && !reached ? (
+            <ArrivalBanner
+              text={`Marked near the customer automatically${
+                order.near_customer_at ? ` at ${timeOnly(order.near_customer_at, timezone)}` : ''
+              }. They have been told you are close.`}
+            />
+          ) : null}
           {prompt?.kind === 'door' ? (
             <ArrivalBanner text="You're at the door. Send the customer their code." />
           ) : null}
@@ -1858,7 +1900,11 @@ export default function Job() {
             />
           ) : prompt?.kind === 'near' ? (
             <ArrivalBanner
-              text={`About ${distanceText(prompt.metres)} from the customer. Tap "I am near the customer" so they get ready.`}
+              text={
+                autoNearHere
+                  ? `About ${distanceText(prompt.metres)} from the customer. You will be marked near automatically in about ${autoNear?.dwell_seconds ?? 20} s, or tap now.`
+                  : `About ${distanceText(prompt.metres)} from the customer. Tap "I am near the customer" so they get ready.`
+              }
             />
           ) : null}
 

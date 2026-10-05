@@ -478,6 +478,9 @@ export const mockAdapter: ApiAdapter = {
     requireAction(o, 'start_delivery');
     // This is the moment tracking becomes permitted — never before.
     state.tracking = true;
+    // A tap, so never "automatic" - the demo has no server watching the heartbeat.
+    o.near_customer_at = utcNow();
+    o.near_customer_auto = false;
     return advance(o, 'out_for_delivery');
   },
 

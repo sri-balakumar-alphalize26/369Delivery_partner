@@ -384,6 +384,23 @@ export interface DeliveryOrder {
   arrived_at_shop?: string;
   /** True once the branch has pressed Dispatch and a code waits to be typed. */
   pickup_code_ready?: boolean;
+
+  /*
+   * Automatic "Rider Near Customer" (Rider_App_Auto_Near.pdf, delivery
+   * 19.0.22.1.0). The server moves a dispatched job on by itself once the
+   * heartbeat has stayed near a real customer pin; the button is the fallback.
+   */
+  /** When the job became "Rider Near Customer", UTC, or "" until then. */
+  near_customer_at?: string;
+  /** True only when the server set it from the rider's position, not a tap. */
+  near_customer_auto?: boolean;
+}
+
+/** `/auth/me`: when the server marks "near" by itself (Delivery Settings). */
+export interface AutoNearCustomer {
+  enabled: boolean;
+  radius_m: number;
+  dwell_seconds: number;
 }
 
 /** Whether the customer's address, pin, phone and pay link are still withheld. */
@@ -526,6 +543,9 @@ export interface ActionResult {
   arrived_at?: string;
   /** On a verified pickup code: the whole job, now unlocked. */
   order?: DeliveryOrder;
+  /** On `start`, also when the server had already marked it near. */
+  near_customer_at?: string;
+  near_customer_auto?: boolean;
   /** On `decline`: the job is no longer this rider's. Leave its screen. */
   removed?: boolean;
 }
@@ -739,6 +759,8 @@ export interface Identity {
    * nothing. Own riders are not affected. Absent on an older server.
    */
   third_party_enabled?: boolean;
+  /** Absent on a server before delivery 19.0.22.1.0: the rider always taps. */
+  auto_near_customer?: AutoNearCustomer;
 }
 
 /**
