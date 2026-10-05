@@ -22,6 +22,8 @@
       "infoPlist": {
         "UIBackgroundModes": [
           "location",
+          "remote-notification",
+          "location",
           "remote-notification"
         ],
         "NSLocationWhenInUseUsageDescription": "369 Delivery Partner uses your location to send you nearby orders and to show the customer where you are.",
@@ -38,6 +40,19 @@
         "backgroundColor": "#FFFFFF"
       },
       "permissions": [
+        "ACCESS_COARSE_LOCATION",
+        "ACCESS_FINE_LOCATION",
+        "ACCESS_BACKGROUND_LOCATION",
+        "FOREGROUND_SERVICE",
+        "FOREGROUND_SERVICE_LOCATION",
+        "POST_NOTIFICATIONS",
+        "WAKE_LOCK",
+        "VIBRATE",
+        "android.permission.ACCESS_COARSE_LOCATION",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_BACKGROUND_LOCATION",
+        "android.permission.FOREGROUND_SERVICE",
+        "android.permission.FOREGROUND_SERVICE_LOCATION",
         "ACCESS_COARSE_LOCATION",
         "ACCESS_FINE_LOCATION",
         "ACCESS_BACKGROUND_LOCATION",
@@ -82,10 +97,15 @@
         "expo-notifications",
         {
           "icon": "./assets/images/android-icon-monochrome.png",
-          "color": "#0042B3"
+          "color": "#0042B3",
+          "sounds": [
+            "./assets/sounds/near_customer.wav"
+          ]
         }
       ],
-      "expo-video"
+      "expo-video",
+      "expo-audio",
+      "expo-asset"
     ],
     "experiments": {
       "typedRoutes": true
@@ -93,9 +113,15 @@
     "extra": {
       "router": {},
       "eas": {
-        "projectId": "40359567-3ad0-4ff8-896a-8e45c92f0a7b"
+        "projectId": "cc27dcea-c555-454e-8d34-5c43bcf2d90c"
       }
     },
-    "owner": "vavinix"
+    "owner": "wikike",
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "updates": {
+      "url": "https://u.expo.dev/cc27dcea-c555-454e-8d34-5c43bcf2d90c"
+    }
   }
 }
