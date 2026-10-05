@@ -58,6 +58,7 @@ const KNOWN_CODES: ApiErrorCode[] = [
   'offer_expired',
   'no_device',
   'bad_request',
+  'too_many_photos',
 ];
 
 function toCode(raw: unknown): ApiErrorCode {

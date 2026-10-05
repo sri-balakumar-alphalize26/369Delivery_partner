@@ -273,16 +273,16 @@ export const restAdapter: ApiAdapter = {
   async unregisterPush() {},
 
   /**
-   * The door photo as a multipart upload: `delivery_order_id` and `file`, 8 MB
-   * at most (a larger one is refused `too_large`). Never required by the
-   * server; the rider may add several.
+   * A parcel photo as a multipart upload: `delivery_order_id` and `file`, 8 MB
+   * at most (a larger one is refused `too_large`). `stage` is ours, not the
+   * contract's yet: the server keeps the file and drops the field for now.
    */
-  async uploadProof(id, _imageBase64, uri) {
-    if (!uri) return notHere();
+  async uploadProof(id, uri, fileName, stage) {
     const form = new FormData();
     form.append('delivery_order_id', String(id));
+    form.append('stage', stage);
     // React Native's FormData takes a file as {uri, name, type}.
-    form.append('file', { uri, name: `proof-${id}.jpg`, type: 'image/jpeg' } as unknown as Blob);
+    form.append('file', { uri, name: fileName, type: 'image/jpeg' } as unknown as Blob);
     const r = await request<{ attachment_id: number }>('/api/delivery/proof', {
       method: 'POST',
       form,
