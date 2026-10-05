@@ -178,6 +178,10 @@ export const DELIVERY_REASONS = [
   { code: 'payment_refused', label: 'Customer would not pay' },
   { code: 'damaged', label: 'Parcel is damaged' },
   { code: 'vehicle_problem', label: 'Problem with my vehicle' },
+  // The customer is at work, a temple, a friend's: not the saved address.
+  // Today it only tells the office; the server is asked to confirm the place
+  // with the customer and keep it for this order only.
+  { code: 'customer_elsewhere', label: 'Customer is at another place' },
   { code: 'other', label: 'Something else' },
 ] as const;
 
@@ -394,6 +398,42 @@ export interface DeliveryOrder {
   near_customer_at?: string;
   /** True only when the server set it from the rider's position, not a tap. */
   near_customer_auto?: boolean;
+
+  /*
+   * Where the parcel changed hands (Rider_App_Keep_Address.pdf, delivery
+   * 19.0.22.2.0). Delivered no longer writes anything on the customer; the
+   * spot is kept on the job instead.
+   */
+  /**
+   * The rider's last heartbeat at Delivered, if it was under 10 minutes old.
+   * Null before delivery or when no position was known; `metres_from_pin` is
+   * null when the customer has no pin.
+   */
+  handover?: {
+    latitude: number;
+    longitude: number;
+    at: string;
+    metres_from_pin: number | null;
+  } | null;
+
+  /*
+   * Parcel photos (Rider_App_Parcel_Photos.pdf, delivery 19.0.22.4.0): 2 to 4
+   * after the pickup code and after the customer's code, kept per stage.
+   */
+  /** How many photos the server holds for each stage. */
+  photo_counts?: { pickup: number; delivery: number };
+  photos?: { pickup: ProofPhotoRef[]; delivery: ProofPhotoRef[] };
+  /** Stages short of 2 photos; `["delivery"]` right after Delivered is expected. */
+  photos_missing?: ('pickup' | 'delivery')[];
+}
+
+/** One stored parcel photo. `url` needs the usual auth headers to fetch. */
+export interface ProofPhotoRef {
+  id: number;
+  name: string;
+  url: string;
+  size: number;
+  at: string;
 }
 
 /** `/auth/me`: when the server marks "near" by itself (Delivery Settings). */
@@ -677,6 +717,8 @@ export type ApiErrorCode =
   // A push token registered without a bearer session.
   | 'no_device'
   | 'bad_request'
+  // A 5th parcel photo for one stage (delivery 19.0.22.4.0): the server has the most it keeps.
+  | 'too_many_photos'
   | 'no_database'
   | 'network'
   | 'unknown';
@@ -865,12 +907,19 @@ export interface ApiAdapter {
   unregisterPush(token: string): Promise<void>;
 
   /**
-   * A photo of the parcel at the door. Optional: the server accepts it in any
-   * state while the job is the rider's, several per job, and never requires
-   * one before Delivered (delivery 19.0.21.4.0). The REST API takes the file
-   * itself (`uri`, multipart, 8 MB at most); base64 is for older servers.
+   * One parcel photo, after the pickup code or the customer's code: 2 to 4
+   * per stage. The REST API takes the file itself (multipart, 8 MB at most)
+   * under `fileName`, the owner's `S00042_051026_173915.jpg`, and files it by
+   * `stage` (delivery 19.0.22.4.0). The same name sent twice is kept once
+   * (`duplicate: true`), so a retry after a dropped signal is safe; a 5th is
+   * refused `too_many_photos`; a job finished over 24 h ago, `wrong_state`.
    */
-  uploadProof(id: number, imageBase64: string, uri?: string): Promise<{ attachment_id: number }>;
+  uploadProof(
+    id: number,
+    uri: string,
+    fileName: string,
+    stage: 'pickup' | 'delivery'
+  ): Promise<{ attachment_id: number }>;
 
   /** Into Fleet's service log, against the vehicle in hand. Needs `fuel`. */
   fuelReport(input: {
