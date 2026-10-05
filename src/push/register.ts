@@ -78,12 +78,34 @@ export async function ensureAlarmChannel(): Promise<void> {
 }
 
 /**
+ * Steps on a trip the server took by itself, such as "Rider Near Customer".
+ * Rings with the app's own chime, `near_customer.wav`, which the
+ * expo-notifications plugin builds into the APK; until a build has it, Android
+ * falls back to the default tone. The server's push names this channel.
+ */
+export const TRIP_CHANNEL = 'trip-updates';
+
+export async function ensureTripChannel(): Promise<void> {
+  if (Platform.OS !== 'android') return;
+  await Notifications.setNotificationChannelAsync(TRIP_CHANNEL, {
+    name: 'Trip updates',
+    description: 'When you are marked near the customer automatically.',
+    importance: Notifications.AndroidImportance.HIGH,
+    sound: 'near_customer.wav',
+    vibrationPattern: [0, 300, 150, 300],
+    enableVibrate: true,
+    lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+  });
+}
+
+/**
  * Ask permission, ensure the Android channel exists, mint a token and hand it
  * to Odoo. Returns the token, or null with a logged reason.
  */
 export async function registerForPush(): Promise<string | null> {
   try {
     await ensureJobsChannel();
+    await ensureTripChannel();
 
     // Only prompt if we do not already have it — repeatedly asking is how an
     // app gets permanently denied.
