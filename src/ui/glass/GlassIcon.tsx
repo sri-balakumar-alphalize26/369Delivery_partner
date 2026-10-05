@@ -43,6 +43,7 @@ const MAP = {
   car: 'car-outline',
   whatsapp: 'logo-whatsapp',
   close: 'close',
+  camera: 'camera-outline',
   offline: 'cloud-offline-outline',
 } as const;
 
