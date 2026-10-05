@@ -3,9 +3,39 @@ import {
   Manrope_700Bold,
   useFonts,
 } from '@expo-google-fonts/manrope';
-import { Tabs } from 'expo-router';
+import { Tabs, usePathname, useRouter } from 'expo-router';
+import { useEffect } from 'react';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { firstOwed, onOwedChange } from '../../src/photos/owed';
 import { font, glass, gradius } from '../../src/theme/glass';
+
+/**
+ * While a job owes its parcel photos, every screen leads back to them: a
+ * restart, a push opening another job, a tab tapped from a stale screen. The
+ * code is already accepted, so this is the only thing holding the rider to it.
+ */
+function useOwedPhotosGuard() {
+  const pathname = usePathname();
+  const router = useRouter();
+  useEffect(() => {
+    let live = true;
+    const check = () =>
+      firstOwed().then((owed) => {
+        if (!live || !owed) return;
+        if (pathname === `/photos/${owed.orderId}`) return;
+        router.replace({
+          pathname: '/photos/[id]',
+          params: { id: String(owed.orderId), stage: owed.stage },
+        });
+      });
+    void check();
+    const off = onOwedChange(check);
+    return () => {
+      live = false;
+      off();
+    };
+  }, [pathname, router]);
+}
 
 /**
  * The tab bar: a deep green band, icon over label, lime when active.
@@ -42,6 +72,7 @@ export default function AppLayout() {
    */
   // The face `font.semibold` names, which is what the label below is set in.
   const [fontsLoaded, fontError] = useFonts({ Manrope_700Bold });
+  useOwedPhotosGuard();
   if (!fontsLoaded && !fontError) return null;
 
   return (
@@ -133,6 +164,11 @@ export default function AppLayout() {
       {/* A finished job, opened from Orders → Past. Read-only. */}
       <Tabs.Screen
         name="past/[id]"
+        options={{ href: null, tabBarStyle: { display: 'none' } }}
+      />
+      {/* The parcel photos after a code. No bar: there is nowhere else to go. */}
+      <Tabs.Screen
+        name="photos/[id]"
         options={{ href: null, tabBarStyle: { display: 'none' } }}
       />
     </Tabs>
