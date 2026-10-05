@@ -30,6 +30,7 @@ let askedDutyLocation = false;
 import { GlassCard } from '../../src/ui/glass/GlassCard';
 import { GlassIcon } from '../../src/ui/glass/GlassIcon';
 import { GlassJobCard } from '../../src/ui/glass/GlassJobCard';
+import { HomeJobCard } from '../../src/ui/glass/HomeJobCard';
 import { GlassPill } from '../../src/ui/glass/GlassPill';
 import { GlassProblem } from '../../src/ui/glass/GlassProblem';
 import { GlassScreen } from '../../src/ui/glass/GlassScreen';
@@ -186,7 +187,30 @@ export default function Home() {
           <RefreshControl refreshing={isRefetching} onRefresh={() => refetch()} />
         }
       >
-        <GlassCard padding={16} style={{ marginTop: gspace.lg }}>
+        {/* The band carries on under the duty card, so the card sits over it. */}
+        <View
+          pointerEvents="none"
+          style={{
+            position: 'absolute',
+            top: 0,
+            left: -1000,
+            right: -1000,
+            height: 56,
+            backgroundColor: glass.band,
+          }}
+        />
+        <GlassCard
+          padding={18}
+          style={{
+            marginTop: gspace.xs,
+            borderRadius: 20,
+            shadowColor: '#0F3D2E',
+            shadowOpacity: 0.12,
+            shadowRadius: 16,
+            shadowOffset: { width: 0, height: 6 },
+            elevation: 4,
+          }}
+        >
           <View
             style={{
               flexDirection: 'row',
@@ -274,6 +298,27 @@ export default function Home() {
             </Pressable>
           ) : null}
 
+          {/* The day at a glance, inside the duty card. */}
+          <View style={{ flexDirection: 'row', gap: gspace.sm, marginTop: gspace.lg }}>
+            <Stat
+              label="Delivered today"
+              value={counts?.delivered_today ?? counts?.delivered ?? 0}
+              onPress={() => router.push('/orders')}
+            />
+            <Stat
+              label="On the road"
+              value={(counts?.picked_up ?? 0) + (counts?.out_for_delivery ?? 0)}
+              onPress={() => router.push('/orders?bucket=out_for_delivery')}
+            />
+            <Stat label="Cash to collect" value={money(toCollect, currency)} />
+          </View>
+          {counts?.delivered_week !== undefined ? (
+            <GlassText variant="caption" tone="soft" nums style={{ marginTop: gspace.sm }}>
+              {counts.delivered_week} this week · {counts.delivered_month ?? 0} this month
+              {counts?.assigned ? ` · ${counts.assigned} assigned` : ''}
+            </GlassText>
+          ) : null}
+
           {/* Whether the office's live map can see this rider. */}
           {onDuty ? <SharingRow /> : null}
           {/* Whether a new job will ring with the phone locked. */}
@@ -329,64 +374,6 @@ export default function Home() {
           </GlassCard>
         ) : null}
 
-        <GlassCard style={{ marginTop: gspace.lg }}>
-          {/* Today's deliveries, in the rider's timezone. `counts.delivered`
-              is all time, which is why this read too high; delivery
-              19.0.21.5.0 added the dated counts. An older server sends none,
-              and the all-time figure is then the only one there is. */}
-          <GlassText variant="caption" tone="soft">
-            Delivered today
-          </GlassText>
-          <GlassText variant="amount" nums style={{ marginTop: 2 }}>
-            {counts?.delivered_today ?? counts?.delivered ?? 0}
-          </GlassText>
-          {counts?.delivered_week !== undefined ? (
-            <GlassText variant="caption" tone="soft" nums style={{ marginTop: 2 }}>
-              {counts.delivered_week} this week · {counts.delivered_month ?? 0} this month
-            </GlassText>
-          ) : null}
-
-          {/* Cash rides in this card's corner rather than a card of its own at
-              the foot of the list: it is a figure about the day, like the ones
-              below it, and a rider wants it beside them rather than after two
-              screens of scrolling. Hidden at zero, where it is only noise. */}
-          {toCollect > 0 ? (
-            <View
-              style={{
-                position: 'absolute',
-                right: 18,
-                top: 18,
-                alignItems: 'flex-end',
-              }}
-            >
-              <GlassText variant="caption" tone="soft">
-                Cash to collect
-              </GlassText>
-              <GlassText variant="bodyStrong" tone="orange" nums>
-                {money(toCollect, currency)}
-              </GlassText>
-            </View>
-          ) : null}
-
-          <View style={{ flexDirection: 'row', gap: gspace.sm, marginTop: gspace.lg }}>
-            <Stat
-              label="Assigned"
-              value={counts?.assigned ?? 0}
-              onPress={() => router.push('/orders?bucket=assigned')}
-            />
-            <Stat
-              label="Collected"
-              value={counts?.picked_up ?? 0}
-              onPress={() => router.push('/orders?bucket=picked_up')}
-            />
-            <Stat
-              label="On road"
-              value={counts?.out_for_delivery ?? 0}
-              onPress={() => router.push('/orders?bucket=out_for_delivery')}
-            />
-          </View>
-        </GlassCard>
-
         {/* Odoo writes this for the rider — "2 job(s) were waiting." */}
         {duty.data?.message ? (
           <GlassText variant="bodyStrong" tone="indigo" style={{ marginTop: gspace.lg }}>
@@ -419,10 +406,21 @@ export default function Home() {
             marginTop: gspace.xxl,
           }}
         >
-          <GlassText variant="subtitle">
-            {jobs.length === 1 ? 'Active order' : 'Active orders'}
-          </GlassText>
-          {jobs.length ? <GlassPill label={String(jobs.length)} tone="soft" /> : null}
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: gspace.sm }}>
+            <GlassText variant="subtitle">
+              {jobs.length > 1 ? 'Active jobs' : 'Active job'}
+            </GlassText>
+            {jobs.length > 1 ? <GlassPill label={String(jobs.length)} tone="soft" /> : null}
+          </View>
+          <Pressable
+            onPress={() => router.push('/orders')}
+            accessibilityRole="link"
+            hitSlop={10}
+          >
+            <GlassText variant="bodyStrong" tone="indigo">
+              See all
+            </GlassText>
+          </Pressable>
         </View>
 
         {/* A failed refresh with jobs already on screen keeps the jobs. Losing
@@ -446,7 +444,14 @@ export default function Home() {
               marginTop: gspace.md,
             }}
           >
-            {jobs.map((job) => (
+            <View style={{ width: '100%' }}>
+              <HomeJobCard
+                job={jobs[0]}
+                timezone={timezone}
+                onPress={() => router.push(`/order/${jobs[0].delivery_order_id}`)}
+              />
+            </View>
+            {jobs.slice(1).map((job) => (
               <View
                 key={job.delivery_order_id}
                 style={wide ? { flexBasis: 0, flexGrow: 1, minWidth: 320 } : { width: '100%' }}
