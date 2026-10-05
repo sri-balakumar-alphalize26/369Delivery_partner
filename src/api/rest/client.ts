@@ -59,6 +59,8 @@ const KNOWN_CODES: ApiErrorCode[] = [
   'no_device',
   'bad_request',
   'too_many_photos',
+  'wait',
+  'handover_waiting',
 ];
 
 function toCode(raw: unknown): ApiErrorCode {
@@ -83,6 +85,8 @@ const KNOWN_ACTIONS: readonly Action[] = [
   'return_to_shop',
   'confirm_return',
   'report_issue',
+  'cancel_handover',
+  'verify_handover',
 ];
 
 export function normaliseActions(raw: unknown): Action[] {
@@ -218,6 +222,7 @@ function refusal({ status, payload }: Raw): ApiError {
       statusName: payload.status_name ?? payload.status,
       allowedActions:
         payload.allowed_actions === undefined ? undefined : normaliseActions(payload.allowed_actions),
+      waitUntil: typeof payload.wait_until === 'string' ? payload.wait_until : undefined,
     }
   );
 }

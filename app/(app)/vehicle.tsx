@@ -170,7 +170,7 @@ function FuelCard() {
   const { busy, message, error, setError, submit } = useSubmit();
 
   async function shoot() {
-    const shot = await takePhoto();
+    const shot = await takePhoto({ base64: true });
     if ('error' in shot) return setError(photoProblem(shot.error));
     setPhoto(shot);
   }
@@ -226,7 +226,7 @@ function IssueCard({ onGrounded }: { onGrounded: () => void }) {
   const { busy, message, error, setError, submit } = useSubmit();
 
   async function shoot() {
-    const shot = await takePhoto();
+    const shot = await takePhoto({ base64: true });
     if ('error' in shot) return setError(photoProblem(shot.error));
     setPhoto(shot);
   }

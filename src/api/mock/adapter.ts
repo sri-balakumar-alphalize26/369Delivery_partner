@@ -73,6 +73,8 @@ const ACTIONS_FOR: Record<DeliveryStatus, Action[]> = {
   cancelled: [],
   // Undocumented but live on res-test1, and terminal like the rest.
   failed: [],
+  handover_waiting: ['report_issue', 'cancel_handover'],
+  released: [],
 };
 
 /**
@@ -617,6 +619,18 @@ export const mockAdapter: ApiAdapter = {
       status: o.delivery_status,
       allowed_actions: o.allowed_actions,
       message: 'Reported. The office has been told.',
+      next: { kind: 'none' },
     };
+  },
+
+  // The demo has one rider, so nobody to hand a parcel to.
+  async verifyHandover() {
+    throw new ApiError('wrong_state', 'The demo has no second rider to take over from.');
+  },
+  async cancelHandover() {
+    throw new ApiError('wrong_state', 'The demo has no handover to cancel.');
+  },
+  async newHandoverCode() {
+    throw new ApiError('wrong_state', 'The demo has no handover code.');
   },
 };

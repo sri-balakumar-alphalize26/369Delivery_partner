@@ -44,6 +44,7 @@ const MAP = {
   whatsapp: 'logo-whatsapp',
   close: 'close',
   camera: 'camera-outline',
+  undo: 'arrow-undo-outline',
   offline: 'cloud-offline-outline',
 } as const;
 

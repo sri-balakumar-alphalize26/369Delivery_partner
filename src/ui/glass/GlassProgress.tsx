@@ -65,6 +65,9 @@ const REACHED: Record<DeliveryStatus, number> = {
   returned: 2,
   cancelled: 0,
   failed: 0,
+  // Rider A holds the parcel, still collected; a released job is no longer theirs.
+  handover_waiting: 2,
+  released: 0,
 };
 
 export function GlassProgress({

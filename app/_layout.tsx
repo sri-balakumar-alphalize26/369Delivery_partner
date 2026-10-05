@@ -14,6 +14,7 @@ import { View } from 'react-native';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { glass } from '../src/theme/glass';
 import { SplashAnimation } from '../src/ui/SplashAnimation';
+import { CameraHost } from '../src/ui/CameraSheet';
 import * as Notifications from 'expo-notifications';
 import { useOfferAlert } from '../src/hooks/useOfferAlert';
 import { useDutyLocation } from '../src/location/dutyLocation';
@@ -174,6 +175,8 @@ export default function RootLayout() {
               }}
             />
           </Gate>
+          {/* The one camera every photo uses, inside the app (see CameraSheet). */}
+          <CameraHost />
         </SafeAreaProvider>
       </QueryClientProvider>
 

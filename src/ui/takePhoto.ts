@@ -1,33 +1,20 @@
-import * as ImagePicker from 'expo-image-picker';
+import { openCamera } from './CameraSheet';
 
 /**
  * One photo from the camera, small enough to send over a rider's connection.
  *
- * Quality 0.5 and no editing: a parcel on a doorstep or a fuel receipt needs to
- * be legible, not beautiful, and JSON-RPC carries it as base64 — a full-size
- * phone photo would be several megabytes of text on a 3G link.
+ * The camera is our own sheet (`CameraSheet`), not the phone's camera app:
+ * leaving for that app let Android close this one, and the photo was lost.
+ * Quality 0.5 and no editing - a parcel or a fuel receipt needs to be legible,
+ * not beautiful. `base64` is filled only when a caller asks (the vehicle logs
+ * still send it); the parcel photos go up as files.
  *
- * Resolves to null when the rider backs out or refuses the camera; the reason
- * is in `error` so the screen can say something true.
+ * The reason for no photo is in `error`, so the screen can say something true.
  */
-export async function takePhoto(): Promise<
-  { base64: string; uri: string } | { error: 'denied' | 'cancelled' | 'failed' }
-> {
-  try {
-    const perm = await ImagePicker.requestCameraPermissionsAsync();
-    if (!perm.granted) return { error: 'denied' };
-    const shot = await ImagePicker.launchCameraAsync({
-      mediaTypes: ['images'],
-      quality: 0.5,
-      base64: true,
-      allowsEditing: false,
-      exif: false,
-    });
-    if (shot.canceled || !shot.assets?.[0]?.base64) return { error: 'cancelled' };
-    return { base64: shot.assets[0].base64, uri: shot.assets[0].uri };
-  } catch {
-    return { error: 'failed' };
-  }
+export async function takePhoto(
+  opts: { base64?: boolean } = {}
+): Promise<{ base64: string; uri: string } | { error: 'denied' | 'cancelled' | 'failed' }> {
+  return openCamera(!!opts.base64);
 }
 
 export function photoProblem(error: 'denied' | 'cancelled' | 'failed'): string | null {

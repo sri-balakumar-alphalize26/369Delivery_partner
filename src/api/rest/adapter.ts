@@ -55,8 +55,25 @@ function fixOrder(order: DeliveryOrder): DeliveryOrder {
   const raw = order.amount_to_collect as unknown;
   const amount =
     raw && typeof raw === 'object' ? Number((raw as { amount?: unknown }).amount) : Number(raw);
+  // Rider B in a takeover collects from rider A, not the shop. Standing rider
+  // A in for the shop points the map, Navigate, Call and the job card at A's
+  // live position with no screen having to know (Rider_App_Report_Problem.pdf).
+  const from = order.pickup_from;
+  const shop: DeliveryOrder['shop'] =
+    from?.kind === 'rider'
+      ? {
+          id: -from.id,
+          name: `Rider ${from.name}`,
+          image_url: null,
+          latitude: from.latitude,
+          longitude: from.longitude,
+          address: from.address || `${from.name}'s live position`,
+          phone: from.phone,
+        }
+      : order.shop;
   return {
     ...order,
+    shop,
     amount_to_collect: Number.isFinite(amount) ? amount : 0,
     allowed_actions: normaliseActions(order.allowed_actions),
   };
@@ -301,7 +318,42 @@ export const restAdapter: ApiAdapter = {
   // `wrong_state` answer redraws the screen from the truth.
   confirmReturn: (id) => step('/api/delivery/return/confirm', { delivery_order_id: id }),
 
-  // Written to the job's Last Error and its log; the state does not change.
-  reportIssue: (id, note, key) =>
-    step('/api/delivery/issue', { delivery_order_id: id, reason: note }, key),
+  /**
+   * Tells the office, and for the eight known codes the server also takes the
+   * next step itself and answers with `next` (delivery 19.0.22.5.0): a
+   * message to the customer, a wait, a return allowed, a new drop point, or
+   * another rider. The code goes in `reason`, a free note in `note`.
+   */
+  async reportIssue(id, reason, key, extra) {
+    // "other: <words>" from older callers splits into the code and a note.
+    const other = /^other:\s*([\s\S]*)$/.exec(reason);
+    const fields: Record<string, string> = other
+      ? { reason: 'other', note: other[1] }
+      : { reason };
+    if (extra?.note) fields.note = extra.note;
+    if (extra?.photoUri) {
+      const form = new FormData();
+      form.append('delivery_order_id', String(id));
+      for (const [k, v] of Object.entries(fields)) form.append(k, v);
+      form.append('file', {
+        uri: extra.photoUri,
+        name: extra.photoName ?? `problem_${id}.jpg`,
+        type: 'image/jpeg',
+      } as unknown as Blob);
+      return fixResult(
+        await request<ActionResult>('/api/delivery/issue', {
+          method: 'POST',
+          form,
+          idempotencyKey: key,
+          timeoutMs: 60_000,
+        })
+      );
+    }
+    return step('/api/delivery/issue', { delivery_order_id: id, ...fields }, key);
+  },
+
+  verifyHandover: (id, code) =>
+    step('/api/delivery/handover/verify', { delivery_order_id: id, code }),
+  cancelHandover: (id) => step('/api/delivery/handover/cancel', { delivery_order_id: id }),
+  newHandoverCode: (id) => step('/api/delivery/handover/new-code', { delivery_order_id: id }),
 };

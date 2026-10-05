@@ -31,11 +31,13 @@ import {
   ActionResult,
   ApiError,
   DeliveryOrder,
+  DropPoint,
   DECLINE_REASONS,
   DELIVERY_REASONS,
   headingFor,
   isAtShop,
   isDropLocked,
+  JobProblem,
   Money,
   PRIMARY_ACTIONS,
   trackingWanted,
@@ -62,6 +64,7 @@ import {
 } from '../../../src/location/tracking';
 import { stopOfferAlert } from '../../../src/hooks/useOfferAlert';
 import { useSession } from '../../../src/store/session';
+import { photoProblem, takePhoto } from '../../../src/ui/takePhoto';
 import * as Notifications from 'expo-notifications';
 import { playNearCustomer } from '../../../src/lib/sounds';
 import { claimNearAuto } from '../../../src/push/nearAutoLedger';
@@ -81,7 +84,8 @@ import { CodeSheet } from '../../../src/ui/CodeSheet';
 import { OtpInput } from '../../../src/ui/OtpInput';
 import { MAP_ENABLED, RouteMap } from '../../../src/ui/RouteMap';
 import { owePhotos, PhotoStage } from '../../../src/photos/owed';
-import { photoRef } from '../../../src/lib/photoName';
+import { photoFileName, photoRef } from '../../../src/lib/photoName';
+import { Image } from 'expo-image';
 import { PayQr } from '../../../src/ui/PayQr';
 import { currentFix } from '../../../src/location/currentFix';
 import { metresBetween } from '../../../src/lib/routeGeometry';
@@ -302,6 +306,10 @@ export default function Job() {
   /** Which action is waiting on the location explainer, if any. */
   const [primerFor, setPrimerFor] = useState<Action | null>(null);
   const [reasonNote, setReasonNote] = useState('');
+  /** The reason ticked on the reason screen; nothing is sent until Send. */
+  const [reasonPick, setReasonPick] = useState<string | null>(null);
+  /** A photo for the report, named like the parcel photos. */
+  const [reportShot, setReportShot] = useState<{ uri: string; name: string } | null>(null);
   /** Whether the code panel is up. The code itself still lives in `otp`. */
   const [codeOpen, setCodeOpen] = useState(false);
   /**
@@ -317,6 +325,8 @@ export default function Job() {
   const [arrivedHere, setArrivedHere] = useState(false);
   /** The pickup code was accepted: the drop is unlocked. Said once, in green. */
   const [unlockedNote, setUnlockedNote] = useState<string | null>(null);
+  /** The customer shared a new place for this delivery: the map has moved. */
+  const [dropNote, setDropNote] = useState<string | null>(null);
   /** After "Report a problem": that it reached the office, so the rider is not left guessing. */
   const [reportedNote, setReportedNote] = useState<string | null>(null);
 
@@ -474,9 +484,10 @@ export default function Job() {
     setArrivedHere(false);
     setUnlockedNote(null);
     setReportedNote(null);
+    setDropNote(null);
   }
 
-  const { data: order, isLoading, dataUpdatedAt } = useQuery({
+  const { data: order, isLoading, dataUpdatedAt, error: orderError } = useQuery({
     queryKey: ['order', orderId],
     queryFn: () => api.order(orderId),
     // Faster while the rider stands at the counter waiting for the branch to
@@ -484,8 +495,30 @@ export default function Job() {
     // it. Push wakes this too, when it arrives.
     // The same near the customer, while the server is about to mark it.
     refetchInterval: (q) =>
-      waitingForBranch(q.state.data) || waitNearRef.current ? 5_000 : 15_000,
+      waitingForBranch(q.state.data) ||
+      waitNearRef.current ||
+      q.state.data?.delivery_status === 'handover_waiting'
+        ? 5_000
+        : 15_000,
   });
+
+  /**
+   * Rider A after the handover: the moment rider B types the code the job is
+   * B's, and this rider can no longer read it. Say so and leave, rather than
+   * showing the last thing known - "on the way" - for ever.
+   */
+  const handedOver =
+    order?.delivery_status === 'handover_waiting' &&
+    orderError instanceof ApiError &&
+    (orderError.code === 'not_found' || orderError.status === 403 || orderError.status === 404);
+  useEffect(() => {
+    if (!handedOver) return;
+    qc.removeQueries({ queryKey: ['order', orderId] });
+    void qc.invalidateQueries({ queryKey: ['orders'] });
+    Alert.alert('Parcel handed over', 'The other rider has the parcel now. Thank you.');
+    router.replace('/');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [handedOver]);
 
   /**
    * A reply's actions stand in for the job's only until the job is read again.
@@ -557,6 +590,27 @@ export default function Job() {
     prompt?.kind === 'near' &&
     prompt.metres <= autoNear.radius_m;
   waitNearRef.current = autoNearHere;
+  /**
+   * A drop point that arrives while the screen is open is the customer's
+   * shared location: buzz once and say the map moved. One already there when
+   * the screen opened is old news, and the rider's own waiting spot is no news.
+   */
+  const dropAt = order?.drop_point?.at ?? '';
+  const dropSeen = useRef<string | null>(null);
+  useEffect(() => {
+    if (!order) return;
+    if (dropSeen.current === null) {
+      dropSeen.current = dropAt;
+      return;
+    }
+    if (!dropAt || dropAt === dropSeen.current) return;
+    dropSeen.current = dropAt;
+    const label = order.drop_point?.label;
+    if (label?.startsWith('Where the rider is waiting')) return;
+    Vibration.vibrate([0, 300, 150, 300]);
+    setDropNote(`New location from the customer${label ? `: ${label}` : ''}. The map has moved.`);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dropAt, orderId]);
   const nearAuto = !!order?.near_customer_auto;
   useEffect(() => {
     // Once per job, shared with the push listener: the server's own push for
@@ -651,7 +705,10 @@ export default function Job() {
    * six digits, which is why no flag out here greys out the very button a rider
    * taps in order to enter the code.
    */
-  const needsOtp = primary === 'verify_pickup_otp' || primary === 'verify_delivery_otp';
+  const needsOtp =
+    primary === 'verify_pickup_otp' ||
+    primary === 'verify_handover' ||
+    primary === 'verify_delivery_otp';
   const cod = order.payment_status === 'cod';
 
   /** The promise as pressure, counted against the server's clock. */
@@ -662,7 +719,9 @@ export default function Job() {
 
 
   /** At the counter waiting on the pickup code — the moment to check the bag. */
-  const collecting = primary === 'verify_pickup_otp';
+  const collecting = primary === 'verify_pickup_otp' || primary === 'verify_handover';
+  /** Rider B taking a parcel over from a rider whose bike broke down. */
+  const takeover = order.pickup_from?.kind === 'rider' ? order.pickup_from : null;
 
   /**
    * Every line ticked, or nothing to tick. Collect waits for it: these are
@@ -762,6 +821,8 @@ export default function Job() {
       setError(null);
       setOtpError(null);
       setReasonNote('');
+      setReasonPick(null);
+      setReportShot(null);
       setReasonFor(action);
       return;
     }
@@ -788,7 +849,12 @@ export default function Job() {
     await fire(action);
   }
 
-  async function fire(action: Action, reason?: string) {
+  async function fire(
+    action: Action,
+    reason?: string,
+    photo?: { uri: string; name?: string } | null,
+    note?: string
+  ) {
     setBusy(true);
     setError(null);
     setOtpError(null);
@@ -854,12 +920,24 @@ export default function Job() {
           res = await api.confirmReturn(orderId);
           break;
         case 'report_issue':
-          res = await api.reportIssue(orderId, reason ?? 'other');
+          res = await api.reportIssue(orderId, reason ?? 'other', undefined, {
+            ...(photo ? { photoUri: photo.uri, photoName: photo.name } : {}),
+            ...(note ? { note } : {}),
+          });
+          break;
+        case 'verify_handover':
+          // Rider B: rider A's code. The reply carries the job, now B's and
+          // unlocked, the same as a verified pickup code.
+          res = await api.verifyHandover(orderId, otp);
+          if (res.order) qc.setQueryData(['order', orderId], res.order);
+          break;
+        case 'cancel_handover':
+          res = await api.cancelHandover(orderId);
           break;
         default:
           return;
       }
-      if (action === 'verify_pickup_otp') {
+      if (action === 'verify_pickup_otp' || action === 'verify_handover') {
         setPicked(new Set());
         AsyncStorage.removeItem(pickKey).catch(() => {});
       }
@@ -870,6 +948,9 @@ export default function Job() {
       setCodeOpen(false);
       // The last panel's words belong to the last step.
       setNotice(null);
+      if (action === 'cancel_handover') {
+        setReportedNote(res.message || 'Back on the delivery.');
+      }
       if (action === 'report_issue') {
         setReportedNote(res.message || 'The office has been told. They will call you if they need to.');
       }
@@ -878,7 +959,10 @@ export default function Job() {
         // "Tell the counter you are here..." - instructions, not an error.
         setNotice(res.message ?? null);
       }
-      if (action === 'verify_pickup_otp' && order?.customer_location_locked) {
+      if (
+        (action === 'verify_pickup_otp' || action === 'verify_handover') &&
+        order?.customer_location_locked
+      ) {
         const name = res.order?.customer_name || order.customer_name;
         setUnlockedNote(res.message ?? `Code accepted. Head to ${name}.`);
       }
@@ -897,6 +981,16 @@ export default function Job() {
           ref: photoRef(res.order ?? order),
           customerName: res.order?.customer_name || order.customer_name,
         });
+      }
+      if (res.status === 'released') {
+        // A vehicle problem before pickup: the job went to the next rider.
+        await qc.invalidateQueries({ queryKey: ['orders'] });
+        Alert.alert(
+          'Given to another rider',
+          res.message || 'The next free rider has been offered this job.'
+        );
+        router.replace('/');
+        return;
       }
       await applyResult(res);
       if (photoStage) {
@@ -927,6 +1021,14 @@ export default function Job() {
         if (err.code === 'bad_otp') {
           setOtpError(err.message);
           setOtp('');
+        } else if (err.code === 'wait') {
+          // "Customer not there": the return opens when the wait ends.
+          const at = timeOnly(err.waitUntil, timezone);
+          setError(
+            at
+              ? `You can return the parcel after ${at}. The customer has been messaged.`
+              : err.message
+          );
         } else if (err.code === 'otp_required') {
           // The customer has no live code after all: back to "Reached".
           markReached(false);
@@ -1084,11 +1186,51 @@ export default function Job() {
     const reasons: readonly { code: string; label: string }[] = declining
       ? DECLINE_REASONS
       : DELIVERY_REASONS;
+    /*
+     * Pick, then send (owner's pick, "D" of five drawn). A tap used to send at
+     * once and start the next step - a slip on a bumpy road became a report
+     * the office acted on. Now a tap only ticks a reason; Send sends it, with
+     * the rider's note and a photo for a report.
+     */
+    const reporting = reasonFor === 'report_issue';
+    const note = reasonNote.trim();
+    // A decline never waits on a reason: the job goes to the next rider either way.
+    const canSend = declining || !!reasonPick;
+    const close = () => {
+      setReasonFor(null);
+      setReasonNote('');
+      setReasonPick(null);
+      setReportShot(null);
+    };
+    const send = () => {
+      const action = reasonFor;
+      const code = reasonPick ?? '';
+      // The server keeps a report photo only for damage ("Problem photos",
+      // delivery 19.0.22.5.0); one taken before switching reason stays home.
+      const shot = code === 'damaged' ? reportShot : null;
+      close();
+      if (action === 'report_issue') void fire(action, code || 'other', shot, note || undefined);
+      // The return and decline routes take one reason string, no note field.
+      else void fire(action, code);
+    };
+    const shoot = async () => {
+      const shot = await takePhoto();
+      if ('error' in shot) {
+        const why = photoProblem(shot.error);
+        if (why) setError(why);
+        return;
+      }
+      const ref = order ? photoRef(order) : `order${orderId}`;
+      setReportShot({ uri: shot.uri, name: photoFileName(ref, new Date(), timezone) });
+    };
     return (
       <GlassScreen>
+        <GlassHeader
+          title={declining ? 'Decline this job' : returning ? 'Return to shop' : 'Report a problem'}
+          onBack={close}
+        />
         <ScrollView
           contentContainerStyle={{
-            paddingTop: insets.top + gspace.xxl,
             paddingHorizontal: gspace.xl,
             paddingBottom: gspace.xxxl + bottomInset,
           }}
@@ -1101,89 +1243,371 @@ export default function Job() {
                 ? 'Why are you returning it?'
                 : 'What is the problem?'}
           </GlassText>
-          <GlassText variant="body" tone="soft" style={{ marginTop: gspace.sm }}>
+          <GlassText variant="body" tone="soft" style={{ marginTop: gspace.xs }}>
             {declining
               ? 'It goes to the next rider at once, and is not offered to you again.'
               : returning
                 ? 'The shop closes the return. This tells them what happened.'
-                : 'This is logged against the job. It does not change anything you can do.'}
+                : 'Pick one, then press Send. The office is told, and the next step starts by itself.'}
           </GlassText>
 
-          <View style={{ marginTop: gspace.xl, gap: gspace.sm }}>
-            {reasons.map((r) => (
-              <Pressable
-                key={r.code}
-                disabled={busy}
-                accessibilityRole="button"
-                onPress={() => {
-                  if (r.code === 'other') {
-                    setReasonNote(' ');
-                    return;
-                  }
-                  setReasonFor(null);
-                  void fire(reasonFor, r.code);
-                }}
-                style={({ pressed }) => [
-                  {
-                    backgroundColor: glass.fillStrong,
-                    borderRadius: gradius.card,
-                    borderWidth: 1,
-                    borderColor: glass.border,
-                    paddingVertical: gspace.lg,
-                    paddingHorizontal: gspace.xl,
-                    opacity: pressed || busy ? 0.6 : 1,
-                  },
-                ]}
-              >
-                <GlassText variant="bodyStrong">{r.label}</GlassText>
-              </Pressable>
-            ))}
+          <View style={{ marginTop: gspace.lg, gap: gspace.sm }} accessibilityRole="radiogroup">
+            {reasons.map((r) => {
+              const on = reasonPick === r.code;
+              return (
+                <Pressable
+                  key={r.code}
+                  disabled={busy}
+                  accessibilityRole="radio"
+                  accessibilityState={{ checked: on }}
+                  onPress={() => setReasonPick(on ? null : r.code)}
+                  style={({ pressed }) => ({
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    backgroundColor: on ? glass.accentSoft : glass.fillStrong,
+                    borderRadius: gradius.button,
+                    borderWidth: on ? 2 : 1,
+                    borderColor: on ? glass.band : glass.border,
+                    paddingVertical: on ? gspace.md - 1 : gspace.md,
+                    paddingHorizontal: on ? gspace.lg - 1 : gspace.lg,
+                    opacity: busy ? 0.6 : pressed ? 0.8 : 1,
+                  })}
+                >
+                  <View
+                    style={{
+                      width: 20,
+                      height: 20,
+                      borderRadius: 10,
+                      borderWidth: on ? 6 : 2,
+                      borderColor: on ? glass.band : glass.border,
+                      backgroundColor: glass.white,
+                      marginRight: gspace.md,
+                    }}
+                  />
+                  <GlassText variant="bodyStrong" style={{ flex: 1 }}>
+                    {r.label}
+                  </GlassText>
+                </Pressable>
+              );
+            })}
           </View>
 
-          {/* Free text is only asked for behind "Something else" — the server
-              accepts it alongside the codes, so nothing is lost either way. */}
-          {reasonNote ? (
-            <View style={{ marginTop: gspace.lg }}>
+          {/* A report carries the rider's words, and for damage a photo: the
+              server keeps a report photo only for "damaged" ("Problem photos"). */}
+          {reporting ? (
+            <View style={{ marginTop: gspace.xl }}>
               <Field
-                label="In your words"
+                label={reasonPick === 'other' ? 'What happened' : 'Add a note (optional)'}
                 placeholder="A short line is enough — the office reads these"
-                value={reasonNote.trimStart()}
-                onChangeText={(v) => setReasonNote(v || ' ')}
+                value={reasonNote}
+                onChangeText={setReasonNote}
                 multiline
-                autoFocus
               />
-              <GlassButton
-                title="Send"
-                loading={busy}
-                onPress={() => {
-                  const note = reasonNote.trim();
-                  setReasonFor(null);
-                  void fire(reasonFor, note ? `other: ${note}` : 'other');
-                }}
-                style={{ marginTop: gspace.lg }}
-              />
+              {reasonPick !== 'damaged' ? null : reportShot ? (
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <Image
+                    source={{ uri: reportShot.uri }}
+                    style={{ width: 64, height: 64, borderRadius: gradius.chip }}
+                    contentFit="cover"
+                  />
+                  <View style={{ flex: 1, marginLeft: gspace.md }}>
+                    <GlassText variant="bodyStrong">Photo added</GlassText>
+                    <View style={{ flexDirection: 'row', columnGap: gspace.lg }}>
+                      <GhostLink label="Retake" onPress={shoot} disabled={busy} />
+                      <GhostLink label="Remove" onPress={() => setReportShot(null)} disabled={busy} />
+                    </View>
+                  </View>
+                </View>
+              ) : (
+                <Pressable
+                  onPress={shoot}
+                  disabled={busy}
+                  accessibilityRole="button"
+                  style={({ pressed }) => ({
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    borderWidth: 1,
+                    borderStyle: 'dashed',
+                    borderColor: glass.orangeLine,
+                    backgroundColor: glass.white,
+                    borderRadius: gradius.button,
+                    paddingVertical: gspace.md,
+                    paddingHorizontal: gspace.lg,
+                    opacity: pressed ? 0.7 : 1,
+                  })}
+                >
+                  <GlassIcon
+                    name="camera"
+                    size={18}
+                    color={glass.orange}
+                  />
+                  <GlassText
+                    variant="bodyStrong"
+                    tone="orange"
+                    style={{ marginLeft: gspace.sm }}
+                  >
+                    Add a photo of the damage (optional)
+                  </GlassText>
+                </Pressable>
+              )}
             </View>
           ) : null}
 
-          {/* A reason helps the shop choose who to call next, but it is the
-              rider's to give: the decline itself never waits on one. */}
-          {declining ? (
-            <GhostLink
-              label="Decline without a reason"
-              disabled={busy}
-              onPress={() => {
-                setReasonFor(null);
-                void fire('decline', '');
+          <GlassButton
+            title={declining ? 'Decline job' : returning ? 'Return to shop' : 'Send report'}
+            kind={declining || returning ? 'danger' : 'green'}
+            icon={reporting ? 'nav' : undefined}
+            onPress={send}
+            disabled={!canSend}
+            loading={busy}
+            style={{ marginTop: gspace.xl }}
+          />
+          <GhostLink label="Never mind" disabled={busy} onPress={close} />
+        </ScrollView>
+      </GlassScreen>
+    );
+  }
+
+  /* ----------------------------------------------------------------- *
+   * Rider A after a vehicle problem with the parcel on board
+   * (Rider_App_Report_Problem.pdf). The server is finding another rider to
+   * come here; this phone shows the code that rider types to take over.
+   * Only "bike fixed" and another report are possible meanwhile.
+   * ----------------------------------------------------------------- */
+  if (order.delivery_status === 'handover_waiting') {
+    const relay = order.relay;
+    const code = (order.handover_code || relay?.handover_code || '').trim();
+    const to = relay?.to_rider ?? null;
+    const state = relay?.relay_state ?? 'searching';
+    const searching = state === 'searching' || state === 'offered';
+    // One look per state: amber while searching, green when a rider is coming,
+    // red when nobody is free and the office has to step in.
+    const look =
+      state === 'none'
+        ? { bg: glass.redSoft, fg: glass.red, icon: 'alert' as const }
+        : state === 'accepted'
+          ? { bg: glass.greenSoft, fg: glass.green, icon: 'bike' as const }
+          : { bg: glass.orangeSoft, fg: glass.orange, icon: 'bike' as const };
+    const headline =
+      state === 'none'
+        ? 'No rider is free right now'
+        : state === 'accepted'
+          ? `${to?.name ?? 'A rider'} is on the way`
+          : state === 'offered'
+            ? `Asking ${to?.name ?? 'a rider'}…`
+            : 'Finding a rider for you…';
+    const detail =
+      state === 'none'
+        ? 'The office has been told and will call you. Stay with the parcel.'
+        : state === 'accepted'
+          ? 'Wait here with the parcel. Show them the code below when they reach you.'
+          : state === 'offered'
+            ? 'The nearest free rider has been asked to take over. Waiting for their answer.'
+            : 'The nearest free rider will be asked to come and take the parcel.';
+    // Where the handover stands, as four steps the rider can follow.
+    const stepAt = state === 'accepted' ? 2 : 1;
+    const steps = [
+      'You reported the vehicle problem',
+      'A free rider takes the job',
+      'They ride to where you are',
+      'They type your code and take the parcel',
+    ];
+    const tone = state === 'none' ? ('red' as const) : state === 'accepted' ? ('green' as const) : ('orange' as const);
+    return (
+      <GlassScreen>
+        <View
+          style={{
+            backgroundColor: glass.band,
+            paddingTop: insets.top + gspace.md,
+            paddingBottom: gspace.lg,
+            paddingHorizontal: gspace.xl,
+            flexDirection: 'row',
+            alignItems: 'center',
+          }}
+        >
+          <RoundButton icon="chev" mirrored translucent onPress={() => router.back()} />
+          <GlassText variant="title" tone="white" style={{ flex: 1, textAlign: 'center' }}>
+            Handover
+          </GlassText>
+          <View style={{ minWidth: 40, alignItems: 'flex-end' }}>
+            <GlassPill label={band.label} bg={band.bg} fg={band.fg} />
+          </View>
+        </View>
+
+        <ScrollView
+          contentContainerStyle={{
+            padding: gspace.xl,
+            paddingBottom: gspace.xxxl + bottomInset,
+            gap: gspace.lg,
+          }}
+        >
+          {/* Who is coming, or that nobody is. */}
+          <View
+            style={{
+              backgroundColor: look.bg,
+              borderRadius: gradius.card,
+              borderWidth: 1,
+              borderColor: look.fg,
+              padding: gspace.xl,
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: gspace.lg,
+            }}
+          >
+            <View
+              style={{
+                width: 56,
+                height: 56,
+                borderRadius: 28,
+                backgroundColor: glass.white,
+                alignItems: 'center',
+                justifyContent: 'center',
               }}
+            >
+              {searching ? (
+                <ActivityIndicator color={look.fg} />
+              ) : (
+                <GlassIcon name={look.icon} color={look.fg} size={28} />
+              )}
+            </View>
+            <View style={{ flex: 1 }}>
+              <GlassText variant="subtitle" tone={tone}>
+                {headline}
+              </GlassText>
+              <GlassText variant="body" tone="soft" style={{ marginTop: gspace.xs }}>
+                {detail}
+              </GlassText>
+            </View>
+          </View>
+          {to?.phone && state !== 'none' ? (
+            <GlassButton
+              title={`Call ${to.name}`}
+              kind="ghost"
+              icon="phone"
+              onPress={() => dial(to.phone)}
             />
           ) : null}
-          <GhostLink
-            label="Never mind"
+
+          {/* The code, one digit per box, readable at arm's length. */}
+          <GlassCard>
+            <GlassText variant="label" tone="soft">
+              HANDOVER CODE
+            </GlassText>
+            <View
+              style={{ flexDirection: 'row', justifyContent: 'center', gap: gspace.sm, marginTop: gspace.md }}
+              accessible
+              accessibilityLabel={`Handover code ${code.split('').join(' ')}`}
+            >
+              {(code || '······').split('').map((d, i) => (
+                <View
+                  key={i}
+                  style={{
+                    flex: 1,
+                    maxWidth: 72,
+                    aspectRatio: 0.8,
+                    borderRadius: gradius.button,
+                    borderWidth: 2,
+                    borderColor: glass.band,
+                    backgroundColor: glass.fillLight,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <GlassText variant="amountLg">{d}</GlassText>
+                </View>
+              ))}
+            </View>
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginTop: gspace.md }}>
+              <GlassIcon name="lock" color={glass.inkSoft} size={16} />
+              <GlassText variant="caption" tone="soft" style={{ flex: 1, marginLeft: gspace.sm }}>
+                Give it only to the rider who takes the parcel, face to face.
+              </GlassText>
+            </View>
+          </GlassCard>
+
+          {/* What happens now. */}
+          <GlassCard>
+            <GlassText variant="label" tone="soft">
+              WHAT HAPPENS NOW
+            </GlassText>
+            <View style={{ marginTop: gspace.md, gap: gspace.md }}>
+              {steps.map((label, i) => {
+                const done = i < stepAt;
+                const now = i === stepAt && state !== 'none';
+                return (
+                  <View key={label} style={{ flexDirection: 'row', alignItems: 'center' }}>
+                    <View
+                      style={{
+                        width: 26,
+                        height: 26,
+                        borderRadius: 13,
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        backgroundColor: done ? glass.green : now ? glass.orangeSoft : glass.fill,
+                        borderWidth: now ? 2 : 0,
+                        borderColor: glass.orange,
+                      }}
+                    >
+                      {done ? (
+                        <GlassIcon name="check" color={glass.white} size={14} />
+                      ) : (
+                        <GlassText variant="caption" tone={now ? 'orange' : 'faint'}>
+                          {i + 1}
+                        </GlassText>
+                      )}
+                    </View>
+                    <GlassText
+                      variant={now ? 'bodyStrong' : 'body'}
+                      tone={done || now ? 'ink' : 'faint'}
+                      style={{ flex: 1, marginLeft: gspace.md }}
+                    >
+                      {label}
+                    </GlassText>
+                  </View>
+                );
+              })}
+            </View>
+          </GlassCard>
+
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+            <GlassIcon name="bell" color={glass.inkSoft} size={16} />
+            <GlassText variant="caption" tone="soft" style={{ flex: 1, marginLeft: gspace.sm }}>
+              {order.customer_name || 'The customer'} has been told the delivery will be a little late.
+            </GlassText>
+          </View>
+
+          {error ? (
+            <GlassText variant="bodyStrong" tone="red">
+              {error}
+            </GlassText>
+          ) : null}
+
+          {actions.includes('cancel_handover') ? (
+            <GlassButton
+              title={ACTION_LABEL.cancel_handover}
+              icon="bike"
+              loading={busy}
+              onPress={() => void fire('cancel_handover')}
+            />
+          ) : null}
+          <StrongAction
+            label="Get a new code"
+            icon="lock"
             disabled={busy}
             onPress={() => {
-              setReasonFor(null);
-              setReasonNote('');
+              setError(null);
+              api
+                .newHandoverCode(orderId)
+                .then(() => qc.invalidateQueries({ queryKey: ['order', orderId] }))
+                .catch((err) =>
+                  setError(err instanceof ApiError ? err.message : 'Could not reach the server.')
+                );
             }}
+          />
+          <TroubleRow
+            actions={actions.includes('report_issue') ? ['report_issue'] : []}
+            onAction={(a) => void run(a)}
+            disabled={busy}
           />
         </ScrollView>
       </GlassScreen>
@@ -1298,7 +1722,11 @@ export default function Job() {
           <GlassCard style={{ marginTop: gspace.lg }}>
             <GlassText variant="label" tone="soft" upper>
               {/* A job with no shop is collected from the warehouse (19.0.21.4.0). */}
-              {offerShop?.is_warehouse ? 'Pick up from the warehouse' : 'Pick up from'}
+              {order.pickup_from?.kind === 'rider'
+                ? 'Take over from (bike broke down)'
+                : offerShop?.is_warehouse
+                  ? 'Pick up from the warehouse'
+                  : 'Pick up from'}
             </GlassText>
             <GlassText variant="bodyStrong" style={{ marginTop: gspace.xs }}>
               {shopName(order.shop) || 'Shop not recorded'}
@@ -1415,30 +1843,14 @@ export default function Job() {
             style={{ marginTop: order.offer_expires_at ? gspace.lg : gspace.xxl }}
           />
 
-          {/* Side by side rather than stacked. Full-width one under another,
-              they read as three primary actions competing with the real one. */}
-          <View
-            style={{
-              flexDirection: 'row',
-              flexWrap: 'wrap',
-              justifyContent: 'center',
-              columnGap: gspace.xl,
-            }}
-          >
-            {secondary.map((a) => (
-              <GhostLink
-                key={a}
-                label={ACTION_LABEL[a]}
-                onPress={() => run(a)}
-                disabled={busy || offerGone}
-              />
-            ))}
-            {/* Last, and only when a number is configured. A rider reaches for
-                this when the job itself has stopped working. */}
-            {supportNumber ? (
-              <GhostLink label="Call support" onPress={callSupport} disabled={busy} />
-            ) : null}
-          </View>
+          {/* An offer has no "something wrong" yet: Decline sits there plainly. */}
+          <TroubleRow
+            heading={null}
+            actions={secondary}
+            onAction={(a) => run(a)}
+            onCallSupport={supportNumber ? callSupport : undefined}
+            disabled={busy || offerGone}
+          />
         </ScrollView>
       </GlassScreen>
     );
@@ -1623,6 +2035,10 @@ export default function Job() {
           {pending ? <PendingLine entry={pending} /> : null}
 
           {reportedNote ? <ArrivalBanner text={reportedNote} /> : null}
+          {order.problem ? (
+            <ProblemBanner problem={order.problem} drop={order.drop_point ?? null} />
+          ) : null}
+          {dropNote ? <ArrivalBanner text={dropNote} /> : null}
           {order.near_customer_auto && !reached ? (
             <ArrivalBanner
               text={`Marked near the customer automatically${
@@ -1645,34 +2061,22 @@ export default function Job() {
             style={{ marginTop: gspace.xxl }}
           />
 
-          {/* Side by side rather than stacked. Full-width one under another,
-              they read as three primary actions competing with the real one. */}
-          <View
-            style={{
-              flexDirection: 'row',
-              flexWrap: 'wrap',
-              justifyContent: 'center',
-              columnGap: gspace.xl,
-            }}
-          >
-            {/* The office may have sent the code from the job form, or this
-                phone may have been swapped mid-job: no need to send another. */}
-            {!reached ? (
-              <GhostLink
-                label="Customer already has a code"
-                onPress={() => setCodeOpen(true)}
-                disabled={busy}
-              />
-            ) : null}
-            {secondary.map((a) => (
-              <GhostLink key={a} label={ACTION_LABEL[a]} onPress={() => run(a)} disabled={busy} />
-            ))}
-            {/* Last, and only when a number is configured. A rider reaches for
-                this when the job itself has stopped working. */}
-            {supportNumber ? (
-              <GhostLink label="Call support" onPress={callSupport} disabled={busy} />
-            ) : null}
-          </View>
+          {/* The office may have sent the code from the job form, or this
+              phone may have been swapped mid-job: no need to send another. */}
+          {!reached ? (
+            <StrongAction
+              label="Customer already has a code"
+              icon="lock"
+              onPress={() => setCodeOpen(true)}
+              disabled={busy}
+            />
+          ) : null}
+          <TroubleRow
+            actions={secondary}
+            onAction={(a) => run(a)}
+            onCallSupport={supportNumber ? callSupport : undefined}
+            disabled={busy}
+          />
         </ScrollView>
         </KeyboardAvoidingView>
       </GlassScreen>
@@ -1916,6 +2320,10 @@ export default function Job() {
 
           {unlockedNote && toCustomer ? <ArrivalBanner text={unlockedNote} /> : null}
           {reportedNote ? <ArrivalBanner text={reportedNote} /> : null}
+          {order.problem ? (
+            <ProblemBanner problem={order.problem} drop={order.drop_point ?? null} />
+          ) : null}
+          {dropNote ? <ArrivalBanner text={dropNote} /> : null}
 
           {prompt?.kind === 'shop' && arrivalDue ? (
             <ArrivalBanner text={`You're at the branch. Tap "${ACTION_LABEL.arrived_shop}".`} />
@@ -1940,10 +2348,12 @@ export default function Job() {
           {/* The code has its own panel now. See src/ui/CodeSheet.tsx for why it
               stopped living at the foot of this sheet, under everything else. */}
           <CodeSheet
-            visible={codeOpen && primary === 'verify_pickup_otp'}
-            title="Enter the pickup code"
+            visible={codeOpen && collecting}
+            title={takeover ? 'Enter the handover code' : 'Enter the pickup code'}
             hint={
-              branch
+              takeover
+                ? `Type the 6-digit code shown on ${takeover.name}'s phone.`
+                : branch
                 ? 'Type the 6-digit code shown on the branch screen. The counter reads it out once they press Dispatch.'
                 : (notice ??
                   'Ask the counter for the 6-digit pickup code. If the job has no shop, it comes to your WhatsApp.')
@@ -2022,10 +2432,15 @@ export default function Job() {
           )}
 
           {awaitingCode ? (
-            <GhostLink label="Remind the counter" onPress={remindCounter} disabled={busy} />
+            <StrongAction label="Remind the counter" icon="bell" onPress={remindCounter} disabled={busy} />
           ) : null}
           {collecting && !allChecked && actions.includes('report_issue') ? (
-            <GhostLink label="Item missing? Tell the shop" onPress={reportMissing} disabled={busy} />
+            <StrongAction
+              label="Item missing? Tell the shop"
+              icon="box"
+              onPress={reportMissing}
+              disabled={busy}
+            />
           ) : null}
           {collecting && bagNote ? (
             <GlassText variant="body" tone="soft" style={{ marginTop: gspace.sm, textAlign: 'center' }}>
@@ -2033,25 +2448,12 @@ export default function Job() {
             </GlassText>
           ) : null}
 
-          {/* Side by side rather than stacked. Full-width one under another,
-              they read as three primary actions competing with the real one. */}
-          <View
-            style={{
-              flexDirection: 'row',
-              flexWrap: 'wrap',
-              justifyContent: 'center',
-              columnGap: gspace.xl,
-            }}
-          >
-            {secondary.map((a) => (
-              <GhostLink key={a} label={ACTION_LABEL[a]} onPress={() => run(a)} disabled={busy} />
-            ))}
-            {/* Last, and only when a number is configured. A rider reaches for
-                this when the job itself has stopped working. */}
-            {supportNumber ? (
-              <GhostLink label="Call support" onPress={callSupport} disabled={busy} />
-            ) : null}
-          </View>
+          <TroubleRow
+            actions={secondary}
+            onAction={(a) => run(a)}
+            onCallSupport={supportNumber ? callSupport : undefined}
+            disabled={busy}
+          />
         </View>
       </ScrollView>
       </KeyboardAvoidingView>
@@ -2063,6 +2465,36 @@ export default function Job() {
  * "You're at the shop" and its kin: a nudge when the phone is close enough,
  * never a step taken for the rider (see `arrivalPrompt`).
  */
+/**
+ * What the server is doing about a reported problem, with the wait counted
+ * down to the second so the rider knows when a return opens.
+ */
+function ProblemBanner({ problem, drop }: { problem: JobProblem; drop: DropPoint | null }) {
+  const now = useNow(1000);
+  const left = problem.wait_until ? Math.max(secondsUntil(problem.wait_until, now) ?? 0, 0) : 0;
+  const clock = `${Math.floor(left / 60)}:${String(Math.floor(left % 60)).padStart(2, '0')}`;
+  const waiting = left > 0;
+  let text: string;
+  if (['customer_refused', 'payment_refused', 'damaged'].includes(problem.reason)) {
+    text = 'You can return the parcel to the shop now.';
+  } else if (problem.waiting_for === 'customer_location') {
+    text = waiting
+      ? `Waiting for the customer to share their location. You can return the parcel in ${clock}.`
+      : 'The customer has not shared a location. You can return the parcel now.';
+  } else if (drop?.label?.startsWith('Where the rider is waiting')) {
+    text = waiting
+      ? `The customer was sent where you are waiting. You can return the parcel in ${clock}.`
+      : 'The customer was sent where you are waiting. You can return the parcel now.';
+  } else if (problem.wait_until) {
+    text = waiting
+      ? `The customer has been messaged. You can return the parcel in ${clock}.`
+      : 'The customer did not come. You can return the parcel now.';
+  } else {
+    return null;
+  }
+  return <ArrivalBanner text={text} />;
+}
+
 function ArrivalBanner({ text }: { text: string }) {
   return (
     <View
@@ -2217,6 +2649,154 @@ function GhostLink({
         {label}
       </GlassText>
     </Pressable>
+  );
+}
+
+/*
+ * The small actions under the main button, in two weights (owner's pick, "E"
+ * of five drawn): a strong outline for a shortcut that belongs to the normal
+ * job, and a smaller "Something wrong?" row for the ways out. They were grey
+ * words in a line, which riders did not read as buttons.
+ */
+
+/** Ways out are red: they undo the job, so they must not look like the others. */
+const DANGER_ACTIONS: readonly Action[] = ['return_to_shop', 'decline'];
+
+const ACTION_ICON: Partial<Record<Action, GlassIconName>> = {
+  report_issue: 'alert',
+  return_to_shop: 'undo',
+  decline: 'close',
+  confirm_return: 'store',
+};
+
+/** Part of the normal job, full width: "Customer already has a code". */
+function StrongAction({
+  label,
+  icon,
+  onPress,
+  disabled,
+}: {
+  label: string;
+  icon: GlassIconName;
+  onPress: () => void;
+  disabled?: boolean;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      disabled={disabled}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      style={({ pressed }) => ({
+        marginTop: gspace.md,
+        height: 46,
+        borderRadius: gradius.button,
+        borderWidth: 1.5,
+        borderColor: glass.band,
+        backgroundColor: glass.white,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        opacity: disabled ? 0.5 : pressed ? 0.7 : 1,
+      })}
+    >
+      <GlassIcon name={icon} size={16} color={glass.band} />
+      <GlassText variant="button" style={{ color: glass.band, marginLeft: gspace.sm }}>
+        {label}
+      </GlassText>
+    </Pressable>
+  );
+}
+
+/** A small button in the "Something wrong?" row; two share a line. */
+function SmallAction({
+  label,
+  icon,
+  danger,
+  onPress,
+  disabled,
+}: {
+  label: string;
+  icon: GlassIconName;
+  danger?: boolean;
+  onPress: () => void;
+  disabled?: boolean;
+}) {
+  const fg = danger ? glass.red : glass.inkSoft;
+  return (
+    <Pressable
+      onPress={onPress}
+      disabled={disabled}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      style={({ pressed }) => ({
+        flexGrow: 1,
+        flexBasis: '46%',
+        minHeight: 42,
+        paddingHorizontal: gspace.sm,
+        borderRadius: gradius.button,
+        borderWidth: 1,
+        borderColor: danger ? 'rgba(185,28,28,0.45)' : glass.border,
+        backgroundColor: glass.white,
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        opacity: disabled ? 0.5 : pressed ? 0.7 : 1,
+      })}
+    >
+      <GlassIcon name={icon} size={15} color={fg} />
+      <GlassText
+        variant="bodyStrong"
+        style={{ color: fg, fontSize: 13, marginLeft: gspace.xs, flexShrink: 1, textAlign: 'center' }}
+      >
+        {label}
+      </GlassText>
+    </Pressable>
+  );
+}
+
+/**
+ * The job's other actions from `allowed_actions`, plus Call support, as small
+ * buttons under a quiet heading. Nothing drawn when there is nothing to offer.
+ */
+function TroubleRow({
+  actions,
+  onAction,
+  onCallSupport,
+  disabled,
+  heading = 'Something wrong?',
+}: {
+  actions: Action[];
+  onAction: (a: Action) => void;
+  onCallSupport?: () => void;
+  disabled?: boolean;
+  heading?: string | null;
+}) {
+  if (actions.length === 0 && !onCallSupport) return null;
+  return (
+    <View style={{ marginTop: gspace.lg }}>
+      {heading ? (
+        <GlassText variant="label" tone="faint" upper style={{ marginBottom: gspace.sm }}>
+          {heading}
+        </GlassText>
+      ) : null}
+      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: gspace.sm }}>
+        {actions.map((a) => (
+          <SmallAction
+            key={a}
+            label={ACTION_LABEL[a]}
+            icon={ACTION_ICON[a] ?? 'chev'}
+            danger={DANGER_ACTIONS.includes(a)}
+            onPress={() => onAction(a)}
+            disabled={disabled}
+          />
+        ))}
+        {/* Last: a rider reaches for this when the job itself has stopped working. */}
+        {onCallSupport ? (
+          <SmallAction label="Call support" icon="phone" onPress={onCallSupport} disabled={disabled} />
+        ) : null}
+      </View>
+    </View>
   );
 }
 

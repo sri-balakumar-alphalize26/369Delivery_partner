@@ -39,7 +39,14 @@ export type Action =
   | 'confirm_return'
   | 'report_issue'
   /** Say no to an offer; Odoo passes it to the next rider on duty. */
-  | 'decline';
+  | 'decline'
+  /*
+   * The rider-to-rider handover after a vehicle problem with the parcel on
+   * board (Rider_App_Report_Problem.pdf, delivery 19.0.22.5.0). Rider A's bike
+   * is fixed: back on the delivery. Rider B types A's code to take the parcel.
+   */
+  | 'cancel_handover'
+  | 'verify_handover';
 
 /**
  * Button labels. A lookup for rendering only — it confers no permission.
@@ -59,6 +66,8 @@ export const ACTION_LABEL: Record<Action, string> = {
   return_to_shop: 'Return to shop',
   confirm_return: 'Confirm return',
   report_issue: 'Report a problem',
+  cancel_handover: 'Bike fixed – carry on',
+  verify_handover: 'Collect – enter handover code',
 };
 
 /**
@@ -68,6 +77,7 @@ export const ACTION_LABEL: Record<Action, string> = {
 export const PRIMARY_ACTIONS: Action[] = [
   'accept',
   'verify_pickup_otp',
+  'verify_handover',
   'dispatch',
   'start_delivery',
   'verify_delivery_otp',
@@ -124,6 +134,8 @@ export const TRACKED_STATES: readonly DeliveryStatus[] = [
   'picked',
   'dispatched',
   'out_for_delivery',
+  // Rider B rides to rider A's live position, which the server reads from A.
+  'handover_waiting',
 ];
 
 /**
@@ -160,7 +172,14 @@ export type DeliveryStatus =
    * empty `allowed_actions`. Odoo can add a state faster than the app ships, so
    * anything unmapped has to degrade rather than crash.
    */
-  | 'failed';
+  | 'failed'
+  /**
+   * Rider A after a vehicle problem with the parcel on board: waiting for
+   * another rider to come and take it. Only report_issue / cancel_handover.
+   */
+  | 'handover_waiting'
+  /** A vehicle problem before pickup: the job left this rider, like a decline. */
+  | 'released';
 
 /**
  * Why a delivery went wrong.
@@ -422,9 +441,82 @@ export interface DeliveryOrder {
    */
   /** How many photos the server holds for each stage. */
   photo_counts?: { pickup: number; delivery: number };
-  photos?: { pickup: ProofPhotoRef[]; delivery: ProofPhotoRef[] };
+  /** `problem`: the photo sent with a "Parcel is damaged" report (19.0.22.5.0). */
+  photos?: { pickup: ProofPhotoRef[]; delivery: ProofPhotoRef[]; problem?: ProofPhotoRef[] };
   /** Stages short of 2 photos; `["delivery"]` right after Delivered is expected. */
   photos_missing?: ('pickup' | 'delivery')[];
+
+  /*
+   * After "Report a problem" (Rider_App_Report_Problem.pdf, delivery
+   * 19.0.22.5.0). The server takes the next step for each reason itself; the
+   * job carries where that stands, so a reopened screen shows it again.
+   */
+  /** The open problem, or null. `wait_until` is "" once there is no timer. */
+  problem?: JobProblem | null;
+  /**
+   * Where the parcel goes for this delivery only: the location the customer
+   * shared, or the spot where the rider waits. When set, the job's
+   * latitude/longitude already ARE this point; the saved address is untouched.
+   */
+  drop_point?: DropPoint | null;
+  /** Where the parcel is collected: the shop, or rider A in a takeover. */
+  pickup_from?: PickupFrom | null;
+  /** A takeover job: rider A waiting to hand over, or rider B coming to collect. */
+  is_relay?: boolean;
+  /** Rider A only: the 6-digit code rider B types. Present the whole time. */
+  handover_code?: string;
+  /** Rider A only: how the search for rider B stands. */
+  relay?: RelayInfo | null;
+  /** Rider B, after the code: the rider the parcel came from. */
+  taken_over_from?: string;
+}
+
+export interface JobProblem {
+  reason: string;
+  at: string;
+  /** UTC end of the wait before a return is allowed, or "". */
+  wait_until: string;
+  waiting_for: 'customer' | 'customer_location' | '';
+  return_reason: string;
+}
+
+export interface DropPoint {
+  latitude: number;
+  longitude: number;
+  /** "Where the rider is waiting", or the customer's shared place. */
+  label: string;
+  at: string;
+}
+
+export type PickupFrom =
+  | ({ kind: 'shop' } & Partial<Shop>)
+  | {
+      kind: 'rider';
+      id: number;
+      name: string;
+      phone: string;
+      latitude: number | null;
+      longitude: number | null;
+      fix_at: string;
+      address: string;
+    };
+
+export interface RelayInfo {
+  /** `none`: nobody free; the office has been told to call. */
+  relay_state: 'searching' | 'offered' | 'accepted' | 'none';
+  handover_code: string;
+  to_rider: { id: number; name: string; phone: string } | null;
+}
+
+/** What the server did after a report: the step that follows. */
+export interface ProblemNext {
+  kind: 'wait' | 'return_allowed' | 'new_drop_point' | 'reassigning' | 'none';
+  wait_until?: string;
+  waiting_for?: 'customer' | 'customer_location' | '';
+  drop_point?: DropPoint;
+  relay_state?: RelayInfo['relay_state'];
+  handover_code?: string;
+  to_rider?: RelayInfo['to_rider'];
 }
 
 /** One stored parcel photo. `url` needs the usual auth headers to fetch. */
@@ -486,7 +578,7 @@ export const COUNT_BUCKET: Record<CountBucket, DeliveryStatus[]> = {
   // The shop's three steps count as assigned: the job is this rider's, it is
   // just not packed yet. `to_assign` is counted nowhere, like `returning`.
   assigned: ['offered', 'accepted', 'awaiting_shop', 'preparing', 'ready'],
-  picked_up: ['picked', 'dispatched'],
+  picked_up: ['picked', 'dispatched', 'handover_waiting'],
   out_for_delivery: ['out_for_delivery'],
   delivered: ['delivered'],
 };
@@ -586,6 +678,10 @@ export interface ActionResult {
   /** On `start`, also when the server had already marked it near. */
   near_customer_at?: string;
   near_customer_auto?: boolean;
+  /** On `issue`: what the server does next for this reason. */
+  next?: ProblemNext;
+  /** On a 409 `wait`: when a return becomes possible, UTC. */
+  wait_until?: string;
   /** On `decline`: the job is no longer this rider's. Leave its screen. */
   removed?: boolean;
 }
@@ -719,6 +815,10 @@ export type ApiErrorCode =
   | 'bad_request'
   // A 5th parcel photo for one stage (delivery 19.0.22.4.0): the server has the most it keeps.
   | 'too_many_photos'
+  // A return while the "customer not there" timer runs (19.0.22.5.0): see `waitUntil`.
+  | 'wait'
+  // Delivered, Return or Start while rider A waits for rider B to take over.
+  | 'handover_waiting'
   | 'no_database'
   | 'network'
   | 'unknown';
@@ -735,6 +835,8 @@ export class ApiError extends Error {
   status?: number;
   statusName?: DeliveryStatus;
   allowedActions?: Action[];
+  /** On a 409 `wait`: when a return becomes possible, UTC. */
+  waitUntil?: string;
 
   constructor(
     code: ApiErrorCode,
@@ -743,6 +845,7 @@ export class ApiError extends Error {
       status?: number;
       statusName?: DeliveryStatus;
       allowedActions?: Action[];
+      waitUntil?: string;
     } = {}
   ) {
     super(message);
@@ -751,6 +854,7 @@ export class ApiError extends Error {
     this.status = opts.status;
     this.statusName = opts.statusName;
     this.allowedActions = opts.allowedActions;
+    this.waitUntil = opts.waitUntil;
   }
 }
 
@@ -940,5 +1044,24 @@ export interface ApiAdapter {
 
   returnToShop(id: number, reason?: string, key?: string): Promise<ActionResult>;
   confirmReturn(id: number): Promise<ActionResult>;
-  reportIssue(id: number, note: string, key?: string): Promise<ActionResult>;
+  /**
+   * `reason` is one of the codes the server acts on (DELIVERY_REASONS), or
+   * free text such as "item_missing: …", which only tells the office.
+   * "other: <note>" goes up as reason `other` with the note apart. A photo
+   * (a damaged parcel) makes it a multipart upload.
+   */
+  reportIssue(
+    id: number,
+    reason: string,
+    key?: string,
+    /** `note`: the rider's own words, sent with any reason code. */
+    extra?: { photoUri?: string; photoName?: string; note?: string }
+  ): Promise<ActionResult>;
+
+  /** Rider B: the 6-digit code rider A shows. On success the job is B's, unlocked. */
+  verifyHandover(id: number, code: string): Promise<ActionResult>;
+  /** Rider A: the bike is fixed, back on the delivery. */
+  cancelHandover(id: number): Promise<ActionResult>;
+  /** Rider A: a fresh code after five wrong tries locked the old one. */
+  newHandoverCode(id: number): Promise<ActionResult>;
 }

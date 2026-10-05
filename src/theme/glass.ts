@@ -174,7 +174,9 @@ export type GlassBarState =
   | 'returning'
   | 'returned'
   | 'cancelled'
-  | 'failed';
+  | 'failed'
+  | 'handover_waiting'
+  | 'released';
 
 /**
  * Four kinds of badge, told apart by brightness as much as by colour, so they
@@ -207,4 +209,6 @@ export const glassBand: Record<GlassBarState, { bg: string; fg: string; label: s
   returned: { bg: glass.fill, fg: glass.inkSoft, label: 'RETURNED' },
   cancelled: { bg: glass.fill, fg: glass.inkSoft, label: 'CANCELLED' },
   failed: { bg: glass.redSoft, fg: glass.red, label: 'FAILED' },
+  handover_waiting: { bg: glass.redSoft, fg: glass.red, label: 'HANDOVER' },
+  released: { bg: glass.fill, fg: glass.inkSoft, label: 'REASSIGNED' },
 };
