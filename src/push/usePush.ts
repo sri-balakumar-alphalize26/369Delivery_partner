@@ -3,6 +3,7 @@ import { useRouter } from 'expo-router';
 import * as Notifications from 'expo-notifications';
 import { useEffect } from 'react';
 import { registerForPush } from './register';
+import { claimNearAuto } from './nearAutoLedger';
 
 /**
  * Wires push into the running app: register once connected, refresh on arrival,
@@ -41,8 +42,14 @@ export function usePush(connected: boolean) {
   useEffect(() => {
     // A push means Odoo has something new. Refetch immediately rather than
     // leaving the rider on stale data for up to the next poll.
-    const received = Notifications.addNotificationReceivedListener(() => {
+    const received = Notifications.addNotificationReceivedListener((n) => {
       lastPushAt = Date.now();
+      // The server's own "near the customer" push rang already: the job screen
+      // must not chime again when its next poll sees the same change.
+      const data = n.request.content.data as { type?: string; delivery_order_id?: string } | undefined;
+      if (data?.type === 'near_customer_auto' && data.delivery_order_id) {
+        claimNearAuto(Number(data.delivery_order_id));
+      }
       qc.invalidateQueries({ queryKey: ['orders'] });
       // The open job too: `pickup_code_ready` is the counter having pressed
       // Dispatch, and the rider is standing there waiting for the code boxes.
