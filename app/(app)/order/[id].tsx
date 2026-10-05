@@ -62,6 +62,10 @@ import {
 } from '../../../src/location/tracking';
 import { stopOfferAlert } from '../../../src/hooks/useOfferAlert';
 import { useSession } from '../../../src/store/session';
+import * as Notifications from 'expo-notifications';
+import { playNearCustomer } from '../../../src/lib/sounds';
+import { claimNearAuto } from '../../../src/push/nearAutoLedger';
+import { TRIP_CHANNEL, ensureTripChannel } from '../../../src/push/register';
 import {
   GlassBarState,
   glass,
@@ -76,7 +80,8 @@ import { LocationPrimer } from '../../../src/ui/LocationPrimer';
 import { CodeSheet } from '../../../src/ui/CodeSheet';
 import { OtpInput } from '../../../src/ui/OtpInput';
 import { MAP_ENABLED, RouteMap } from '../../../src/ui/RouteMap';
-import { ProofPhoto, proofSent } from '../../../src/ui/ProofPhoto';
+import { owePhotos, PhotoStage } from '../../../src/photos/owed';
+import { photoRef } from '../../../src/lib/photoName';
 import { PayQr } from '../../../src/ui/PayQr';
 import { currentFix } from '../../../src/location/currentFix';
 import { metresBetween } from '../../../src/lib/routeGeometry';
@@ -169,9 +174,6 @@ const shopToldFor = new Set<number>();
 
 /** Jobs whose "the counter has your code" has already buzzed - once each. */
 const codeReadyFor = new Set<number>();
-
-/** Jobs whose automatic "near the customer" has already buzzed - once each. */
-const nearAutoFor = new Set<number>();
 
 /** Arrival prompts already announced with a buzz, per job - once each. */
 const buzzedFor = new Set<string>();
@@ -278,17 +280,10 @@ export default function Job() {
   const { height: screenH } = useWindowDimensions();
   // The shop's zone, from /auth/me — never the phone's own.
   const timezone = useSession((s) => s.timezone);
-  // Fleet features, when the server has the fleet module: the door photo.
-  // The door photo is offered on every server now: the delivery API takes it
-  // (multipart `/proof`, 19.0.21.4.0) and never requires it. "Required" is
-  // still only the fleet module's setting.
-  const proofOn = true;
-  const proofRequired = useSession((s) => !!s.fleet?.proof_required);
   // When the server marks "near the customer" by itself (delivery 19.0.22.1.0).
   const autoNear = useSession((s) => s.autoNear);
   /** Set while the rider waits inside the server's radius, for the faster poll. */
   const waitNearRef = useRef(false);
-  const [, setProofTick] = useState(0);
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -322,6 +317,8 @@ export default function Job() {
   const [arrivedHere, setArrivedHere] = useState(false);
   /** The pickup code was accepted: the drop is unlocked. Said once, in green. */
   const [unlockedNote, setUnlockedNote] = useState<string | null>(null);
+  /** After "Report a problem": that it reached the office, so the rider is not left guessing. */
+  const [reportedNote, setReportedNote] = useState<string | null>(null);
 
   /**
    * Ticks the countdown. Called up here with the other hooks because the
@@ -476,6 +473,7 @@ export default function Job() {
     setBagNote(null);
     setArrivedHere(false);
     setUnlockedNote(null);
+    setReportedNote(null);
   }
 
   const { data: order, isLoading, dataUpdatedAt } = useQuery({
@@ -561,9 +559,26 @@ export default function Job() {
   waitNearRef.current = autoNearHere;
   const nearAuto = !!order?.near_customer_auto;
   useEffect(() => {
-    if (!nearAuto || nearAutoFor.has(orderId)) return;
-    nearAutoFor.add(orderId);
+    // Once per job, shared with the push listener: the server's own push for
+    // this has rung already when it arrived first.
+    if (!nearAuto || !claimNearAuto(orderId)) return;
+    playNearCustomer();
     Vibration.vibrate([0, 300, 150, 300]);
+    // A banner too, for a phone in a pocket. Silent: the chime above is the sound.
+    const name = order?.customer_name ?? 'The customer';
+    ensureTripChannel()
+      .then(() =>
+        Notifications.scheduleNotificationAsync({
+          content: {
+            title: 'Marked near the customer',
+            body: `${name} has been told you're close. At the door, tap Reached to send their code.`,
+            data: { delivery_order_id: orderId },
+            sound: false,
+          },
+          trigger: { channelId: TRIP_CHANNEL },
+        })
+      )
+      .catch(() => {});
   }, [nearAuto, orderId]);
   useEffect(() => {
     if (!promptKind) return;
@@ -855,6 +870,9 @@ export default function Job() {
       setCodeOpen(false);
       // The last panel's words belong to the last step.
       setNotice(null);
+      if (action === 'report_issue') {
+        setReportedNote(res.message || 'The office has been told. They will call you if they need to.');
+      }
       if (action === 'arrived_shop') {
         setArrivedHere(true);
         // "Tell the counter you are here..." - instructions, not an error.
@@ -864,7 +882,29 @@ export default function Job() {
         const name = res.order?.customer_name || order.customer_name;
         setUnlockedNote(res.message ?? `Code accepted. Head to ${name}.`);
       }
+      // A code accepted means 2 to 4 parcel photos are owed now, before
+      // anything else. Stored first, so a crash in between still lands there.
+      const photoStage: PhotoStage | null =
+        action === 'verify_pickup_otp'
+          ? 'pickup'
+          : action === 'verify_delivery_otp'
+            ? 'delivery'
+            : null;
+      if (photoStage && order) {
+        await owePhotos({
+          orderId,
+          stage: photoStage,
+          ref: photoRef(res.order ?? order),
+          customerName: res.order?.customer_name || order.customer_name,
+        });
+      }
       await applyResult(res);
+      if (photoStage) {
+        router.replace({
+          pathname: '/photos/[id]',
+          params: { id: String(orderId), stage: photoStage },
+        });
+      }
     } catch (err) {
       if (err instanceof ApiError && err.code === 'network' && isQueueable(action)) {
         // No signal: the step waits in the outbox and goes by itself later.
@@ -1557,15 +1597,6 @@ export default function Job() {
             </GlassCard>
           ) : null}
 
-          {/* The parcel at the door, before the code — on a server that keeps it. */}
-          {proofOn && primary === 'verify_delivery_otp' ? (
-            <ProofPhoto
-              orderId={orderId}
-              required={proofRequired}
-              onSent={() => setProofTick((n) => n + 1)}
-            />
-          ) : null}
-
           {/* The same panel as the pickup code, so two codes in one flow cannot
               end up looking like different controls. */}
           <CodeSheet
@@ -1591,6 +1622,7 @@ export default function Job() {
           ) : null}
           {pending ? <PendingLine entry={pending} /> : null}
 
+          {reportedNote ? <ArrivalBanner text={reportedNote} /> : null}
           {order.near_customer_auto && !reached ? (
             <ArrivalBanner
               text={`Marked near the customer automatically${
@@ -1610,10 +1642,6 @@ export default function Job() {
             icon={reached ? 'check' : 'pin'}
             onPress={() => (reached ? setCodeOpen(true) : void reachCustomer())}
             loading={busy}
-            // Held back until the required photo is in; the server refuses the
-            // code without it anyway, and a refusal after typing six digits is
-            // the worse way to find out.
-            disabled={reached && proofOn && proofRequired && !proofSent(orderId)}
             style={{ marginTop: gspace.xxl }}
           />
 
@@ -1887,6 +1915,7 @@ export default function Job() {
           ) : null}
 
           {unlockedNote && toCustomer ? <ArrivalBanner text={unlockedNote} /> : null}
+          {reportedNote ? <ArrivalBanner text={reportedNote} /> : null}
 
           {prompt?.kind === 'shop' && arrivalDue ? (
             <ArrivalBanner text={`You're at the branch. Tap "${ACTION_LABEL.arrived_shop}".`} />
