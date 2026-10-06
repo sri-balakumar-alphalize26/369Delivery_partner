@@ -1,7 +1,7 @@
 import { Image } from 'expo-image';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Alert, BackHandler, Modal, Pressable, ScrollView, View } from 'react-native';
+import { ActivityIndicator, BackHandler, Modal, Pressable, ScrollView, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useBottomInset } from '../../../src/hooks/useBottomInset';
 import { api } from '../../../src/api/endpoints';
@@ -21,6 +21,7 @@ import { serverNow } from '../../../src/lib/clock';
 import { timeOnly } from '../../../src/lib/format';
 import { shopTimeZone, useSession } from '../../../src/store/session';
 import { glass, gradius, gspace } from '../../../src/theme/glass';
+import { notice } from '../../../src/ui/ConfirmSheet';
 import { photoProblem, takePhoto } from '../../../src/ui/takePhoto';
 import { GlassButton } from '../../../src/ui/glass/GlassButton';
 import { GlassIcon } from '../../../src/ui/glass/GlassIcon';
@@ -240,7 +241,7 @@ export default function Photos() {
       // rider must not be held on a screen with no way out.
       if (err instanceof ApiError && (err.code === 'too_many_photos' || err.code === 'wrong_state')) {
         await clearOwed(orderId, stage);
-        Alert.alert(
+        void notice(
           'Photos',
           err.code === 'too_many_photos'
             ? 'The shop already has 4 photos for this parcel.'

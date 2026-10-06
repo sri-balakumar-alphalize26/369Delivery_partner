@@ -1,5 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import Constants from 'expo-constants';
+import Constants, { ExecutionEnvironment } from 'expo-constants';
 import * as IntentLauncher from 'expo-intent-launcher';
 import * as Notifications from 'expo-notifications';
 import { Linking, Platform } from 'react-native';
@@ -33,9 +33,13 @@ export interface SetupItem {
 const TICKS_KEY = 'd369.phoneSetup';
 const BATTERY_KEY = 'd369.batteryAsked';
 
+// In Expo Go the app runs inside Expo Go's package, so its settings pages are
+// the ones that open; in a real build, the app's own.
 const PACKAGE =
-  (Constants.expoConfig?.android as { package?: string } | undefined)?.package ??
-  'com.alphalize.deliverypartner';
+  Constants.executionEnvironment === ExecutionEnvironment.StoreClient
+    ? 'host.exp.exponent'
+    : ((Constants.expoConfig?.android as { package?: string } | undefined)?.package ??
+      'com.alphalize.deliverypartner');
 
 /**
  * The phone makers that stop apps in the background unless told not to, with

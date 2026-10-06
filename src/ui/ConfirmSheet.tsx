@@ -19,6 +19,8 @@ export type ConfirmOptions = {
   /** The red button, e.g. "Sign out". Defaults to "OK". */
   okLabel?: string;
   cancelLabel?: string;
+  /** One lime OK and no Cancel: news to read, not a choice. Set by `notice()`. */
+  notice?: boolean;
 };
 
 let open: ((o: ConfirmOptions) => Promise<boolean>) | null = null;
@@ -26,6 +28,14 @@ let open: ((o: ConfirmOptions) => Promise<boolean>) | null = null;
 /** Resolves true on OK; false on Cancel, Back, or a tap outside. */
 export function confirm(o: ConfirmOptions): Promise<boolean> {
   return open ? open(o) : Promise.resolve(false);
+}
+
+/**
+ * The app's own message box in place of Android's Alert: title, words, one OK.
+ * Resolves when it is closed, however that happens.
+ */
+export async function notice(title: string, message?: string): Promise<void> {
+  await confirm({ title, message, notice: true });
 }
 
 export function ConfirmHost() {
@@ -97,25 +107,27 @@ export function ConfirmHost() {
           ) : null}
 
           <View style={{ flexDirection: 'row', gap: gspace.md, marginTop: gspace.xl }}>
-            <Pressable
-              onPress={() => finish(false)}
-              accessibilityRole="button"
-              style={({ pressed }) => ({
-                flex: 1,
-                height: 48,
-                borderRadius: gradius.button,
-                borderWidth: 1,
-                borderColor: glass.border,
-                backgroundColor: glass.white,
-                alignItems: 'center',
-                justifyContent: 'center',
-                opacity: pressed ? 0.7 : 1,
-              })}
-            >
-              <GlassText variant="button" style={{ color: glass.ink }}>
-                {opts.cancelLabel ?? 'Cancel'}
-              </GlassText>
-            </Pressable>
+            {opts.notice ? null : (
+              <Pressable
+                onPress={() => finish(false)}
+                accessibilityRole="button"
+                style={({ pressed }) => ({
+                  flex: 1,
+                  height: 48,
+                  borderRadius: gradius.button,
+                  borderWidth: 1,
+                  borderColor: glass.border,
+                  backgroundColor: glass.white,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  opacity: pressed ? 0.7 : 1,
+                })}
+              >
+                <GlassText variant="button" style={{ color: glass.ink }}>
+                  {opts.cancelLabel ?? 'Cancel'}
+                </GlassText>
+              </Pressable>
+            )}
             <Pressable
               onPress={() => finish(true)}
               accessibilityRole="button"
@@ -123,13 +135,17 @@ export function ConfirmHost() {
                 flex: 1,
                 height: 48,
                 borderRadius: gradius.button,
-                backgroundColor: glass.red,
+                // A notice is news, not a risk: the app's own lime, not red.
+                backgroundColor: opts.notice ? glass.accent : glass.red,
                 alignItems: 'center',
                 justifyContent: 'center',
                 opacity: pressed ? 0.8 : 1,
               })}
             >
-              <GlassText variant="button" style={{ color: glass.white }}>
+              <GlassText
+                variant="button"
+                style={{ color: opts.notice ? glass.accentInk : glass.white }}
+              >
                 {opts.okLabel ?? 'OK'}
               </GlassText>
             </Pressable>

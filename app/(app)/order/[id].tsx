@@ -3,7 +3,6 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
-  Alert,
   BackHandler,
   KeyboardAvoidingView,
   Linking,
@@ -81,7 +80,7 @@ import {
   gspace,
 } from '../../../src/theme/glass';
 import { Field } from '../../../src/ui/Field';
-import { confirm } from '../../../src/ui/ConfirmSheet';
+import { confirm, notice as showNotice } from '../../../src/ui/ConfirmSheet';
 import { LoadingArt } from '../../../src/ui/LoadingArt';
 import { LocationPrimer } from '../../../src/ui/LocationPrimer';
 import { CodeSheet } from '../../../src/ui/CodeSheet';
@@ -559,7 +558,7 @@ export default function Job() {
     if (!handedOver) return;
     qc.removeQueries({ queryKey: ['order', orderId] });
     void qc.invalidateQueries({ queryKey: ['orders'] });
-    Alert.alert('Parcel handed over', 'The other rider has the parcel now. Thank you.');
+    void showNotice('Parcel handed over', 'The other rider has the parcel now. Thank you.');
     router.replace('/');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [handedOver]);
@@ -1002,7 +1001,7 @@ export default function Job() {
       if (res.status === 'released') {
         // A vehicle problem before pickup: the job went to the next rider.
         await qc.invalidateQueries({ queryKey: ['orders'] });
-        Alert.alert(
+        void showNotice(
           'Given to another rider',
           res.message || 'The next free rider has been offered this job.'
         );
@@ -1032,7 +1031,7 @@ export default function Job() {
         // is this rider's any more.
         stopOfferAlert();
         await qc.invalidateQueries({ queryKey: ['orders'] });
-        Alert.alert('Offer expired', 'It went to another rider.');
+        void showNotice('Offer expired', 'It went to another rider.');
         router.replace('/');
       } else if (err instanceof ApiError) {
         // Their message is written for riders — never replace it.

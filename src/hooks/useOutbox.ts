@@ -2,8 +2,9 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import NetInfo from '@react-native-community/netinfo';
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect } from 'react';
-import { Alert, AppState } from 'react-native';
+import { AppState } from 'react-native';
 import { drainOutbox, hasPending, stepLabel } from '../api/outbox';
+import { notice } from '../ui/ConfirmSheet';
 import { trackingWanted } from '../api/types';
 import { startTracking, stopTracking, trackedOrderId } from '../location/tracking';
 
@@ -30,7 +31,7 @@ export function useOutbox(connected: boolean): void {
       if (AppState.currentState !== 'active' || !hasPending()) return;
       void drainOutbox(async ({ entry, result, refusal }) => {
         if (refusal) {
-          Alert.alert(`Could not send "${stepLabel(entry.step)}"`, refusal.message);
+          void notice(`Could not send "${stepLabel(entry.step)}"`, refusal.message);
         } else {
           // What the job screen does with a live answer, done here for the late one.
           if (result && (result.tracking !== undefined || !!result.status)) {
