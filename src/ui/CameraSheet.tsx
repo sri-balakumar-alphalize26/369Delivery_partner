@@ -1,10 +1,12 @@
-import { CameraView, useCameraPermissions } from 'expo-camera';
+import { CameraView, FlashMode, useCameraPermissions } from 'expo-camera';
 import { Image } from 'expo-image';
 import { useEffect, useRef, useState } from 'react';
-import { Modal, Pressable, View } from 'react-native';
+import { BackHandler, Keyboard, Pressable, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useBottomInset } from '../hooks/useBottomInset';
 import { glass, gspace } from '../theme/glass';
 import { GlassButton } from './glass/GlassButton';
+import { GlassIcon } from './glass/GlassIcon';
 import { GlassText } from './glass/GlassText';
 
 /**
@@ -25,6 +27,15 @@ export type Shot =
 
 let open: ((wantBase64: boolean) => Promise<Shot>) | null = null;
 
+/** The flash button cycles Auto → On → Off. */
+const FLASH_NEXT: Record<FlashMode, FlashMode> = { auto: 'on', on: 'off', off: 'auto' };
+/** An icon and a word: an emoji draws differently on every phone. */
+const FLASH_LABEL: Record<FlashMode, string> = {
+  auto: 'Auto',
+  on: 'On',
+  off: 'Off',
+};
+
 /** Opens the sheet; resolves once the rider uses a photo or backs out. */
 export function openCamera(wantBase64: boolean): Promise<Shot> {
   return open ? open(wantBase64) : Promise.resolve({ error: 'failed' });
@@ -35,11 +46,12 @@ export function CameraHost() {
   const [preview, setPreview] = useState<{ uri: string; base64: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [ready, setReady] = useState(false);
+  // Kept between photos: a dark shop counter stays dark for the next shot.
+  const [flash, setFlash] = useState<FlashMode>('auto');
   const [permission, requestPermission] = useCameraPermissions();
   const camera = useRef<CameraView>(null);
   const settle = useRef<((s: Shot) => void) | null>(null);
   const base64 = useRef(false);
-  const insets = useSafeAreaInsets();
 
   useEffect(() => {
     open = (wantBase64) =>
@@ -48,6 +60,8 @@ export function CameraHost() {
         settle.current?.({ error: 'cancelled' });
         settle.current = resolve;
         base64.current = wantBase64;
+        // A note box left open would otherwise sit over the shutter.
+        Keyboard.dismiss();
         setPreview(null);
         setReady(false);
         setVisible(true);
@@ -82,6 +96,8 @@ export function CameraHost() {
         quality: 0.5,
         skipProcessing: true,
         exif: false,
+        // Silent: a rider at a customer's door does not need the click.
+        shutterSound: false,
         base64: base64.current,
       });
       if (pic?.uri) setPreview({ uri: pic.uri, base64: pic.base64 ?? '' });
@@ -93,16 +109,33 @@ export function CameraHost() {
     }
   }
 
+  // The phone's Back: from the preview back to the camera, else out.
+  useEffect(() => {
+    if (!visible) return;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (preview) setPreview(null);
+      else finish({ error: 'cancelled' });
+      return true;
+    });
+    return () => sub.remove();
+  }, [visible, preview]);
+
   const denied = !!permission && !permission.granted && !permission.canAskAgain;
-  const bottom = Math.max(insets.bottom, gspace.lg);
+  // Just above Android's navigation: buttons or the gesture strip.
+  const bottom = useBottomInset();
+  const top = useSafeAreaInsets().top;
+
+  /*
+   * A layer over the whole app, not a <Modal>. A Modal is a separate Android
+   * window, and one opened while the keyboard was closing sometimes stayed
+   * white and took every tap, with the camera running behind it; Back and
+   * the developer menu could not get past it. A View in our own window
+   * cannot be left behind like that.
+   */
+  if (!visible) return null;
 
   return (
-    <Modal
-      visible={visible}
-      animationType="fade"
-      statusBarTranslucent
-      onRequestClose={() => (preview ? setPreview(null) : finish({ error: 'cancelled' }))}
-    >
+    <View style={[StyleSheet.absoluteFill, { zIndex: 1000, elevation: 1000 }]}>
       <View style={{ flex: 1, backgroundColor: '#000' }}>
         {!permission?.granted ? (
           <View style={{ flex: 1, justifyContent: 'center', padding: gspace.xxl }}>
@@ -138,7 +171,7 @@ export function CameraHost() {
                 gap: gspace.md,
                 paddingHorizontal: gspace.xl,
                 paddingTop: gspace.lg,
-                paddingBottom: bottom + gspace.md,
+                paddingBottom: bottom,
               }}
             >
               <GlassButton title="Retake" kind="ghost" onPress={() => setPreview(null)} style={{ flex: 1 }} />
@@ -157,8 +190,34 @@ export function CameraHost() {
               ref={camera}
               style={{ flex: 1 }}
               facing="back"
+              flash={flash}
               onCameraReady={() => setReady(true)}
             />
+            {/* Customers and shop staff did not agree to be in these photos. */}
+            <View
+              pointerEvents="none"
+              style={{
+                position: 'absolute',
+                top: top + gspace.md,
+                left: gspace.lg,
+                right: gspace.lg,
+                flexDirection: 'row',
+                alignItems: 'center',
+                paddingVertical: gspace.sm,
+                paddingHorizontal: gspace.md,
+                borderRadius: 12,
+                backgroundColor: 'rgba(0,0,0,0.6)',
+              }}
+            >
+              <GlassIcon name="alert" size={18} color={glass.white} />
+              <GlassText
+                variant="bodyStrong"
+                tone="white"
+                style={{ flex: 1, marginLeft: gspace.sm }}
+              >
+                Photograph the parcel only. Please keep people&apos;s faces out of the photo.
+              </GlassText>
+            </View>
             <View
               style={{
                 flexDirection: 'row',
@@ -166,7 +225,7 @@ export function CameraHost() {
                 justifyContent: 'space-between',
                 paddingHorizontal: gspace.xxl,
                 paddingTop: gspace.lg,
-                paddingBottom: bottom + gspace.md,
+                paddingBottom: bottom,
               }}
             >
               <Pressable
@@ -198,11 +257,32 @@ export function CameraHost() {
                 <View style={{ width: 60, height: 60, borderRadius: 30, backgroundColor: glass.white }} />
               </Pressable>
               {/* Balances Cancel so the shutter stays centred. */}
-              <View style={{ width: 80 }} />
+              <Pressable
+                onPress={() => setFlash(FLASH_NEXT[flash])}
+                accessibilityRole="button"
+                accessibilityLabel={`Flash ${flash}. Change.`}
+                hitSlop={12}
+                style={{
+                  width: 80,
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'flex-end',
+                  columnGap: 4,
+                }}
+              >
+                <GlassIcon
+                  name={flash === 'off' ? 'flashOff' : 'flash'}
+                  size={20}
+                  color={flash === 'off' ? glass.white : glass.accent}
+                />
+                <GlassText variant="button" tone="white">
+                  {FLASH_LABEL[flash]}
+                </GlassText>
+              </Pressable>
             </View>
           </>
         )}
       </View>
-    </Modal>
+    </View>
   );
 }
