@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import {
   Animated,
+  BackHandler,
   Keyboard,
-  Modal,
   Pressable,
   StyleSheet,
   useWindowDimensions,
@@ -12,6 +12,7 @@ import { useNow } from '../hooks/useNow';
 import { feedback } from '../lib/feedback';
 import { glass, gspace } from '../theme/glass';
 import { OtpBoxes, OtpBoxesHandle } from './OtpBoxes';
+import { useOverlay } from './OverlayHost';
 import { GlassButton } from './glass/GlassButton';
 import { GlassIcon } from './glass/GlassIcon';
 import { GlassText } from './glass/GlassText';
@@ -108,7 +109,10 @@ export function CodeSheet({
   // past its edges: full size on most phones, a little smaller on narrow ones.
   const cardW = Math.min(CARD_MAX_W, width - 2 * SCREEN_MARGIN);
   const padH = width < 360 ? 24 : 28;
-  const boxSize = Math.min(BOX_MAX, Math.floor((cardW - 2 * padH - (DIGITS - 1) * BOX_GAP) / DIGITS));
+  const boxSize = Math.min(
+    BOX_MAX,
+    Math.floor((cardW - 2 * padH - (DIGITS - 1) * BOX_GAP) / DIGITS)
+  );
 
   /**
    * Whether the last close followed a submit that went through.
@@ -184,7 +188,11 @@ export function CodeSheet({
     submitting.current = false;
     Animated.sequence(
       [-8, 8, -6, 6, -3, 0].map((toValue) =>
-        Animated.timing(shake, { toValue, duration: 50, useNativeDriver: true })
+        Animated.timing(shake, {
+          toValue,
+          duration: 50,
+          useNativeDriver: true,
+        })
       )
     ).start();
     boxes.current?.focus();
@@ -212,175 +220,209 @@ export function CodeSheet({
     return () => clearTimeout(t);
   }, [shown, busy]);
 
+  /**
+   * The keyboard, asked for once the card is drawn rather than by `autoFocus`.
+   *
+   * A frame later, so the input exists and is laid out; a request made while
+   * it is still mounting can be dropped, and the card then sat with no
+   * keyboard. The late check above catches one that is dropped anyway.
+   */
+  useEffect(() => {
+    if (!shown) return;
+    const t = setTimeout(() => boxes.current?.focus(), 50);
+    return () => clearTimeout(t);
+  }, [shown]);
+
+  // The Android back button closes it, as a rider would expect of a popup.
+  const closeNow = useRef(close);
+  closeNow.current = close;
+  useEffect(() => {
+    if (!shown) return;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      closeNow.current();
+      return true;
+    });
+    return () => sub.remove();
+  }, [shown]);
+
   const masked = maskPhone(sentTo);
 
-  return (
-    <Modal
-      visible={shown}
-      transparent
-      animationType="fade"
-      // The Android back button closes it, as a rider would expect of a popup.
-      onRequestClose={close}
-      /**
-       * The keyboard is raised here rather than by `autoFocus` on the input.
-       *
-       * On Android `autoFocus` runs while the modal is still mounting, before
-       * its window exists, and the focus request is dropped — the card opens
-       * and no keyboard ever appears. `onShow` is the callback that means the
-       * window is really up, so the request lands.
-       */
-      onShow={() => boxes.current?.focus()}
-      statusBarTranslucent
-    >
-      <View
-        style={{
-          flex: 1,
-          backgroundColor: 'rgba(0,0,0,0.4)',
-          alignItems: 'center',
-          justifyContent: 'center',
-          paddingHorizontal: SCREEN_MARGIN,
-          // Centred in what the keyboard leaves, not in the whole screen.
-          paddingBottom: keyboard,
-        }}
-      >
-        {/* Tapping away is a cancel. The card sits on top, so a press on it
-            never reaches this. */}
-        <Pressable
-          onPress={close}
-          accessibilityRole="button"
-          accessibilityLabel="Close"
-          style={StyleSheet.absoluteFill}
-        />
+  /*
+   * Drawn over the whole app from the root layout (OverlayHost), not as a
+   * <Modal>. A Modal is a separate Android window, and this one closed late -
+   * after the tick, with the keyboard going down - just as a right code took
+   * the rider to the parcel photos and opened the camera. The window stayed
+   * behind, white, and took every tap and Back; the shutter looked like it
+   * had frozen the app. The camera and the confirm box left Modal for the
+   * same reason.
+   */
+  useOverlay(shown ? layer() : null);
+  return null;
 
+  function layer() {
+    return (
+      <View style={[StyleSheet.absoluteFill, { zIndex: 900, elevation: 900 }]}>
         <View
           style={{
-            width: cardW,
-            backgroundColor: glass.white,
-            borderRadius: 16,
-            borderWidth: 1,
-            borderColor: glass.border,
-            paddingVertical: 32,
-            paddingHorizontal: padH,
+            flex: 1,
+            backgroundColor: 'rgba(0,0,0,0.4)',
             alignItems: 'center',
-            // The app draws no shadows elsewhere; a card floating over a dimmed
-            // screen is the one place a soft one helps it lift.
-            shadowColor: '#000000',
-            shadowOpacity: 0.18,
-            shadowRadius: 18,
-            shadowOffset: { width: 0, height: 8 },
-            elevation: 10,
+            justifyContent: 'center',
+            paddingHorizontal: SCREEN_MARGIN,
+            // Centred in what the keyboard leaves, not in the whole screen.
+            paddingBottom: keyboard,
           }}
         >
+          {/* Tapping away is a cancel. The card sits on top, so a press on it
+            never reaches this. */}
           <Pressable
             onPress={close}
             accessibilityRole="button"
             accessibilityLabel="Close"
-            hitSlop={12}
-            style={({ pressed }) => ({
-              position: 'absolute',
-              top: 12,
-              right: 12,
-              width: 32,
-              height: 32,
+            style={StyleSheet.absoluteFill}
+          />
+
+          <View
+            style={{
+              width: cardW,
+              backgroundColor: glass.white,
               borderRadius: 16,
+              borderWidth: 1,
+              borderColor: glass.border,
+              paddingVertical: 32,
+              paddingHorizontal: padH,
               alignItems: 'center',
-              justifyContent: 'center',
-              backgroundColor: pressed ? glass.fill : 'transparent',
-            })}
+              // The app draws no shadows elsewhere; a card floating over a dimmed
+              // screen is the one place a soft one helps it lift.
+              shadowColor: '#000000',
+              shadowOpacity: 0.18,
+              shadowRadius: 18,
+              shadowOffset: { width: 0, height: 8 },
+              elevation: 10,
+            }}
           >
-            <GlassIcon name="close" size={20} color={glass.inkSoft} />
-          </Pressable>
+            <Pressable
+              onPress={close}
+              accessibilityRole="button"
+              accessibilityLabel="Close"
+              hitSlop={12}
+              style={({ pressed }) => ({
+                position: 'absolute',
+                top: 12,
+                right: 12,
+                width: 32,
+                height: 32,
+                borderRadius: 16,
+                alignItems: 'center',
+                justifyContent: 'center',
+                backgroundColor: pressed ? glass.fill : 'transparent',
+              })}
+            >
+              <GlassIcon name="close" size={20} color={glass.inkSoft} />
+            </Pressable>
 
-          {success ? (
-            <View style={{ alignItems: 'center', paddingVertical: gspace.lg }}>
-              <View
-                style={{
-                  width: 56,
-                  height: 56,
-                  borderRadius: 28,
-                  backgroundColor: glass.greenSoft,
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                }}
-              >
-                <GlassIcon name="check" size={30} color={glass.green} />
+            {success ? (
+              <View style={{ alignItems: 'center', paddingVertical: gspace.lg }}>
+                <View
+                  style={{
+                    width: 56,
+                    height: 56,
+                    borderRadius: 28,
+                    backgroundColor: glass.greenSoft,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                  }}
+                >
+                  <GlassIcon name="check" size={30} color={glass.green} />
+                </View>
+                <GlassText
+                  variant="subtitle"
+                  accessibilityLiveRegion="polite"
+                  style={{ marginTop: gspace.md, color: glass.green }}
+                >
+                  Code accepted
+                </GlassText>
               </View>
-              <GlassText
-                variant="subtitle"
-                accessibilityLiveRegion="polite"
-                style={{ marginTop: gspace.md, color: glass.green }}
-              >
-                Code accepted
-              </GlassText>
-            </View>
-          ) : (
-            <>
-              <GlassText variant="subtitle" style={{ fontSize: 18, textAlign: 'center' }}>
-                {title}
-              </GlassText>
-              <GlassText
-                variant="body"
-                tone="soft"
-                style={{ fontSize: 13, textAlign: 'center', marginTop: gspace.sm }}
-              >
-                {hint}
-              </GlassText>
-              {masked ? (
+            ) : (
+              <>
+                <GlassText variant="subtitle" style={{ fontSize: 18, textAlign: 'center' }}>
+                  {title}
+                </GlassText>
                 <GlassText
                   variant="body"
                   tone="soft"
-                  nums
-                  style={{ fontSize: 13, textAlign: 'center', marginTop: 2 }}
+                  style={{
+                    fontSize: 13,
+                    textAlign: 'center',
+                    marginTop: gspace.sm,
+                  }}
                 >
-                  Sent to {masked}
+                  {hint}
                 </GlassText>
-              ) : null}
+                {masked ? (
+                  <GlassText
+                    variant="body"
+                    tone="soft"
+                    nums
+                    style={{ fontSize: 13, textAlign: 'center', marginTop: 2 }}
+                  >
+                    Sent to {masked}
+                  </GlassText>
+                ) : null}
 
-              <Animated.View
-                style={{ marginTop: gspace.xl, transform: [{ translateX: shake }] }}
-              >
-                <OtpBoxes
-                  ref={boxes}
-                  value={value}
-                  onChange={onChange}
-                  error={error}
-                  boxSize={boxSize}
-                  disabled={busy}
-                />
-              </Animated.View>
-
-              {resendClosed ? (
-                <GlassText
-                  variant="body"
-                  tone="soft"
-                  style={{ fontSize: 13, textAlign: 'center', marginTop: gspace.lg }}
+                <Animated.View
+                  style={{
+                    marginTop: gspace.xl,
+                    transform: [{ translateX: shake }],
+                  }}
                 >
-                  {resendClosed}
-                </GlassText>
-              ) : onResend ? (
-                <ResendLine
-                  resendAt={resendAt ?? null}
-                  sending={!!resending}
-                  disabled={!!busy}
-                  onPress={onResend}
-                />
-              ) : null}
+                  <OtpBoxes
+                    ref={boxes}
+                    value={value}
+                    onChange={onChange}
+                    error={error}
+                    boxSize={boxSize}
+                    disabled={busy}
+                  />
+                </Animated.View>
 
-              <GlassButton
-                title={submitLabel}
-                kind={submitKind}
-                icon="check"
-                onPress={submit}
-                loading={busy}
-                disabled={!canSubmit}
-                style={{ marginTop: gspace.xl, alignSelf: 'stretch' }}
-              />
-            </>
-          )}
+                {resendClosed ? (
+                  <GlassText
+                    variant="body"
+                    tone="soft"
+                    style={{
+                      fontSize: 13,
+                      textAlign: 'center',
+                      marginTop: gspace.lg,
+                    }}
+                  >
+                    {resendClosed}
+                  </GlassText>
+                ) : onResend ? (
+                  <ResendLine
+                    resendAt={resendAt ?? null}
+                    sending={!!resending}
+                    disabled={!!busy}
+                    onPress={onResend}
+                  />
+                ) : null}
+
+                <GlassButton
+                  title={submitLabel}
+                  kind={submitKind}
+                  icon="check"
+                  onPress={submit}
+                  loading={busy}
+                  disabled={!canSubmit}
+                  style={{ marginTop: gspace.xl, alignSelf: 'stretch' }}
+                />
+              </>
+            )}
+          </View>
         </View>
       </View>
-    </Modal>
-  );
+    );
+  }
 }
 
 /**

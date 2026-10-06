@@ -777,8 +777,15 @@ export default function Job() {
    * here already collected.
    */
 
-  /** Applies whatever Odoo says came back, including any tracking instruction. */
-  async function applyResult(res: ActionResult) {
+  /**
+   * Applies whatever Odoo says came back, including any tracking instruction.
+   *
+   * `toPhotos`: a code was accepted and the parcel photos open next. The rider
+   * waits for none of the rest - tracking and the refetch of every screen go
+   * on in the background, and Home is skipped. Waiting for them held the
+   * spinner on the code card for many seconds after Odoo had said yes.
+   */
+  async function applyResult(res: ActionResult, toPhotos = false) {
     setOverride(res.allowed_actions);
     setOtp('');
 
@@ -786,19 +793,24 @@ export default function Job() {
     // reply saying nothing about either (a code request) changes nothing.
     const says = res.tracking !== undefined || !!res.status;
     if (says && trackingWanted(res.status, res.tracking)) {
-      const started = await startTracking(orderId);
-      // One message per cause. This was a single sentence about Settings, which
-      // was wrong advice for a rider whose permissions were fine and whose
-      // location switch was simply off.
-      if (!started.ok) setError(TRACKING_ERROR[started.reason]);
+      const starting = startTracking(orderId).then((started) => {
+        // One message per cause. This was a single sentence about Settings, which
+        // was wrong advice for a rider whose permissions were fine and whose
+        // location switch was simply off.
+        if (!started.ok) setError(TRACKING_ERROR[started.reason]);
+      });
+      if (!toPhotos) await starting;
     } else if (says && trackedOrderId() === orderId) {
-      await stopTracking();
+      void stopTracking().catch(() => {});
     }
 
-    await qc.invalidateQueries();
+    void qc.invalidateQueries();
 
     // `removed`: declined, and now another rider's — nothing left here.
-    if (res.removed || res.status === 'delivered' || res.status === 'returned') {
+    if (
+      !toPhotos &&
+      (res.removed || res.status === 'delivered' || res.status === 'returned')
+    ) {
       router.replace('/');
     }
   }
@@ -924,9 +936,19 @@ export default function Job() {
         case 'start_delivery':
           res = await api.start(orderId);
           break;
-        case 'verify_delivery_otp':
-          res = await api.verifyDeliveryOtp(orderId, otp);
+        case 'verify_delivery_otp': {
+          // TEMP timing: remove once the slow step is known.
+          const t0 = Date.now();
+          console.log('[otp] delivery code sent');
+          try {
+            res = await api.verifyDeliveryOtp(orderId, otp);
+          } catch (e) {
+            console.log(`[otp] server error after ${Date.now() - t0} ms`, e);
+            throw e;
+          }
+          console.log(`[otp] server answered in ${Date.now() - t0} ms, status ${res.status}`);
           break;
+        }
         case 'return_to_shop':
           res = await api.returnToShop(orderId, reason);
           break;
@@ -986,6 +1008,7 @@ export default function Job() {
           : action === 'verify_delivery_otp'
             ? 'delivery'
             : null;
+      const t1 = Date.now();
       if (photoStage && order) {
         await owePhotos({
           orderId,
@@ -1008,8 +1031,11 @@ export default function Job() {
         router.replace('/');
         return;
       }
-      await applyResult(res);
+      if (photoStage) console.log(`[otp] photos owed saved in ${Date.now() - t1} ms`);
+      const t2 = Date.now();
+      await applyResult(res, !!photoStage);
       if (photoStage) {
+        console.log(`[otp] result applied in ${Date.now() - t2} ms, opening photos`);
         router.replace({
           pathname: '/photos/[id]',
           params: { id: String(orderId), stage: photoStage },

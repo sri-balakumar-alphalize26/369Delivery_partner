@@ -1,7 +1,15 @@
 import { Image } from 'expo-image';
 import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, BackHandler, Modal, Pressable, ScrollView, View } from 'react-native';
+import {
+  ActivityIndicator,
+  BackHandler,
+  Keyboard,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  View,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useBottomInset } from '../../../src/hooks/useBottomInset';
 import { api } from '../../../src/api/endpoints';
@@ -74,7 +82,10 @@ const SLOTS: Record<PhotoStage, { title: string; hint: string }[]> = {
  * already seen (`duplicate: true`), so sending it again is harmless.
  */
 export default function Photos() {
-  const { id, stage: stageParam } = useLocalSearchParams<{ id: string; stage: string }>();
+  const { id, stage: stageParam } = useLocalSearchParams<{
+    id: string;
+    stage: string;
+  }>();
   const orderId = Number(id);
   const stage: PhotoStage = stageParam === 'delivery' ? 'delivery' : 'pickup';
   const router = useRouter();
@@ -167,11 +178,29 @@ export default function Photos() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loaded, entry]);
 
-  // The camera opens by itself for the first photo, once.
+  // The camera opens by itself for the first photo, once - after the code's
+  // keyboard is down, so the camera never opens while the screen is still
+  // settling from the code card (a capped wait: a keyboard that never says it
+  // closed does not keep the camera shut).
   useEffect(() => {
     if (!entry || opened.current) return;
     opened.current = true;
-    if (entry.shots.length === 0) void shoot();
+    if (entry.shots.length > 0) return;
+    if (!Keyboard.isVisible()) {
+      void shoot();
+      return;
+    }
+    let done = false;
+    const go = () => {
+      if (done) return;
+      done = true;
+      sub.remove();
+      clearTimeout(cap);
+      void shoot();
+    };
+    const sub = Keyboard.addListener('keyboardDidHide', go);
+    const cap = setTimeout(go, 1500);
+    Keyboard.dismiss();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [entry]);
 
@@ -180,6 +209,16 @@ export default function Photos() {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => true);
     return () => sub.remove();
   }, []);
+
+  // Except close a photo shown full size.
+  useEffect(() => {
+    if (viewing === null) return;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      setViewing(null);
+      return true;
+    });
+    return () => sub.remove();
+  }, [viewing]);
 
   async function store(next: Shot[]) {
     if (!entry) return;
@@ -222,7 +261,9 @@ export default function Photos() {
       // the moment it was taken - never the phone's zone.
       const zone = await shopTimeZone();
       next = next.map((s) =>
-        !s.sent && s.takenAt ? { ...s, name: photoFileName(entry.ref, new Date(s.takenAt), zone) } : s
+        !s.sent && s.takenAt
+          ? { ...s, name: photoFileName(entry.ref, new Date(s.takenAt), zone) }
+          : s
       );
       for (let i = 0; i < next.length; i++) {
         if (next[i].sent) continue;
@@ -239,7 +280,10 @@ export default function Photos() {
       // The server holds the most it keeps, or the job closed for photos
       // 24 h after it ended. Either way nothing more can go up, and the
       // rider must not be held on a screen with no way out.
-      if (err instanceof ApiError && (err.code === 'too_many_photos' || err.code === 'wrong_state')) {
+      if (
+        err instanceof ApiError &&
+        (err.code === 'too_many_photos' || err.code === 'wrong_state')
+      ) {
         await clearOwed(orderId, stage);
         void notice(
           'Photos',
@@ -305,7 +349,13 @@ export default function Photos() {
         style={{ flex: 1 }}
         contentContainerStyle={{ padding: gspace.lg, rowGap: gspace.md }}
       >
-        <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'baseline' }}>
+        <View
+          style={{
+            flexDirection: 'row',
+            justifyContent: 'space-between',
+            alignItems: 'baseline',
+          }}
+        >
           <GlassText variant="subtitle">Shot list</GlassText>
           <GlassText variant="label" tone={left > 0 ? 'orange' : 'green'}>
             {left > 0 ? `${left} more needed` : `${shots.length} taken · ready to send`}
@@ -338,7 +388,11 @@ export default function Photos() {
                 >
                   <Image
                     source={{ uri: s.uri }}
-                    style={{ width: 76, height: 76, borderRadius: gradius.chip }}
+                    style={{
+                      width: 76,
+                      height: 76,
+                      borderRadius: gradius.chip,
+                    }}
                     contentFit="cover"
                   />
                 </Pressable>
@@ -351,7 +405,10 @@ export default function Photos() {
                     sent={s.sent}
                     sendingNow={sendingAt === i}
                     waiting={busy && !s.sent && sendingAt !== i}
-                    taken={timeOnly(s.takenAt ? new Date(s.takenAt).toISOString() : undefined, timezone)}
+                    taken={timeOnly(
+                      s.takenAt ? new Date(s.takenAt).toISOString() : undefined,
+                      timezone
+                    )}
                   />
                 </View>
                 {!s.sent && !busy ? (
@@ -406,7 +463,11 @@ export default function Photos() {
                   justifyContent: 'center',
                 }}
               >
-                <GlassIcon name="camera" size={26} color={next ? glass.accentText : glass.inkFaint} />
+                <GlassIcon
+                  name="camera"
+                  size={26}
+                  color={next ? glass.accentText : glass.inkFaint}
+                />
               </View>
               <View style={{ flex: 1 }}>
                 <GlassText variant="bodyStrong">{`${i + 1} · ${slot.title}`}</GlassText>
@@ -469,15 +530,20 @@ export default function Photos() {
         </GlassText>
       </View>
 
-      {/* A photo full size, to check it before sending. */}
-      <Modal
-        visible={!!big}
-        transparent
-        animationType="fade"
-        onRequestClose={() => setViewing(null)}
-        statusBarTranslucent
-      >
-        <View style={{ flex: 1, backgroundColor: 'rgba(4,20,12,0.94)' }}>
+      {/* A photo full size, to check it before sending. A layer in the screen,
+          not a <Modal>: Retake closes it and opens the camera at once, and a
+          Modal window closed at that moment could stay behind, white. */}
+      {big ? (
+        <View
+          style={[
+            StyleSheet.absoluteFill,
+            {
+              zIndex: 10,
+              elevation: 10,
+              backgroundColor: 'rgba(4,20,12,0.94)',
+            },
+          ]}
+        >
           {big ? (
             <Image source={{ uri: big.uri }} style={{ flex: 1 }} contentFit="contain" />
           ) : null}
@@ -502,10 +568,15 @@ export default function Photos() {
                 style={{ flex: 1 }}
               />
             ) : null}
-            <GlassButton title="Close" kind="green" onPress={() => setViewing(null)} style={{ flex: 1 }} />
+            <GlassButton
+              title="Close"
+              kind="green"
+              onPress={() => setViewing(null)}
+              style={{ flex: 1 }}
+            />
           </View>
         </View>
-      </Modal>
+      ) : null}
     </GlassScreen>
   );
 }
@@ -524,7 +595,14 @@ function RowStatus({
 }) {
   if (sent) {
     return (
-      <View style={{ flexDirection: 'row', alignItems: 'center', columnGap: 4, marginTop: 4 }}>
+      <View
+        style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          columnGap: 4,
+          marginTop: 4,
+        }}
+      >
         <GlassIcon name="check" size={14} color={glass.green} />
         <GlassText variant="label" tone="green">
           Sent
@@ -534,7 +612,14 @@ function RowStatus({
   }
   if (sendingNow) {
     return (
-      <View style={{ flexDirection: 'row', alignItems: 'center', columnGap: 6, marginTop: 4 }}>
+      <View
+        style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          columnGap: 6,
+          marginTop: 4,
+        }}
+      >
         <ActivityIndicator size="small" color={glass.band} />
         <GlassText variant="label" tone="soft">
           Sending…

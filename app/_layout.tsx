@@ -16,6 +16,7 @@ import { glass } from '../src/theme/glass';
 import { SplashAnimation } from '../src/ui/SplashAnimation';
 import { CameraHost } from '../src/ui/CameraSheet';
 import { ConfirmHost } from '../src/ui/ConfirmSheet';
+import { OverlayHost } from '../src/ui/OverlayHost';
 import * as Notifications from 'expo-notifications';
 import { useOfferAlert } from '../src/hooks/useOfferAlert';
 import { useDutyLocation } from '../src/location/dutyLocation';
@@ -197,6 +198,8 @@ export default function RootLayout() {
               }}
             />
           </Gate>
+          {/* Popups a screen draws from deep in its content, e.g. the code card. */}
+          <OverlayHost />
           {/* The one camera every photo uses, inside the app (see CameraSheet). */}
           <CameraHost />
           {/* The red-and-white "are you sure?" for steps that cannot be undone. */}

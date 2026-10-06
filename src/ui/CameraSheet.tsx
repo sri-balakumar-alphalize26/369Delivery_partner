@@ -191,6 +191,14 @@ export function CameraHost() {
               style={{ flex: 1 }}
               facing="back"
               flash={flash}
+              /*
+               * No white "flash" on the shot. On Android, expo-camera paints the
+               * whole app window white for 50 ms and then clears it through this
+               * view's window - but the preview replaces this view as soon as the
+               * photo is in, and once it is gone the clear misses: the app stayed
+               * white for good, alive underneath, until a restart.
+               */
+              animateShutter={false}
               onCameraReady={() => setReady(true)}
             />
             {/* Customers and shop staff did not agree to be in these photos. */}
