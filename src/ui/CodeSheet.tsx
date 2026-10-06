@@ -8,6 +8,8 @@ import {
   useWindowDimensions,
   View,
 } from 'react-native';
+import { useNow } from '../hooks/useNow';
+import { feedback } from '../lib/feedback';
 import { glass, gspace } from '../theme/glass';
 import { OtpBoxes, OtpBoxesHandle } from './OtpBoxes';
 import { GlassButton } from './glass/GlassButton';
@@ -20,8 +22,9 @@ import { GlassText } from './glass/GlassText';
  * The boxes once sat at the foot of the job sheet, under everything else, and
  * the keyboard covered them; then they moved to a bottom sheet. Now the code
  * gets a card of its own, centred in the space above the keyboard: a title, a
- * line saying where the code came from, the boxes, and one button. No resend:
- * neither code can be sent again from the rider's side.
+ * line saying where the code came from, the boxes, and one button. The
+ * customer's code can be sent again from under the boxes (`onResend`); the
+ * pickup code cannot, so that card shows no link.
  *
  * It submits by itself on the sixth digit, shakes and clears on a wrong code,
  * and shows a tick on a right one before it closes.
@@ -41,7 +44,7 @@ const DIGITS = 6;
 /** How long the tick shows after a right code, before the card goes. */
 const SUCCESS_MS = 700;
 /** When the keyboard is asked for a second time, after the card is up. */
-const REFOCUS_MS = 300;
+const REFOCUS_MS = 1200;
 
 export function CodeSheet({
   visible,
@@ -57,6 +60,10 @@ export function CodeSheet({
   onSubmit,
   onClose,
   sentTo,
+  onResend,
+  resendAt,
+  resending,
+  resendClosed,
 }: {
   visible: boolean;
   title: string;
@@ -73,6 +80,14 @@ export function CodeSheet({
   onClose: () => void;
   /** The number the code went to, shown with all but its last four digits hidden. */
   sentTo?: string | null;
+  /** Asks for a fresh code. Left out, the card has no resend line. */
+  onResend?: () => void;
+  /** When another code may be asked for (server clock, ms); before it, a countdown. */
+  resendAt?: number | null;
+  /** A resend is on its way. */
+  resending?: boolean;
+  /** No more codes can be sent for this job; shown in place of the link. */
+  resendClosed?: string | null;
 }) {
   const { width } = useWindowDimensions();
   const [keyboard, setKeyboard] = useState(0);
@@ -120,6 +135,8 @@ export function CodeSheet({
       return;
     }
     setSuccess(true);
+    // The success notes too: "code accepted" is heard, not only felt.
+    feedback.success();
     const t = setTimeout(() => {
       setSuccess(false);
       setShown(false);
@@ -163,6 +180,7 @@ export function CodeSheet({
   const shake = useRef(new Animated.Value(0)).current;
   useEffect(() => {
     if (!error) return;
+    feedback.wrong();
     submitting.current = false;
     Animated.sequence(
       [-8, 8, -6, 6, -3, 0].map((toValue) =>
@@ -183,7 +201,14 @@ export function CodeSheet({
    */
   useEffect(() => {
     if (!shown || busy) return;
-    const t = setTimeout(() => boxes.current?.focus(), REFOCUS_MS);
+    // Asked again a few times until the keyboard is really up; each ask does
+    // nothing once it is.
+    // One late check, after the keyboard's slide-up has surely finished: only a
+    // keyboard that never came gets the hard re-ask. Earlier checks caught it
+    // mid-slide and pulled it down again, so it rose twice.
+    const t = setTimeout(() => {
+      if (!Keyboard.isVisible()) boxes.current?.wake();
+    }, REFOCUS_MS);
     return () => clearTimeout(t);
   }, [shown, busy]);
 
@@ -324,6 +349,23 @@ export function CodeSheet({
                 />
               </Animated.View>
 
+              {resendClosed ? (
+                <GlassText
+                  variant="body"
+                  tone="soft"
+                  style={{ fontSize: 13, textAlign: 'center', marginTop: gspace.lg }}
+                >
+                  {resendClosed}
+                </GlassText>
+              ) : onResend ? (
+                <ResendLine
+                  resendAt={resendAt ?? null}
+                  sending={!!resending}
+                  disabled={!!busy}
+                  onPress={onResend}
+                />
+              ) : null}
+
               <GlassButton
                 title={submitLabel}
                 kind={submitKind}
@@ -341,8 +383,77 @@ export function CodeSheet({
   );
 }
 
+/**
+ * "Didn't get it? Resend code", or "Resend in 0:42" while the wait runs.
+ *
+ * Only the link part is pressable, and only when the wait is over.
+ */
+function ResendLine({
+  resendAt,
+  sending,
+  disabled,
+  onPress,
+}: {
+  resendAt: number | null;
+  sending: boolean;
+  disabled: boolean;
+  onPress: () => void;
+}) {
+  // Ticks here, not in the job screen, so only this line redraws each second.
+  const now = useNow(1000);
+  const left = resendAt ? Math.max(0, Math.ceil((resendAt - now) / 1000)) : 0;
+  const waiting = left > 0;
+  const clock = `${Math.floor(left / 60)}:${String(left % 60).padStart(2, '0')}`;
+  const blocked = waiting || sending || disabled;
+
+  return (
+    <View
+      style={{
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginTop: gspace.lg,
+        minHeight: 32,
+      }}
+    >
+      {waiting ? (
+        <GlassText variant="body" tone="soft" nums style={{ fontSize: 13 }}>
+          Resend in {clock}
+        </GlassText>
+      ) : (
+        <>
+          <GlassText variant="body" tone="soft" style={{ fontSize: 13 }}>
+            {"Didn't get it? "}
+          </GlassText>
+          <Pressable
+            onPress={onPress}
+            disabled={blocked}
+            accessibilityRole="button"
+            accessibilityLabel="Resend code"
+            hitSlop={10}
+          >
+            {({ pressed }) => (
+              <GlassText
+                variant="bodyStrong"
+                style={{
+                  fontSize: 13,
+                  color: blocked ? glass.inkFaint : glass.indigo,
+                  textDecorationLine: 'underline',
+                  opacity: pressed ? 0.6 : 1,
+                }}
+              >
+                {sending ? 'Sending…' : 'Resend code'}
+              </GlassText>
+            )}
+          </Pressable>
+        </>
+      )}
+    </View>
+  );
+}
+
 /** "+968 9123 4521" → "•••• •••• 4521": every digit but the last four hidden. */
-function maskPhone(raw: string | null | undefined): string | null {
+export function maskPhone(raw: string | null | undefined): string | null {
   const digits = (raw ?? '').replace(/\D/g, '');
   if (digits.length < 4) return null;
   return `•••• •••• ${digits.slice(-4)}`;

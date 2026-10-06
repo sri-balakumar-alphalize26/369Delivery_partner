@@ -21,7 +21,8 @@ const BOX_H = 54;
  * them without touching their logic.
  */
 /** What a parent can do to these boxes from outside. */
-export type OtpBoxesHandle = { focus: () => void };
+/** `focus` asks gently (never drops focus); `wake` forces a fresh ask. */
+export type OtpBoxesHandle = { focus: () => void; wake: () => void };
 
 type OtpBoxesProps = {
   value: string;
@@ -48,7 +49,13 @@ export const OtpBoxes = forwardRef<OtpBoxesHandle, OtpBoxesProps>(function OtpBo
    * the keyboard never appears, which is exactly what a rider reported. A parent
    * that can wait for the modal to be shown calls this instead.
    */
-  useImperativeHandle(ref, () => ({ focus: wake }), []);
+  useImperativeHandle(ref, () => ({ focus: ask, wake }), []);
+
+  /** Focus if not focused. Never blurs, so a keyboard on its way up is left alone. */
+  function ask() {
+    const i = input.current;
+    if (i && !i.isFocused()) i.focus();
+  }
 
   /**
    * Focus, and make sure the keyboard really comes up.
@@ -62,8 +69,18 @@ export const OtpBoxes = forwardRef<OtpBoxesHandle, OtpBoxesProps>(function OtpBo
   function wake() {
     const i = input.current;
     if (!i) return;
-    if (i.isFocused() && !Keyboard.isVisible()) i.blur();
-    i.focus();
+    if (Keyboard.isVisible()) {
+      if (!i.isFocused()) i.focus();
+      return;
+    }
+    if (!i.isFocused()) {
+      i.focus();
+      return;
+    }
+    // Focused but no keyboard: drop the focus, and ask again on the next
+    // frame - a focus in the same frame as the blur is ignored on Android.
+    i.blur();
+    setTimeout(() => input.current?.focus(), 60);
   }
   const [focused, setFocused] = useState(false);
 
