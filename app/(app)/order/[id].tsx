@@ -14,6 +14,7 @@ import {
   View,
 } from 'react-native';
 import { initialWindowMetrics, useSafeAreaInsets } from 'react-native-safe-area-context';
+import { useBottomInset } from '../../../src/hooks/useBottomInset';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { peekServer } from '../../../src/api/config';
 import { api } from '../../../src/api/endpoints';
@@ -38,8 +39,10 @@ import {
   isAtShop,
   isDropLocked,
   JobProblem,
+  JobReport,
   Money,
   PRIMARY_ACTIONS,
+  stopLabel,
   trackingWanted,
 } from '../../../src/api/types';
 import {
@@ -54,7 +57,7 @@ import {
   timeOnly,
 } from '../../../src/lib/format';
 import { useNow } from '../../../src/hooks/useNow';
-import { secondsUntil } from '../../../src/lib/clock';
+import { secondsUntil, serverNow } from '../../../src/lib/clock';
 import {
   hasLocationPermission,
   keepTracking,
@@ -63,7 +66,7 @@ import {
   trackedOrderId,
 } from '../../../src/location/tracking';
 import { stopOfferAlert } from '../../../src/hooks/useOfferAlert';
-import { useSession } from '../../../src/store/session';
+import { shopTimeZone, useSession } from '../../../src/store/session';
 import { photoProblem, takePhoto } from '../../../src/ui/takePhoto';
 import * as Notifications from 'expo-notifications';
 import { playNearCustomer } from '../../../src/lib/sounds';
@@ -78,9 +81,15 @@ import {
   gspace,
 } from '../../../src/theme/glass';
 import { Field } from '../../../src/ui/Field';
+import { confirm } from '../../../src/ui/ConfirmSheet';
 import { LoadingArt } from '../../../src/ui/LoadingArt';
 import { LocationPrimer } from '../../../src/ui/LocationPrimer';
 import { CodeSheet } from '../../../src/ui/CodeSheet';
+import { ServerPhoto } from '../../../src/ui/ServerPhoto';
+import { LocationAlwaysBanner } from '../../../src/ui/LocationAlwaysBanner';
+import { SosShield } from '../../../src/ui/SosSheet';
+import { QuickReplies } from '../../../src/ui/QuickReplies';
+import { useTripNotification } from '../../../src/push/useTripNotification';
 import { OtpInput } from '../../../src/ui/OtpInput';
 import { MAP_ENABLED, RouteMap } from '../../../src/ui/RouteMap';
 import { owePhotos, PhotoStage } from '../../../src/photos/owed';
@@ -130,10 +139,15 @@ import { GlassText } from '../../../src/ui/glass/GlassText';
  * The start is filled in too: where the rider is, from the map's own fix; or,
  * on the way to the customer before a fix arrives, the shop they just left.
  * With neither, Google Maps uses its own "Your location".
+ *
+ * On the way to a customer it also tells the server this is where the rider is
+ * going now (`heading`), so an Express customer's tracking page goes live and
+ * they get "You're next". `onHeading` refreshes the list's stop numbers.
  */
 function navigateTo(
   order: DeliveryOrder,
-  riderAt: { latitude: number; longitude: number } | null
+  riderAt: { latitude: number; longitude: number } | null,
+  onHeading?: () => void
 ) {
   const shop = shopInfo(order.shop);
   if (headingFor(order.delivery_status) === 'shop') {
@@ -144,6 +158,7 @@ function navigateTo(
       origin: riderAt,
     });
   } else {
+    tellHeading(order, onHeading);
     const shopAt = coords(shop?.latitude, shop?.longitude);
     void openNavigation({
       latitude: order.latitude,
@@ -152,6 +167,36 @@ function navigateTo(
       origin: riderAt ?? shopAt,
     });
   }
+}
+
+/**
+ * The job `heading` was last sent for, this app session. One value, not a set:
+ * the server keeps a single current stop, so going A, then B, then back to A
+ * must send A again.
+ */
+let headingSentTo: number | null = null;
+
+/** Parcel on the road: the only states the server takes `heading` in. */
+const ON_ROAD: readonly DeliveryOrder['delivery_status'][] = [
+  'picked',
+  'dispatched',
+  'out_for_delivery',
+];
+
+/**
+ * Best effort and silent: nothing waits on it and a failure shows nothing,
+ * because without it the server takes the nearest drop as next. A failed send
+ * is forgotten so the next tap tries again.
+ */
+function tellHeading(order: DeliveryOrder, onDone?: () => void) {
+  const id = order.delivery_order_id;
+  if (!ON_ROAD.includes(order.delivery_status)) return;
+  if (order.is_current_stop || headingSentTo === id) return;
+  headingSentTo = id;
+  void api.heading(id).then((r) => {
+    if (r.success) onDone?.();
+    else if (headingSentTo === id) headingSentTo = null;
+  });
 }
 
 /**
@@ -187,19 +232,22 @@ const AT_SHOP_M = 150;
 const NEAR_CUSTOMER_M = 300;
 const AT_DOOR_M = 50;
 
+/** Seconds before the customer can be sent another code, when the server names none. */
+const RESEND_WAIT_S = 60;
+
+/** What the rider reads when a resend is refused and the server gave no words. */
+const RESEND_REFUSED: Record<string, string> = {
+  whatsapp_failed: 'WhatsApp did not send the code. Try again in a moment, or call the customer.',
+  too_soon: 'A code was sent a moment ago. Wait for the timer, then try again.',
+  limit: 'No more codes can be sent for this job. Call the office if the customer still has none.',
+  wrong_state: 'Press Reached first, then ask for a new code.',
+};
+
 /** Metres as a rider reads them: "650 m", "1.2 km". */
 function distanceText(m: number): string {
   return m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${Math.round(m / 10) * 10} m`;
 }
 
-/**
- * One line of the bag check, by what it is as well as where it sits: when the
- * office edits an order, a tick must not carry over to a different item that
- * has moved into its place.
- */
-function tickKey(p: { name: string; quantity: number }, i: number): string {
-  return `${i}|${p.name}|${p.quantity}`;
-}
 
 /**
  * At the counter in branch mode, with the arrival told and no code yet: the
@@ -269,6 +317,11 @@ export default function Job() {
   const router = useRouter();
   const qc = useQueryClient();
   const insets = useSafeAreaInsets();
+  // After `heading`: every job's stop number may have moved, not just this one's.
+  const refreshRun = () => {
+    void qc.invalidateQueries({ queryKey: ['orders'] });
+    void qc.invalidateQueries({ queryKey: ['order', orderId] });
+  };
 
   /**
    * The real distance to the bottom of the screen.
@@ -280,7 +333,7 @@ export default function Job() {
    * y=1890-1908 on a 1920-tall screen. `initialWindowMetrics` reports the window
    * as the OS sees it, unadjusted, so the larger of the two is always safe.
    */
-  const bottomInset = Math.max(insets.bottom, initialWindowMetrics?.insets.bottom ?? 0);
+  const bottomInset = useBottomInset();
   const { height: screenH } = useWindowDimensions();
   // The shop's zone, from /auth/me — never the phone's own.
   const timezone = useSession((s) => s.timezone);
@@ -318,11 +371,23 @@ export default function Job() {
    */
   const [notice, setNotice] = useState<string | null>(null);
   /**
+   * When the customer may be sent another code (server clock, ms). Set by
+   * Reached and by each resend; the code panel counts down to it.
+   */
+  const [resendAt, setResendAt] = useState<number | null>(null);
+  const [resending, setResending] = useState(false);
+  /** The server's words once this job has had all the codes it may (5). */
+  const [resendClosed, setResendClosed] = useState<string | null>(null);
+  /**
    * "I'm at the counter" went through. The job's own `arrived_at_shop` says
    * so too, but only from the next fetch; this keeps the button from coming
    * back in between.
    */
   const [arrivedHere, setArrivedHere] = useState(false);
+  /** "Delivered – enter customer code" tapped before "I am near": the door screen. */
+  const [skipToDoor, setSkipToDoor] = useState(false);
+  // The screen can be reused for another job; the shortcut belongs to one.
+  useEffect(() => setSkipToDoor(false), [orderId]);
   /** The pickup code was accepted: the drop is unlocked. Said once, in green. */
   const [unlockedNote, setUnlockedNote] = useState<string | null>(null);
   /** The customer shared a new place for this delivery: the map has moved. */
@@ -357,11 +422,6 @@ export default function Job() {
    * fix of its own. Drives the arrival prompts and the offer's distances.
    */
   const [riderAt, setRiderAt] = useState<{ latitude: number; longitude: number } | null>(null);
-  /** Lines of the bag check ticked, by `tickKey`. */
-  const [picked, setPicked] = useState<Set<string>>(new Set());
-  /** Said once the shop has been told what is missing from the bag. */
-  const [bagNote, setBagNote] = useState<string | null>(null);
-  const pickKey = `d369.picklist.${orderId}`;
 
   /**
    * Whether the customer has been sent their delivery code.
@@ -413,26 +473,12 @@ export default function Job() {
         if (!raw) return;
         setReachedHere(true);
         setNotice('The customer has been sent their code on WhatsApp.');
+        setResendAt(serverNow() + RESEND_WAIT_S * 1000);
         setOtp('');
         setCodeOpen(true);
       })
       .catch(() => {});
   }, [pending, reachedKey]);
-
-  useEffect(() => {
-    let live = true;
-    AsyncStorage.getItem(pickKey)
-      .then((raw) => {
-        if (!live || !raw) return;
-        const saved = JSON.parse(raw) as unknown[];
-        setPicked(new Set(saved.filter((x): x is string => typeof x === 'string')));
-      })
-      // An unreadable list is an empty one — never a screen that will not open.
-      .catch(() => {});
-    return () => {
-      live = false;
-    };
-  }, [pickKey]);
 
   /**
    * Leaving the job counts as having dealt with the offer, so anything still
@@ -477,10 +523,8 @@ export default function Job() {
     setError(null);
     setOtpError(null);
     setCodeOpen(false);
-    setPicked(new Set());
     setLeg(null);
     setRiderAt(null);
-    setBagNote(null);
     setArrivedHere(false);
     setUnlockedNote(null);
     setReportedNote(null);
@@ -543,13 +587,12 @@ export default function Job() {
     if (!codeReady || !order || codeReadyFor.has(orderId)) return;
     codeReadyFor.add(orderId);
     Vibration.vibrate([0, 300, 150, 300]);
-    const bagDone = (order.products ?? []).every((p, i) => picked.has(tickKey(p, i)));
-    if (bagDone) {
-      setOtp('');
-      setOtpError(null);
-      setCodeOpen(true);
-    }
-    // Only the moment the flag goes up; later ticks and polls must not reopen it.
+    // The shop pressed Dispatch: open the code box. The rider no longer ticks
+    // the bag, so nothing holds this back.
+    setOtp('');
+    setOtpError(null);
+    setCodeOpen(true);
+    // Only the moment the flag goes up; later polls must not reopen it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [codeReady, orderId]);
 
@@ -560,6 +603,8 @@ export default function Job() {
    * the explainer.
    */
   const shouldTrack = !!order && trackingWanted(order.delivery_status, order.tracking);
+  // The job pinned on the lock screen while it is live (tripNotification.ts).
+  useTripNotification(order, shouldTrack, leg, riderAt, timezone);
   useEffect(() => {
     if (shouldTrack) void keepTracking(orderId);
   }, [shouldTrack, orderId]);
@@ -683,7 +728,9 @@ export default function Job() {
     branch && actions.includes('arrived_shop') && !order.arrived_at_shop && !arrivedHere;
   const primary: Action | null = arrivalDue
     ? 'arrived_shop'
-    : (PRIMARY_ACTIONS.find((a) => actions.includes(a)) ?? null);
+    : skipToDoor && actions.includes('verify_delivery_otp')
+      ? 'verify_delivery_otp'
+      : (PRIMARY_ACTIONS.find((a) => actions.includes(a)) ?? null);
   const secondary = actions.filter((a) => a !== primary && a !== 'arrived_shop');
   /** Arrived, and the branch has not pressed Dispatch yet. */
   const awaitingCode = branch && primary === 'verify_pickup_otp' && !order.pickup_code_ready;
@@ -730,45 +777,6 @@ export default function Job() {
    * shop can still press Dispatch on its own screen, and the job then arrives
    * here already collected.
    */
-  const products = order.products ?? [];
-  const unticked = products.filter((p, i) => !picked.has(tickKey(p, i)));
-  const allChecked = unticked.length === 0;
-
-  /** One tap to tell the shop exactly what is not in the bag. */
-  function reportMissing() {
-    const list = unticked.map((p) => `${p.name} x${p.quantity}`).join('; ');
-    Alert.alert(
-      'Tell the shop these are missing?',
-      unticked.map((p) => `• ${p.name} ×${p.quantity}`).join('\n'),
-      [
-        { text: 'Look again', style: 'cancel' },
-        {
-          text: 'Tell the shop',
-          onPress: () =>
-            void fire('report_issue', `item_missing: ${list}`).then(() =>
-              setBagNote(
-                'The shop has been told. Wait for them to hand it over and tick it, or for the office to change the order.'
-              )
-            ),
-        },
-      ]
-    );
-  }
-
-  /**
-   * Tick one item off.
-   *
-   * Never sent anywhere. It does hold Collect back until every line is ticked
-   * (see `allChecked`) - the owner's call for high-value stock - and the
-   * shop's own Dispatch stays the way round it.
-   */
-  function togglePicked(key: string) {
-    const next = new Set(picked);
-    if (next.has(key)) next.delete(key);
-    else next.add(key);
-    setPicked(next);
-    AsyncStorage.setItem(pickKey, JSON.stringify([...next])).catch(() => {});
-  }
 
   /** Applies whatever Odoo says came back, including any tracking instruction. */
   async function applyResult(res: ActionResult) {
@@ -817,6 +825,15 @@ export default function Job() {
     // Declining cannot be undone — the job goes to someone else and is never
     // offered back — so it too goes through the reason screen, whose "Never
     // mind" is the way out of a stray tap beside Accept.
+    if (action === 'confirm_return') {
+      const ok = await confirm({
+        title: 'Parcel back at the shop?',
+        message: 'This closes the job as returned. Confirm only once the shop has the parcel.',
+        okLabel: 'Confirm return',
+      });
+      if (!ok) return;
+    }
+
     if (action === 'return_to_shop' || action === 'report_issue' || action === 'decline') {
       setError(null);
       setOtpError(null);
@@ -937,10 +954,6 @@ export default function Job() {
         default:
           return;
       }
-      if (action === 'verify_pickup_otp' || action === 'verify_handover') {
-        setPicked(new Set());
-        AsyncStorage.removeItem(pickKey).catch(() => {});
-      }
       // Done with the door: a later job with this id must start fresh.
       if (action === 'verify_delivery_otp' || action === 'return_to_shop') markReached(false);
       // The panel has done its job. A wrong code keeps it open, showing the
@@ -980,6 +993,10 @@ export default function Job() {
           stage: photoStage,
           ref: photoRef(res.order ?? order),
           customerName: res.order?.customer_name || order.customer_name,
+          // For the thank-you screen after the delivery photos.
+          ...(photoStage === 'delivery'
+            ? { fee: order.rider_fee ?? null, deliveredAt: res.delivered_at ?? new Date().toISOString() }
+            : {}),
         });
       }
       if (res.status === 'released') {
@@ -1003,7 +1020,8 @@ export default function Job() {
       if (err instanceof ApiError && err.code === 'network' && isQueueable(action)) {
         // No signal: the step waits in the outbox and goes by itself later.
         // The banner under the job says so; nothing here is an error.
-        await enqueue(orderId, action, reason);
+        // A report keeps its words; a photo cannot wait, so it stays behind.
+        await enqueue(orderId, action, reason, action === 'report_issue' ? note : undefined);
         setCodeOpen(false);
       } else if (
         err instanceof ApiError &&
@@ -1060,6 +1078,7 @@ export default function Job() {
       const res = await api.reachedCustomer(orderId);
       markReached(true);
       setNotice(res.message ?? 'The customer has been sent their code on WhatsApp.');
+      setResendAt(serverNow() + (res.retry_after_seconds ?? RESEND_WAIT_S) * 1000);
       setOtp('');
       setCodeOpen(true);
     } catch (err) {
@@ -1074,6 +1093,39 @@ export default function Job() {
       }
     } finally {
       setBusy(false);
+    }
+  }
+
+  /**
+   * "Didn't get it? Resend code" in the customer's code panel. A new code
+   * voids the old one, so any digits typed are cleared.
+   */
+  async function resendCode() {
+    setOtpError(null);
+    setResending(true);
+    try {
+      const res = await api.resendCustomerCode(orderId);
+      setResendAt(serverNow() + (res.retry_after ?? RESEND_WAIT_S) * 1000);
+      const words = res.message || RESEND_REFUSED[res.reason ?? ''];
+      if (res.sent) {
+        setOtp('');
+        setNotice(res.message || 'A new code has been sent. The old one no longer works.');
+      } else if (res.reason === 'limit') {
+        // retry_after is 0 here, but asking again can only be refused.
+        setResendClosed(words ?? RESEND_REFUSED.limit);
+      } else {
+        setOtpError(words ?? RESEND_REFUSED.whatsapp_failed);
+      }
+      // The last of the five: say so now, rather than on a sixth press.
+      if (res.sent && res.limit && res.resends !== undefined && res.resends >= res.limit) {
+        setResendClosed(RESEND_REFUSED.limit);
+      }
+    } catch (err) {
+      setOtpError(
+        err instanceof ApiError ? err.message : 'Could not send a new code. Try again.'
+      );
+    } finally {
+      setResending(false);
     }
   }
 
@@ -1133,7 +1185,7 @@ export default function Job() {
    */
   const dial = (number: string) => {
     if (!number) return;
-    Linking.openURL(`tel:${number}`).catch(() => {});
+    Linking.openURL(`tel:${number}`).catch(() => setError('This phone cannot make calls.'));
   };
   const callCustomer = () => dial(order.customer_mobile);
   const callShop = () => dial(shopPhone(order.shop));
@@ -1194,22 +1246,39 @@ export default function Job() {
      */
     const reporting = reasonFor === 'report_issue';
     const note = reasonNote.trim();
-    // A decline never waits on a reason: the job goes to the next rider either way.
-    const canSend = declining || !!reasonPick;
+    // Every step waits for a reason: the office sees why, and a stray tap on
+    // "Decline job" cannot give a job away.
+    const canSend = !!reasonPick;
     const close = () => {
       setReasonFor(null);
       setReasonNote('');
       setReasonPick(null);
       setReportShot(null);
     };
-    const send = () => {
+    const send = async () => {
       const action = reasonFor;
       const code = reasonPick ?? '';
-      // The server keeps a report photo only for damage ("Problem photos",
-      // delivery 19.0.22.5.0); one taken before switching reason stays home.
-      const shot = code === 'damaged' ? reportShot : null;
+      // Giving a job away or taking a parcel back cannot be undone: ask once.
+      if (action === 'decline' || action === 'return_to_shop') {
+        const ok = await confirm(
+          action === 'decline'
+            ? {
+                title: 'Decline this job?',
+                message: 'It goes to the next rider at once and is not offered to you again.',
+                okLabel: 'Decline',
+              }
+            : {
+                title: 'Return the parcel to the shop?',
+                message: 'The delivery stops here. The shop is told and closes the return.',
+                okLabel: 'Return to shop',
+              }
+        );
+        if (!ok) return;
+      }
+      // The server keeps a report photo with any reason ("Problem photos",
+      // delivery 19.0.22.6.0).
       close();
-      if (action === 'report_issue') void fire(action, code || 'other', shot, note || undefined);
+      if (action === 'report_issue') void fire(action, code || 'other', reportShot, note || undefined);
       // The return and decline routes take one reason string, no note field.
       else void fire(action, code);
     };
@@ -1221,7 +1290,13 @@ export default function Job() {
         return;
       }
       const ref = order ? photoRef(order) : `order${orderId}`;
-      setReportShot({ uri: shot.uri, name: photoFileName(ref, new Date(), timezone) });
+      const takenAt = new Date(serverNow());
+      try {
+        // The company's zone, never the phone's: see `photoFileName`.
+        setReportShot({ uri: shot.uri, name: photoFileName(ref, takenAt, await shopTimeZone()) });
+      } catch (err) {
+        setError(err instanceof ApiError ? err.message : "Couldn't name the photo. Try again.");
+      }
     };
     return (
       <GlassScreen>
@@ -1245,15 +1320,20 @@ export default function Job() {
           </GlassText>
           <GlassText variant="body" tone="soft" style={{ marginTop: gspace.xs }}>
             {declining
-              ? 'It goes to the next rider at once, and is not offered to you again.'
+              ? 'Pick one. The office sees why.'
               : returning
                 ? 'The shop closes the return. This tells them what happened.'
                 : 'Pick one, then press Send. The office is told, and the next step starts by itself.'}
           </GlassText>
 
+          {/* Declining: which job this is, so the rider turns down the right one,
+              and that it cannot be undone. */}
+          {declining ? <DeclineSummary order={order} riderAt={riderAt} timezone={timezone} /> : null}
+
           <View style={{ marginTop: gspace.lg, gap: gspace.sm }} accessibilityRole="radiogroup">
             {reasons.map((r) => {
               const on = reasonPick === r.code;
+              const icon = declining ? DECLINE_ICON[r.code] : undefined;
               return (
                 <Pressable
                   key={r.code}
@@ -1284,6 +1364,14 @@ export default function Job() {
                       marginRight: gspace.md,
                     }}
                   />
+                  {icon ? (
+                    <GlassIcon
+                      name={icon}
+                      size={18}
+                      color={on ? glass.band : glass.inkSoft}
+                      style={{ marginRight: gspace.sm }}
+                    />
+                  ) : null}
                   <GlassText variant="bodyStrong" style={{ flex: 1 }}>
                     {r.label}
                   </GlassText>
@@ -1292,8 +1380,8 @@ export default function Job() {
             })}
           </View>
 
-          {/* A report carries the rider's words, and for damage a photo: the
-              server keeps a report photo only for "damaged" ("Problem photos"). */}
+          {/* A report carries the rider's words (500 characters on the server)
+              and, with any reason, a photo ("Problem photos", 19.0.22.6.0). */}
           {reporting ? (
             <View style={{ marginTop: gspace.xl }}>
               <Field
@@ -1301,9 +1389,10 @@ export default function Job() {
                 placeholder="A short line is enough — the office reads these"
                 value={reasonNote}
                 onChangeText={setReasonNote}
+                maxLength={500}
                 multiline
               />
-              {reasonPick !== 'damaged' ? null : reportShot ? (
+              {reportShot ? (
                 <View style={{ flexDirection: 'row', alignItems: 'center' }}>
                   <Image
                     source={{ uri: reportShot.uri }}
@@ -1346,23 +1435,53 @@ export default function Job() {
                     tone="orange"
                     style={{ marginLeft: gspace.sm }}
                   >
-                    Add a photo of the damage (optional)
+                    {reasonPick === 'damaged' ? 'Add a photo of the damage (optional)' : 'Add a photo (optional)'}
                   </GlassText>
                 </Pressable>
               )}
             </View>
           ) : null}
 
+          {declining ? (
+            <View
+              style={{
+                flexDirection: 'row',
+                alignItems: 'flex-start',
+                marginTop: gspace.xl,
+                padding: gspace.md,
+                borderRadius: gradius.card,
+                backgroundColor: glass.redSoft,
+              }}
+            >
+              <GlassIcon name="alert" size={18} color={glass.red} />
+              <GlassText variant="body" style={{ flex: 1, marginLeft: gspace.sm, color: glass.red }}>
+                The job goes to the next rider at once. It will not be offered to you again.
+              </GlassText>
+            </View>
+          ) : null}
+
           <GlassButton
             title={declining ? 'Decline job' : returning ? 'Return to shop' : 'Send report'}
             kind={declining || returning ? 'danger' : 'green'}
-            icon={reporting ? 'nav' : undefined}
-            onPress={send}
+            icon={reporting ? 'nav' : declining ? 'close' : undefined}
+            onPress={() => void send()}
             disabled={!canSend}
             loading={busy}
             style={{ marginTop: gspace.xl }}
           />
-          <GhostLink label="Never mind" disabled={busy} onPress={close} />
+          {declining ? (
+            // The safe way out as a real button, not small grey words.
+            <GlassButton
+              title="Keep this job"
+              kind="ghost"
+              icon="check"
+              onPress={close}
+              disabled={busy}
+              style={{ marginTop: gspace.md }}
+            />
+          ) : (
+            <GhostLink label="Never mind" disabled={busy} onPress={close} />
+          )}
         </ScrollView>
       </GlassScreen>
     );
@@ -1429,8 +1548,9 @@ export default function Job() {
           <GlassText variant="title" tone="white" style={{ flex: 1, textAlign: 'center' }}>
             Handover
           </GlassText>
-          <View style={{ minWidth: 40, alignItems: 'flex-end' }}>
+          <View style={{ minWidth: 40, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: gspace.sm }}>
             <GlassPill label={band.label} bg={band.bg} fg={band.fg} />
+            <SosShield orderId={order.delivery_order_id} orderRef={photoRef(order)} />
           </View>
         </View>
 
@@ -1587,7 +1707,15 @@ export default function Job() {
               title={ACTION_LABEL.cancel_handover}
               icon="bike"
               loading={busy}
-              onPress={() => void fire('cancel_handover')}
+              onPress={async () => {
+                const ok = await confirm({
+                  title: 'Cancel the handover?',
+                  message: 'The other rider is not coming. You carry on with the delivery yourself.',
+                  okLabel: 'Cancel handover',
+                  cancelLabel: 'Keep waiting',
+                });
+                if (ok) void fire('cancel_handover');
+              }}
             />
           ) : null}
           <StrongAction
@@ -1676,6 +1804,7 @@ export default function Job() {
               {order.job_code ? ` · ${order.job_code}` : ''}
             </GlassText>
             {order.delivery_type ? <GlassPill label={order.delivery_type} tone="soft" /> : null}
+            {stopLabel(order) ? <GlassPill label={stopLabel(order)!} tone="soft" /> : null}
           </View>
 
           {/* What a rider weighs an offer on, in one glance: the money, the
@@ -1826,6 +1955,8 @@ export default function Job() {
             </GlassText>
           ) : null}
           {pending ? <PendingLine entry={pending} /> : null}
+          {/* Without background location the near-customer message cannot fire. */}
+          {shouldTrack ? <LocationAlwaysBanner /> : null}
 
           {order.offer_expires_at ? (
             <View style={{ alignItems: 'center', marginTop: gspace.xxl }}>
@@ -1880,8 +2011,9 @@ export default function Job() {
           </GlassText>
           {/* The same state the card badge shows, from the same table, so the
               header and the list cannot say different things about one job. */}
-          <View style={{ minWidth: 40, alignItems: 'flex-end' }}>
+          <View style={{ minWidth: 40, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: gspace.sm }}>
             <GlassPill label={band.label} bg={band.bg} fg={band.fg} />
+            <SosShield orderId={order.delivery_order_id} orderRef={photoRef(order)} />
           </View>
         </View>
 
@@ -1947,18 +2079,22 @@ export default function Job() {
                 title="Navigate"
                 kind="dark"
                 icon="nav"
-                onPress={() => navigateTo(order, riderAt)}
+                onPress={() => navigateTo(order, riderAt, refreshRun)}
                 style={{ flex: 1 }}
               />
-              <GlassButton
-                title="Call"
-                kind="ghost"
-                icon="phone"
-                onPress={callCustomer}
-                style={{ flex: 1 }}
-              />
+              {order.customer_mobile ? (
+                <GlassButton
+                  title="Call"
+                  kind="ghost"
+                  icon="phone"
+                  onPress={callCustomer}
+                  style={{ flex: 1 }}
+                />
+              ) : null}
               {canMessageCustomer ? <WhatsAppSquare onPress={messageCustomer} /> : null}
             </View>
+            {/* One-tap messages at the door ("I'm at the gate"). */}
+            {canMessageCustomer ? <QuickReplies order={order} stage="door" /> : null}
           </GlassCard>
 
           {/* A tinted panel rather than centred body text. This is the one
@@ -2025,6 +2161,10 @@ export default function Job() {
             submitKind="green"
             onSubmit={() => run('verify_delivery_otp')}
             onClose={() => setCodeOpen(false)}
+            onResend={() => void resendCode()}
+            resendAt={resendAt}
+            resending={resending}
+            resendClosed={resendClosed}
           />
 
           {error ? (
@@ -2033,11 +2173,14 @@ export default function Job() {
             </GlassText>
           ) : null}
           {pending ? <PendingLine entry={pending} /> : null}
+          {/* Without background location the near-customer message cannot fire. */}
+          {shouldTrack ? <LocationAlwaysBanner /> : null}
 
           {reportedNote ? <ArrivalBanner text={reportedNote} /> : null}
           {order.problem ? (
             <ProblemBanner problem={order.problem} drop={order.drop_point ?? null} />
           ) : null}
+          {order.reports?.length ? <ReportsCard reports={order.reports} timezone={timezone} /> : null}
           {dropNote ? <ArrivalBanner text={dropNote} /> : null}
           {order.near_customer_auto && !reached ? (
             <ArrivalBanner
@@ -2149,6 +2292,8 @@ export default function Job() {
             />
           ) : null}
           <GlassPill label={band.label} bg={band.bg} fg={band.fg} />
+          {/* Emergency help, in the same corner as on Home (SosSheet.tsx). */}
+          <SosShield orderId={order.delivery_order_id} orderRef={photoRef(order)} />
         </View>
       </View>
 
@@ -2206,16 +2351,23 @@ export default function Job() {
               {toCustomer ? <DeliveryNote note={order.delivery_note} /> : null}
             </View>
             <View style={{ flexDirection: 'row', gap: gspace.sm }}>
-              <RoundButton icon="phone" onPress={toCustomer ? callCustomer : callShop} />
+              {/* Before pickup the shop, after it the customer; like WhatsApp,
+                  drawn only when there is a number to reach. */}
+              {(toCustomer ? order.customer_mobile : shopPhone(order.shop)) ? (
+                <RoundButton icon="phone" onPress={toCustomer ? callCustomer : callShop} />
+              ) : null}
               {(toCustomer ? canMessageCustomer : canMessageShop) ? (
                 <RoundButton
                   icon="whatsapp"
                   onPress={toCustomer ? messageCustomer : messageShop}
                 />
               ) : null}
-              <RoundButton icon="nav" filled onPress={() => navigateTo(order, riderAt)} />
+              <RoundButton icon="nav" filled onPress={() => navigateTo(order, riderAt, refreshRun)} />
             </View>
           </View>
+
+          {/* One-tap messages on the way to the customer ("I'm on my way"). */}
+          {toCustomer && canMessageCustomer ? <QuickReplies order={order} stage="way" /> : null}
 
           {/* The other end of the job, as a plain line: where the parcel goes
               next, or where it came from. */}
@@ -2260,7 +2412,11 @@ export default function Job() {
               value={cod ? money(order.amount_to_collect, order.currency) : 'Paid'}
               tone={cod ? glass.red : glass.green}
             />
-            <Tile label="Items" value={String(order.products?.length ?? 0)} />
+            {/* Units, as the offer counts them: one line of ×2 is 2 items. */}
+            <Tile
+              label="Items"
+              value={String((order.products ?? []).reduce((n, p) => n + (Number(p.quantity) || 1), 0))}
+            />
             {/* Counting down rather than a clock reading — the same label the
                 cards carry, so one job cannot read two ways. */}
             <Tile
@@ -2273,47 +2429,17 @@ export default function Job() {
 
           {order.products?.length ? (
             <View style={{ marginTop: gspace.lg }}>
-              {/* At the counter this manifest becomes a checklist, so the rider
-                  can tick each line against what the shop is actually handing
-                  over. Everywhere else in the job it stays the plain list it
-                  was — there is nothing to check off once the bag is aboard. */}
+              {/* The shop packs and checks the bag, the way Zomato and Blinkit
+                  do it; the rider does not tick items and is not blocked by
+                  them. This is the manifest, shown so the rider knows what the
+                  bag should hold — anything wrong goes through Report a problem. */}
               {collecting ? (
-                <View
-                  style={{
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    marginBottom: gspace.xs,
-                  }}
-                >
-                  <GlassText variant="label" tone="soft" upper>
-                    Check the bag
-                  </GlassText>
-                  <GlassText variant="caption" tone="soft" nums>
-                    {products.length - unticked.length} of {products.length}
-                  </GlassText>
-                </View>
-              ) : null}
-              {collecting ? (
-                <GlassText
-                  variant="caption"
-                  tone={allChecked ? 'green' : 'orange'}
-                  style={{ marginBottom: gspace.xs }}
-                >
-                  {allChecked
-                    ? `All ${products.length} checked - ready to collect.`
-                    : 'Tick each item once it is in the bag.'}
+                <GlassText variant="label" tone="soft" upper style={{ marginBottom: gspace.xs }}>
+                  In the bag
                 </GlassText>
               ) : null}
-
               {order.products.map((p, i) => (
-                <GlassCheckRow
-                  key={`${p.name}-${i}`}
-                  name={p.name}
-                  quantity={p.quantity}
-                  checked={collecting && picked.has(tickKey(p, i))}
-                  onToggle={collecting ? () => togglePicked(tickKey(p, i)) : undefined}
-                />
+                <GlassCheckRow key={`${p.name}-${i}`} name={p.name} quantity={p.quantity} />
               ))}
             </View>
           ) : null}
@@ -2323,18 +2449,13 @@ export default function Job() {
           {order.problem ? (
             <ProblemBanner problem={order.problem} drop={order.drop_point ?? null} />
           ) : null}
+          {order.reports?.length ? <ReportsCard reports={order.reports} timezone={timezone} /> : null}
           {dropNote ? <ArrivalBanner text={dropNote} /> : null}
 
           {prompt?.kind === 'shop' && arrivalDue ? (
             <ArrivalBanner text={`You're at the branch. Tap "${ACTION_LABEL.arrived_shop}".`} />
           ) : prompt?.kind === 'shop' && !branch ? (
-            <ArrivalBanner
-              text={
-                allChecked
-                  ? "You're at the shop. Ask the counter for the pickup code."
-                  : "You're at the shop. Check the bag, then enter the pickup code."
-              }
-            />
+            <ArrivalBanner text="You're at the shop. Ask the counter for the pickup code." />
           ) : prompt?.kind === 'near' ? (
             <ArrivalBanner
               text={
@@ -2364,9 +2485,7 @@ export default function Job() {
             busy={busy}
             canSubmit={otp.length === 6}
             submitLabel={ACTION_LABEL.verify_pickup_otp}
-            onSubmit={() =>
-              allChecked ? run('verify_pickup_otp') : setOtpError('Tick every item in the bag first.')
-            }
+            onSubmit={() => run('verify_pickup_otp')}
             onClose={() => setCodeOpen(false)}
             // No resend: the pickup code goes to the shop's WhatsApp when the
             // job has a shop, and to the rider's only when it has none.
@@ -2380,6 +2499,8 @@ export default function Job() {
             </GlassText>
           ) : null}
           {pending ? <PendingLine entry={pending} /> : null}
+          {/* Without background location the near-customer message cannot fire. */}
+          {shouldTrack ? <LocationAlwaysBanner /> : null}
 
           {/* At the counter in branch mode: staff check the rider is there,
               press Dispatch, and a code pops up on their screen. */}
@@ -2434,23 +2555,26 @@ export default function Job() {
           {awaitingCode ? (
             <StrongAction label="Remind the counter" icon="bell" onPress={remindCounter} disabled={busy} />
           ) : null}
-          {collecting && !allChecked && actions.includes('report_issue') ? (
-            <StrongAction
-              label="Item missing? Tell the shop"
-              icon="box"
-              onPress={reportMissing}
-              disabled={busy}
-            />
-          ) : null}
-          {collecting && bagNote ? (
-            <GlassText variant="body" tone="soft" style={{ marginTop: gspace.sm, textAlign: 'center' }}>
-              {bagNote}
-            </GlassText>
-          ) : null}
 
           <TroubleRow
             actions={secondary}
-            onAction={(a) => run(a)}
+            // "Collect – enter pickup code" before "I'm at the counter" opens the
+            // code panel; sent as an action it went with no code and was refused.
+            onAction={(a) => {
+              if (a === 'verify_pickup_otp') {
+                setArrivedHere(true);
+                setOtp('');
+                setOtpError(null);
+                setCodeOpen(true);
+              } else if (a === 'verify_delivery_otp') {
+                // The door screen, where the rider sends or types the customer's code.
+                setSkipToDoor(true);
+                setOtp('');
+                setOtpError(null);
+              } else {
+                void run(a);
+              }
+            }}
             onCallSupport={supportNumber ? callSupport : undefined}
             disabled={busy}
           />
@@ -2493,6 +2617,124 @@ function ProblemBanner({ problem, drop }: { problem: JobProblem; drop: DropPoint
     return null;
   }
   return <ArrivalBanner text={text} />;
+}
+
+/**
+ * Every "Report a problem" on this job, newest first: the reason, the rider's
+ * own words and photos, and whether the shop has pressed Done on it yet. The
+ * server keeps them all (Rider_App_Report_Notes.pdf), oldest first.
+ */
+function ReportsCard({ reports, timezone }: { reports: JobReport[]; timezone?: string }) {
+  const newestFirst = [...reports].reverse();
+  return (
+    <View
+      style={{
+        marginTop: gspace.lg,
+        paddingVertical: gspace.md,
+        paddingHorizontal: gspace.lg,
+        borderRadius: gradius.card,
+        backgroundColor: glass.fillStrong,
+        borderWidth: 1,
+        borderColor: glass.border,
+        gap: gspace.md,
+      }}
+    >
+      <GlassText variant="bodyStrong">Your reports</GlassText>
+      {newestFirst.map((r) => {
+        const label =
+          r.reason_label || DELIVERY_REASONS.find((d) => d.code === r.reason)?.label || r.reason;
+        return (
+          <View key={r.id}>
+            <GlassText variant="bodyStrong">
+              {[timeOnly(r.at, timezone), label].filter(Boolean).join(' · ')}
+            </GlassText>
+            {r.note ? (
+              <GlassText variant="body" style={{ marginTop: 2 }}>
+                “{r.note}”
+              </GlassText>
+            ) : null}
+            {r.photos?.length ? (
+              <View style={{ flexDirection: 'row', gap: gspace.sm, marginTop: gspace.sm }}>
+                {r.photos.map((p) => (
+                  <ServerPhoto key={p.id} path={p.url} />
+                ))}
+              </View>
+            ) : null}
+            <GlassText
+              variant="body"
+              tone={r.handled_at ? 'green' : 'soft'}
+              style={{ marginTop: 2 }}
+            >
+              {r.handled_at ? 'Seen by the shop' : 'Waiting for the shop'}
+            </GlassText>
+          </View>
+        );
+      })}
+    </View>
+  );
+}
+
+const DECLINE_ICON: Record<string, GlassIconName> = {
+  'too far': 'compass',
+  busy: 'clock',
+  'vehicle problem': 'bike',
+  other: 'alert',
+};
+
+/** The job being turned down: shop to customer area, distance, items, pay, time left. */
+function DeclineSummary({
+  order,
+  riderAt,
+  timezone,
+}: {
+  order: DeliveryOrder;
+  riderAt: { latitude: number; longitude: number } | null;
+  timezone?: string;
+}) {
+  const shop = shopInfo(order.shop);
+  const shopAt = coords(shop?.latitude, shop?.longitude);
+  // Units, as the offer screen counts them ("Items 2" for one line of two).
+  const units = (order.products ?? []).reduce((n, p) => n + (Number(p.quantity) || 0), 0);
+  const facts = [
+    riderAt && shopAt ? `${distanceText(metresBetween(riderAt, shopAt))} to the shop` : null,
+    units ? `${units} item${units === 1 ? '' : 's'}` : null,
+    order.promised_by ? `Promised ${timeOnly(order.promised_by, timezone)}` : null,
+  ].filter(Boolean);
+  return (
+    <View
+      style={{
+        marginTop: gspace.lg,
+        padding: gspace.lg,
+        borderRadius: gradius.card,
+        backgroundColor: glass.fillStrong,
+        borderWidth: 1,
+        borderColor: glass.border,
+      }}
+    >
+      <GlassText variant="label" tone="faint" upper>
+        {order.delivery_order_name}
+      </GlassText>
+      <GlassText variant="subtitle" style={{ marginTop: 2 }} numberOfLines={2}>
+        {shopName(order.shop)} → {order.customer_name}
+      </GlassText>
+      {order.customer_area ? (
+        <GlassText variant="caption" tone="soft">
+          {order.customer_area}
+        </GlassText>
+      ) : null}
+      {facts.length ? (
+        <GlassText variant="body" tone="soft" style={{ marginTop: gspace.sm }}>
+          {facts.join(' · ')}
+        </GlassText>
+      ) : null}
+      {order.rider_fee ? <FeeLine label="You would earn" fee={order.rider_fee} /> : null}
+      {order.offer_expires_at ? (
+        <View style={{ marginTop: gspace.md }}>
+          <OfferCountdown expiresAt={order.offer_expires_at} onExpired={() => {}} />
+        </View>
+      ) : null}
+    </View>
+  );
 }
 
 function ArrivalBanner({ text }: { text: string }) {

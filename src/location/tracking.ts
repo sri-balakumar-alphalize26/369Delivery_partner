@@ -2,6 +2,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import Constants, { ExecutionEnvironment } from 'expo-constants';
 import * as Location from 'expo-location';
 import * as TaskManager from 'expo-task-manager';
+import { clearTrip, tripMoved } from '../push/tripNotification';
 import { AppState, Platform } from 'react-native';
 import { api } from '../api/endpoints';
 import { hasFeature } from '../api/features';
@@ -217,6 +218,8 @@ async function send(fix: Location.LocationObject): Promise<void> {
     });
 
     if (res.stop) return await stopTracking();
+    // The pinned job card's distance, kept fresh with the screen off.
+    void tripMoved({ latitude: fix.coords.latitude, longitude: fix.coords.longitude });
     if (res.poll_after_seconds && res.poll_after_seconds > 0) {
       nextDueAt = now + res.poll_after_seconds * 1000;
     }
@@ -338,6 +341,8 @@ async function begin(orderId: number): Promise<void> {
 
 export async function stopTracking(): Promise<void> {
   activeOrderId = null;
+  // The job is over: the pinned "current job" card goes with it.
+  void clearTrip();
   trackRestored = true;
   notifyTracking();
   await AsyncStorage.removeItem(TRACK_KEY).catch(() => {});
