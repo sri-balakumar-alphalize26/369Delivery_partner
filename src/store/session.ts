@@ -3,6 +3,7 @@ import { api } from '../api/endpoints';
 import { getServer, saveServer } from '../api/config';
 import { setFeatures } from '../api/features';
 import { setSessionExpiredHandler } from '../api/rest/client';
+import { kindLabel } from '../lib/riderKind';
 import {
   ApiError,
   AutoNearCustomer,
@@ -11,6 +12,7 @@ import {
   DutyResult,
   FleetInfo,
   Rider,
+  RiderKind,
   ServerConfig,
   Vehicle,
 } from '../api/types';
@@ -59,12 +61,13 @@ interface SessionState {
 
   restore: () => Promise<void>;
   /** Saves the config and asks Odoo to send `cfg.login` a sign-in code on WhatsApp. */
-  sendCode: (cfg: ServerConfig) => Promise<CodeRequestResult>;
+  sendCode: (cfg: ServerConfig, kind: RiderKind) => Promise<CodeRequestResult>;
   /**
    * Signs in with the code from WhatsApp and verifies it with `me`. Demo mode
-   * takes no code. Throws if the server rejects it.
+   * takes no code. Throws if the server rejects it, or `wrong_kind` when the
+   * office has the number down as the other kind of rider.
    */
-  connect: (cfg: ServerConfig, code: string) => Promise<Rider>;
+  connect: (cfg: ServerConfig, code: string, kind: RiderKind) => Promise<Rider>;
   /** Folds a duty response back in, so no round-trip to `me` is needed. */
   applyDuty: (result: DutyResult) => void;
   /** The vehicle in hand after a mid-shift swap. */
@@ -126,11 +129,11 @@ export const useSession = create<SessionState>((set) => ({
     }
   },
 
-  async sendCode(cfg) {
+  async sendCode(cfg, kind) {
     const server = await saveServer(cfg);
     set({ server });
     try {
-      return await api.requestCode(server.login);
+      return await api.requestCode(server.login, kind);
     } catch (err) {
       console.warn(
         '[login] code request failed:',
@@ -142,14 +145,27 @@ export const useSession = create<SessionState>((set) => ({
     }
   },
 
-  async connect(cfg, code) {
+  async connect(cfg, code, kind) {
     const server = await saveServer(cfg);
     set({ server });
 
     try {
-      if (!server.useMock) await api.verifyCode(server.login, code);
+      if (!server.useMock) await api.verifyCode(server.login, code, kind);
       const { rider, timezone, currency, fleet, features, third_party_enabled, auto_near_customer } =
         await api.me();
+      // The server does not check the choice yet, so the app does: signed in as
+      // the wrong kind, the session is ended before any screen shows.
+      if ((rider.kind || 'own') !== kind) {
+        await api.logout();
+        const registered: RiderKind = rider.kind === 'third_party' ? 'third_party' : 'own';
+        const name = kindLabel(registered);
+        throw new ApiError(
+          'wrong_kind',
+          `This number is registered as ${registered === 'own' ? 'an' : 'a'} ${name}. ` +
+            `Choose ${name} and sign in again.`,
+          { registeredKind: registered }
+        );
+      }
       set({
         rider,
         timezone,
@@ -245,6 +261,21 @@ export const useSession = create<SessionState>((set) => ({
     });
   },
 }));
+
+/**
+ * The company's time zone, for naming photos: `/auth/me`'s `timezone`. When
+ * it is not loaded yet, `me` is asked again rather than the phone's zone used.
+ * Throws when the server cannot be reached - the photo could not go up then
+ * anyway.
+ */
+export async function shopTimeZone(): Promise<string> {
+  const now = useSession.getState().timezone;
+  if (now) return now;
+  await useSession.getState().refresh();
+  const after = useSession.getState().timezone;
+  if (after) return after;
+  throw new ApiError('network', "Couldn't get the shop's time zone from the server. Try again.");
+}
 
 // A call the server refused because the session is gone ends the session here
 // too, so the Gate sends the rider to Connect instead of leaving them on a

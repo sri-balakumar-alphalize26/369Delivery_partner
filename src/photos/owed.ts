@@ -1,4 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Money } from '../api/types';
 
 /**
  * Photos a job still owes, after its pickup code or the customer's code.
@@ -18,6 +19,8 @@ export interface Shot {
   uri: string;
   /** `S00042_051026_173915.jpg` - see `photoFileName`. */
   name: string;
+  /** When it was taken, server clock (ms). The name is made again from it at send time. */
+  takenAt?: number;
   /** Up on the server; a retry after a dropped signal skips it. */
   sent: boolean;
 }
@@ -28,6 +31,10 @@ export interface OwedPhotos {
   /** The order number for the file names. A delivered job leaves /orders, so it is kept here. */
   ref: string;
   customerName: string;
+  /** A Delivery Partner's pay for the trip, for the thank-you screen. Null for an office rider. */
+  fee?: Money | null;
+  /** When the server marked it delivered, UTC. Delivery stage only. */
+  deliveredAt?: string;
   shots: Shot[];
 }
 

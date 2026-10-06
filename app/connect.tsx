@@ -14,7 +14,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ENV_DEFAULTS, SERVER_LOCKED } from '../src/api/config';
 import { MOCK_DELIVERY_OTP, MOCK_PICKUP_OTP } from '../src/api/mock/fixtures';
 import { listDatabases, normalisePhone } from '../src/api/rest/client';
-import { ApiError } from '../src/api/types';
+import { ApiError, RiderKind } from '../src/api/types';
+import { getRiderKind, RIDER_KINDS, setRiderKind } from '../src/lib/riderKind';
 import { useSession } from '../src/store/session';
 import { glass, gradius, gspace, poppins } from '../src/theme/glass';
 import { Field } from '../src/ui/Field';
@@ -39,6 +40,12 @@ import { OtpBoxes } from '../src/ui/OtpBoxes';
  * a whole address is enough to load the server's databases. The rider picks
  * one from a popup — nothing is picked for them — and only a server that
  * hides its list makes them type the name.
+ *
+ * Before anything else the rider says which kind they are: an office rider
+ * (staff, on salary) or a Delivery Partner (paid per trip). The office has
+ * already set that on the rider record; signing in as the other kind stops
+ * with a message saying which to pick. The choice is remembered on the phone,
+ * and in demo mode it decides which kind the demo rider is.
  *
  * Sign-in is the whole point of the screen, so it leads. Demo mode is a link
  * under the card, and the support number and route key — settings, not
@@ -102,6 +109,17 @@ export default function Connect() {
   const [orsKey, setOrsKey] = useState('');
   const [useMock, setUseMock] = useState(true);
   const [moreOpen, setMoreOpen] = useState(false);
+
+  /** Office rider or Delivery Partner. Null until picked, the first time. */
+  const [kind, setKind] = useState<RiderKind | null>(null);
+  useEffect(() => {
+    getRiderKind().then((k) => setKind((cur) => cur ?? k));
+  }, []);
+  function chooseKind(k: RiderKind) {
+    setKind(k);
+    setRiderKind(k);
+    setError(null);
+  }
 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -197,6 +215,7 @@ export default function Connect() {
   // The server answers an unknown number the same as a known one, so a missing
   // or half-typed number has to be caught here or the rider waits for nothing.
   function missingField(): string | null {
+    if (!kind) return 'Choose Office rider or Delivery Partner first.';
     if (useMock) return null;
     if (locked) {
       // A release built before its server was decided. Nothing the rider types
@@ -235,7 +254,7 @@ export default function Connect() {
     }
     setBusy(true);
     try {
-      const res = await sendCode(config());
+      const res = await sendCode(config(), kind ?? 'own');
       setSentFor(target);
       setCode('');
       setNotice(res.message ?? 'A code has been sent to your WhatsApp.');
@@ -261,7 +280,7 @@ export default function Connect() {
     }
     setBusy(true);
     try {
-      await connect(config(), code);
+      await connect(config(), code, kind ?? 'own');
       router.replace('/');
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'Could not sign in. Try again.');
@@ -350,6 +369,8 @@ export default function Connect() {
 
             {/* ── Sign in / demo ────────────────────────────────────── */}
             <GlassCard style={{ marginTop: gspace.xxl }} padding={gspace.xl}>
+              <RolePicker value={kind} onChoose={chooseKind} />
+
               {useMock ? (
                 <>
                   <View style={{ flexDirection: 'row', alignItems: 'center' }}>
@@ -805,6 +826,75 @@ function DbPicker({
         </Pressable>
       </Pressable>
     </Modal>
+  );
+}
+
+/**
+ * The two kinds of rider, side by side. Picking one is required before a
+ * code can be sent; the last choice comes back on the next sign-in.
+ */
+function RolePicker({
+  value,
+  onChoose,
+}: {
+  value: RiderKind | null;
+  onChoose: (kind: RiderKind) => void;
+}) {
+  return (
+    <View style={{ marginBottom: gspace.xl }}>
+      <GlassText variant="label" tone="soft" upper style={{ marginBottom: gspace.sm }}>
+        I am signing in as
+      </GlassText>
+      <View accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: gspace.md }}>
+        {RIDER_KINDS.map((k) => {
+          const selected = value === k.key;
+          return (
+            <Pressable
+              key={k.key}
+              onPress={() => onChoose(k.key)}
+              accessibilityRole="radio"
+              accessibilityState={{ checked: selected }}
+              accessibilityLabel={`${k.label}. ${k.detail}`}
+              style={({ pressed }) => ({
+                flex: 1,
+                minHeight: 104,
+                borderRadius: gradius.chip,
+                borderWidth: selected ? 2 : 1,
+                borderColor: selected ? glass.orange : glass.border,
+                backgroundColor: selected ? glass.orangeSoft : glass.fillStrong,
+                padding: gspace.md,
+                opacity: pressed ? 0.7 : 1,
+              })}
+            >
+              <View
+                style={{
+                  flexDirection: 'row',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                }}
+              >
+                <GlassIcon
+                  name={k.key === 'own' ? 'store' : 'bike'}
+                  size={22}
+                  color={selected ? glass.orange : glass.inkSoft}
+                />
+                <GlassIcon
+                  name={selected ? 'checked' : 'unchecked'}
+                  size={18}
+                  color={selected ? glass.orange : glass.inkFaint}
+                />
+              </View>
+              <GlassText variant="bodyStrong" style={{ marginTop: gspace.sm }}>
+                {k.label}
+              </GlassText>
+              <GlassText variant="caption" tone="soft" style={{ marginTop: 2 }}>
+                {k.detail}
+              </GlassText>
+            </Pressable>
+          );
+        })}
+      </View>
+    </View>
   );
 }
 

@@ -1,7 +1,7 @@
 import { Platform } from 'react-native';
 import { getServer } from '../config';
 import { syncClock } from '../../lib/clock';
-import { Action, ApiError, ApiErrorCode, DeliveryStatus } from '../types';
+import { Action, ApiError, ApiErrorCode, DeliveryStatus, RiderKind } from '../types';
 import { clearTokens, getTokens, saveTokens, Tokens } from './auth';
 
 /**
@@ -61,6 +61,7 @@ const KNOWN_CODES: ApiErrorCode[] = [
   'too_many_photos',
   'wait',
   'handover_waiting',
+  'wrong_kind',
 ];
 
 function toCode(raw: unknown): ApiErrorCode {
@@ -152,6 +153,21 @@ interface Raw {
   payload: Envelope;
 }
 
+/**
+ * What an <Image> needs to load a server photo such as `/api/delivery/proof/4831`:
+ * the full address and the database and token every call carries. A local or
+ * full address (the practice server) goes as it is.
+ */
+export async function imageSource(path: string): Promise<{ uri: string; headers?: Record<string, string> }> {
+  if (!path.startsWith('/')) return { uri: path };
+  const { url, db } = await getServer();
+  const tokens = await getTokens();
+  const headers: Record<string, string> = {};
+  if (db) headers['X-Odoo-Database'] = db;
+  if (tokens?.access) headers.Authorization = `Bearer ${tokens.access}`;
+  return { uri: `${url}${path}`, headers };
+}
+
 /** One HTTP round trip. Throws only for transport faults; the caller reads the envelope. */
 async function send(path: string, opts: RequestOptions, token: string | null, key: string): Promise<Raw> {
   const { url, db } = await getServer();
@@ -223,8 +239,13 @@ function refusal({ status, payload }: Raw): ApiError {
       allowedActions:
         payload.allowed_actions === undefined ? undefined : normaliseActions(payload.allowed_actions),
       waitUntil: typeof payload.wait_until === 'string' ? payload.wait_until : undefined,
+      registeredKind: isKind(payload.registered_kind) ? payload.registered_kind : undefined,
     }
   );
+}
+
+function isKind(raw: unknown): raw is RiderKind {
+  return raw === 'own' || raw === 'third_party';
 }
 
 function isUnauthorized({ status, payload }: Raw): boolean {
@@ -354,12 +375,16 @@ function mobileOf(phone: string): string {
  * Ask Odoo to send a sign-in code on WhatsApp. The answer is the same for any
  * number, and a code still live (10 minutes) is not sent again.
  */
-export async function requestCode(phone: string): Promise<{ message?: string; retry_after_seconds?: number }> {
+export async function requestCode(
+  phone: string,
+  kind?: RiderKind
+): Promise<{ message?: string; retry_after_seconds?: number }> {
   const mobile = mobileOf(phone);
   console.log(`[login] asking for a sign-in code for ${mobile}`);
   const r = await request<Envelope>('/api/delivery/auth/request-code', {
     method: 'POST',
-    body: { mobile },
+    // `kind` lets the server refuse before any code goes out; an older one ignores it.
+    body: kind ? { mobile, kind } : { mobile },
     anonymous: true,
   });
   return {
@@ -370,14 +395,14 @@ export async function requestCode(phone: string): Promise<{ message?: string; re
 }
 
 /** Trade the WhatsApp code for the rider's token, and keep it. */
-export async function verifyCode(phone: string, code: string): Promise<void> {
+export async function verifyCode(phone: string, code: string, kind?: RiderKind): Promise<void> {
   const mobile = mobileOf(phone);
   const started = Date.now();
   let r: Envelope;
   try {
     r = await request<Envelope>('/api/delivery/auth/verify-code', {
       method: 'POST',
-      body: { mobile, code: code.trim(), device: deviceName() },
+      body: { mobile, code: code.trim(), device: deviceName(), ...(kind ? { kind } : {}) },
       anonymous: true,
     });
   } catch (err) {

@@ -5,10 +5,12 @@ import {
   DeliveryOrder,
   DeliveryStatus,
   DutyResult,
+  HeadingResult,
   HistoryResponse,
   Identity,
   OrdersResponse,
   PastJob,
+  ResendResult,
 } from '../types';
 import { logout, normaliseActions, request, requestCode, verifyCode } from './client';
 
@@ -97,8 +99,8 @@ async function step(
 }
 
 export const restAdapter: ApiAdapter = {
-  requestCode: (phone) => requestCode(phone),
-  verifyCode: (phone, code) => verifyCode(phone, code),
+  requestCode: (phone, kind) => requestCode(phone, kind),
+  verifyCode: (phone, code, kind) => verifyCode(phone, code, kind),
   logout: () => logout(),
 
   // The first call after signing in, and on every launch: "is the token still
@@ -185,7 +187,14 @@ export const restAdapter: ApiAdapter = {
     }>(`/api/delivery/history?limit=${limit}`);
     const rows = r.history ?? r.orders ?? [];
     const out: HistoryResponse = {
-      jobs: rows.map((row) => ({ ...fixOrder(row), finished_at: row.finished_at })),
+      // History rows name the state `status` ("delivered", "returned"), not
+      // `delivery_status`; without it every past job read "NO JOBS".
+      jobs: rows.map((row) => ({
+        ...fixOrder(row),
+        delivery_status:
+          row.delivery_status ?? (row as unknown as { status: PastJob['delivery_status'] }).status,
+        finished_at: row.finished_at,
+      })),
       timezone: r.timezone,
       earnings: r.earnings,
     };
@@ -246,6 +255,44 @@ export const restAdapter: ApiAdapter = {
   reachedCustomer: (id, key) =>
     step('/api/delivery/arrived', { delivery_order_id: id, point: 'customer' }, key),
 
+  /**
+   * Best effort, so never thrown: an older server answers 404, a parcel not on
+   * the road 409 `wrong_state`, and either way the server falls back to the
+   * nearest drop. Not through the outbox for the same reason.
+   */
+  async heading(id) {
+    try {
+      return await request<HeadingResult>('/api/delivery/heading', {
+        method: 'POST',
+        body: { delivery_order_id: id },
+      });
+    } catch {
+      return { success: false };
+    }
+  },
+
+  /**
+   * "Didn't get it? Resend code". The resend route answers whether WhatsApp
+   * really sent it and how long to wait. A server without it answers 404, and
+   * then Reached is sent again, which also makes a fresh code.
+   */
+  async resendCustomerCode(id) {
+    try {
+      return await request<ResendResult>('/api/delivery/customer-code/resend', {
+        method: 'POST',
+        body: { delivery_order_id: id },
+      });
+    } catch (err) {
+      const noRoute =
+        err instanceof ApiError &&
+        err.status === 404 &&
+        (err.code === 'no_database' || err.code === 'unknown');
+      if (!noRoute) throw err;
+    }
+    const res = await step('/api/delivery/arrived', { delivery_order_id: id, point: 'customer' });
+    return { sent: res.otp_sent !== false, message: res.message };
+  },
+
   verifyDeliveryOtp: (id, otp) =>
     step('/api/delivery/complete/verify-otp', { delivery_order_id: id, otp }),
 
@@ -288,6 +335,11 @@ export const restAdapter: ApiAdapter = {
   // about work. Accepted and dropped, so sign-in and sign-out never fail on it.
   async registerPush() {},
   async unregisterPush() {},
+
+  // Stored under the rider and rung at the office (senior ask: SOS alerts).
+  async sos(report) {
+    await request('/api/delivery/sos', { method: 'POST', body: { ...report } });
+  },
 
   /**
    * A parcel photo as a multipart upload: `delivery_order_id` and `file`, 8 MB

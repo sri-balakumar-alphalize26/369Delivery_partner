@@ -4,15 +4,18 @@ import {
   ApiAdapter,
   ApiError,
   DeliveryOrder,
+  DELIVERY_REASONS,
   DeliveryStatus,
   DutyResult,
   HistoryResponse,
   Identity,
   inBucket,
   LocationResult,
+  Money,
   OrdersResponse,
   OrderTimestamps,
   Rider,
+  RiderKind,
   RiderLocationResult,
   TakeVehicleResult,
   Vehicle,
@@ -26,6 +29,7 @@ import {
   makeFailed,
   makeOffer,
 } from './fixtures';
+import { getRiderKind } from '../../lib/riderKind';
 
 /**
  * An in-memory stand-in for Odoo, matching the published contract exactly —
@@ -94,6 +98,12 @@ const TERMINAL: DeliveryStatus[] = ['delivered', 'returned', 'cancelled', 'faile
  */
 const codeSentFor = new Set<number>();
 
+/** The resend route's rule: how many each job has had, and when its last code went. */
+const RESEND_LIMIT = 5;
+const RESEND_GAP_S = 60;
+const resendsFor = new Map<number, number>();
+const lastCodeAt = new Map<number, number>();
+
 const rider: Rider = {
   id: 18,
   name: 'API Test Rider',
@@ -102,6 +112,29 @@ const rider: Rider = {
   on_duty: false,
   duty_since: '',
 };
+
+/**
+ * The demo rider is whichever kind was picked at sign-in, so both Earnings
+ * views can be shown. A Delivery Partner sees a fee on every job; an office
+ * rider sees none, as on DUBAI_TEST.
+ */
+function becomeKind(kind: RiderKind | undefined) {
+  rider.kind = kind ?? 'own';
+  for (const o of [...state.orders, ...state.pending, ...state.finished]) withFee(o);
+}
+
+function omr(amount: number): Money {
+  return { amount, formatted: `${OMR.symbol} ${amount.toFixed(OMR.decimals)}` };
+}
+
+/** The partner's pay for one trip: a base and a little per km, as Delivery Settings would. */
+function withFee(o: DeliveryOrder): DeliveryOrder {
+  o.rider_fee =
+    rider.kind === 'third_party'
+      ? omr(1.5 + Math.round(((o.shop_to_customer_m ?? 0) / 1000) * 0.2 * 1000) / 1000)
+      : null;
+  return o;
+}
 
 /**
  * Two bikes from the Fleet app, so demo mode shows the vehicle picker the way
@@ -135,7 +168,34 @@ const state = {
   deliveryAttempts: 0,
   /** Set once /start has been called, mirroring tracking.enabled. */
   tracking: false,
+  /** The job `heading` last named, as the server keeps it. */
+  currentStop: null as number | null,
 };
+
+/** Parcel on the road: what the server numbers into the rider's run. */
+const ON_ROAD: readonly DeliveryStatus[] = ['picked', 'dispatched', 'out_for_delivery'];
+
+/**
+ * The server's run order, simplified: the current stop first, then the rest
+ * in the order they were taken (the server goes nearest first). Off-road jobs
+ * carry nulls, as the server sends them.
+ */
+function numberRun() {
+  const road = state.orders.filter((o) => ON_ROAD.includes(o.delivery_status));
+  if (!road.some((o) => o.delivery_order_id === state.currentStop)) state.currentStop = null;
+  road.sort(
+    (a, b) =>
+      Number(b.delivery_order_id === state.currentStop) -
+        Number(a.delivery_order_id === state.currentStop) ||
+      a.delivery_order_id - b.delivery_order_id
+  );
+  for (const o of [...state.orders, ...state.finished]) {
+    const i = road.indexOf(o);
+    o.run_stop_no = i < 0 ? null : i + 1;
+    o.run_stops_total = i < 0 ? null : road.length;
+    o.is_current_stop = i >= 0 && o.delivery_order_id === state.currentStop;
+  }
+}
 
 function guard() {
   if (mockFlags.offline) {
@@ -215,7 +275,7 @@ function advance(o: DeliveryOrder, to: DeliveryStatus): ActionResult {
  * To Dispatch, which is what makes the duty endpoint load-bearing.
  */
 function offer() {
-  const job = makeOffer();
+  const job = withFee(makeOffer());
   if (rider.on_duty) state.orders.push(job);
   else state.pending.push(job);
 }
@@ -231,7 +291,15 @@ export const mockAdapter: ApiAdapter = {
   async me(): Promise<Identity> {
     await wait(200);
     guard();
-    return { rider, timezone: MOCK_TIMEZONE, currency: OMR, fleet: { ...fleet } };
+    const kind = (await getRiderKind()) ?? 'own';
+    if (kind !== rider.kind) becomeKind(kind);
+    return {
+      rider: { ...rider },
+      timezone: MOCK_TIMEZONE,
+      currency: OMR,
+      fleet: { ...fleet },
+      ...(rider.kind === 'third_party' ? { third_party_enabled: true } : {}),
+    };
   },
 
   async vehicles(): Promise<VehiclesResponse> {
@@ -321,6 +389,7 @@ export const mockAdapter: ApiAdapter = {
 
   async orders(): Promise<OrdersResponse> {
     guard();
+    numberRun();
     const live = [...state.orders, ...state.finished];
     return {
       // Tallied through COUNT_BUCKET rather than a grouping written out again
@@ -367,11 +436,32 @@ export const mockAdapter: ApiAdapter = {
       }))
       .sort((a, b) => b.finished_at.localeCompare(a.finished_at))
       .slice(0, limit);
-    return { jobs, timezone: MOCK_TIMEZONE, earnings: 0 };
+    if (rider.kind !== 'third_party') return { jobs, timezone: MOCK_TIMEZONE, earnings: 0 };
+    // A partner's pay: every delivered fee, in each period it falls in.
+    const paid = jobs.filter((j) => j.delivery_status === 'delivered');
+    const sum = (since: number) =>
+      omr(
+        paid
+          .filter((j) => Date.parse(j.finished_at) >= since)
+          .reduce((n, j) => n + (j.rider_fee?.amount ?? 0), 0)
+      );
+    const day = new Date();
+    day.setHours(0, 0, 0, 0);
+    return {
+      jobs,
+      timezone: MOCK_TIMEZONE,
+      earnings: {
+        today: sum(day.getTime()),
+        week: sum(day.getTime() - 6 * 86_400_000),
+        month: sum(day.getTime() - 29 * 86_400_000),
+        total: sum(0),
+      },
+    };
   },
 
   async order(id) {
     guard();
+    numberRun();
     return find(id);
   },
 
@@ -486,6 +576,21 @@ export const mockAdapter: ApiAdapter = {
     return advance(o, 'out_for_delivery');
   },
 
+  async heading(id) {
+    await wait(200);
+    guard();
+    const o = find(id);
+    if (!ON_ROAD.includes(o.delivery_status)) return { success: false };
+    state.currentStop = id;
+    numberRun();
+    return {
+      success: true,
+      stop_no: o.run_stop_no ?? 1,
+      stops_total: o.run_stops_total ?? 1,
+      status: o.delivery_status,
+    };
+  },
+
   async reachedCustomer(id) {
     await wait(400);
     guard();
@@ -501,12 +606,44 @@ export const mockAdapter: ApiAdapter = {
     // Again = a fresh code, so the count of wrong tries starts over.
     state.deliveryAttempts = 0;
     codeSentFor.add(id);
+    lastCodeAt.set(id, Date.now());
     o.reached_customer_on = utcNow();
     return {
       status: o.delivery_status,
       allowed_actions: o.allowed_actions,
       tracking: o.tracking,
       message: 'The customer has been sent their code on WhatsApp.',
+    };
+  },
+
+  // As the server's resend route (19.0.22.7.0): always an answer, never a
+  // refusal - 5 per job, 60 s apart, and only once Reached has sent a code.
+  async resendCustomerCode(id) {
+    await wait(400);
+    guard();
+    const o = find(id);
+    if (o.delivery_status !== 'out_for_delivery' || !codeSentFor.has(id)) {
+      return { sent: false, reason: 'wrong_state', retry_after: 0, message: 'Press Reached first, then ask for a new code.' };
+    }
+    const done = resendsFor.get(id) ?? 0;
+    if (done >= RESEND_LIMIT) {
+      return { sent: false, reason: 'limit', retry_after: 0, message: 'This job has had all 5 new codes. Call the office if the customer still has none.' };
+    }
+    const wait_s = Math.ceil(((lastCodeAt.get(id) ?? 0) + RESEND_GAP_S * 1000 - Date.now()) / 1000);
+    if (wait_s > 0) {
+      return { sent: false, reason: 'too_soon', retry_after: wait_s, message: `A code was sent a moment ago. Try again in ${wait_s} s.` };
+    }
+    resendsFor.set(id, done + 1);
+    lastCodeAt.set(id, Date.now());
+    state.deliveryAttempts = 0;
+    return {
+      sent: true,
+      sent_to: `•••${o.customer_mobile.slice(-4)}`,
+      retry_after: RESEND_GAP_S,
+      reason: '',
+      resends: done + 1,
+      limit: RESEND_LIMIT,
+      message: 'A new code has been sent to the customer on WhatsApp. The old one no longer works.',
     };
   },
 
@@ -562,6 +699,12 @@ export const mockAdapter: ApiAdapter = {
   async registerPush() {},
   async unregisterPush() {},
 
+  // Demo: nothing to alert, so it only says it went.
+  async sos() {
+    await wait(400);
+    guard();
+  },
+
   async uploadProof() {
     await wait(600);
     guard();
@@ -610,11 +753,34 @@ export const mockAdapter: ApiAdapter = {
     return advance(o, 'returned');
   },
 
-  async reportIssue(id) {
+  async reportIssue(id, reason, _key, extra) {
     await wait(300);
     guard();
     const o = find(id);
-    // Logs a problem without changing state, per the contract.
+    // Logs a problem without changing state, per the contract. Each report is
+    // kept on the job as its own row, as the server does.
+    const other = /^other:\s*([\s\S]*)$/.exec(reason);
+    const code = other ? 'other' : reason;
+    const note = (extra?.note ?? other?.[1] ?? '').slice(0, 500);
+    const label =
+      code === 'other' ? 'Something else' : DELIVERY_REASONS.find((d) => d.code === code)?.label ?? code;
+    const at = new Date().toISOString().replace(/\.\d+Z$/, 'Z');
+    const rows = o.reports ?? [];
+    o.reports = [
+      ...rows,
+      {
+        id: rows.length + 1,
+        at,
+        rider: 'demo',
+        reason: code,
+        reason_label: label,
+        note,
+        handled_at: '',
+        photos: extra?.photoUri
+          ? [{ id: rows.length + 1, name: extra.photoName ?? 'problem.jpg', url: extra.photoUri }]
+          : [],
+      },
+    ];
     return {
       status: o.delivery_status,
       allowed_actions: o.allowed_actions,

@@ -37,6 +37,8 @@ export interface OutboxEntry {
   orderId: number;
   step: OutboxStep;
   reason?: string;
+  /** A report's own words, sent with it when the signal is back. */
+  note?: string;
   queuedAt: number;
 }
 
@@ -85,13 +87,21 @@ function remove(key: string): void {
 export async function enqueue(
   orderId: number,
   step: OutboxStep,
-  reason?: string
+  reason?: string,
+  note?: string
 ): Promise<OutboxEntry> {
   await load();
   const entries = useOutboxStore.getState().entries;
   const same = entries.find((e) => e.orderId === orderId && e.step === step);
   if (same) return same;
-  const entry: OutboxEntry = { key: uuid(), orderId, step, reason, queuedAt: Date.now() };
+  const entry: OutboxEntry = {
+    key: uuid(),
+    orderId,
+    step,
+    reason,
+    ...(note ? { note } : {}),
+    queuedAt: Date.now(),
+  };
   save([...entries, entry]);
   return entry;
 }
@@ -119,7 +129,7 @@ function send(e: OutboxEntry): Promise<ActionResult> {
     case 'reached':
       return api.reachedCustomer(e.orderId, e.key);
     case 'report_issue':
-      return api.reportIssue(e.orderId, e.reason ?? 'other', e.key);
+      return api.reportIssue(e.orderId, e.reason ?? 'other', e.key, e.note ? { note: e.note } : undefined);
     case 'return_to_shop':
       return api.returnToShop(e.orderId, e.reason, e.key);
   }

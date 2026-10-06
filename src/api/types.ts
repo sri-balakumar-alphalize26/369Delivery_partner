@@ -109,6 +109,19 @@ export function headingFor(status: DeliveryStatus): 'shop' | 'customer' {
 }
 
 /**
+ * "STOP 2 OF 3" while the rider carries more than one parcel; null for a lone
+ * job, where the number says nothing.
+ */
+export function stopLabel(job: {
+  run_stop_no?: number | null;
+  run_stops_total?: number | null;
+}): string | null {
+  const no = job.run_stop_no;
+  const total = job.run_stops_total;
+  return no && total && total > 1 ? `STOP ${no} OF ${total}` : null;
+}
+
+/**
  * The job is this rider's, but the parcel is not ready to collect: the shop is
  * still taking it on or packing it, or nobody could be offered it yet. No
  * actions, and nothing collected — the rider waits to be called.
@@ -441,7 +454,7 @@ export interface DeliveryOrder {
    */
   /** How many photos the server holds for each stage. */
   photo_counts?: { pickup: number; delivery: number };
-  /** `problem`: the photo sent with a "Parcel is damaged" report (19.0.22.5.0). */
+  /** `problem`: photos sent with a report, any reason since 19.0.22.6.0. */
   photos?: { pickup: ProofPhotoRef[]; delivery: ProofPhotoRef[]; problem?: ProofPhotoRef[] };
   /** Stages short of 2 photos; `["delivery"]` right after Delivered is expected. */
   photos_missing?: ('pickup' | 'delivery')[];
@@ -453,6 +466,8 @@ export interface DeliveryOrder {
    */
   /** The open problem, or null. `wait_until` is "" once there is no timer. */
   problem?: JobProblem | null;
+  /** Every report on this job, oldest first, kept after the shop presses Done (19.0.22.6.0). */
+  reports?: JobReport[];
   /**
    * Where the parcel goes for this delivery only: the location the customer
    * shared, or the spot where the rider waits. When set, the job's
@@ -469,15 +484,53 @@ export interface DeliveryOrder {
   relay?: RelayInfo | null;
   /** Rider B, after the code: the rider the parcel came from. */
   taken_over_from?: string;
+
+  /*
+   * The rider's run (Rider_App_Track_My_Order.pdf, delivery 19.0.23.0.0): one
+   * rider can carry several parcels, and the server numbers the drops - the
+   * current stop first, then the office's run order, then nearest first. An
+   * Express customer sees the rider live only while theirs is the next stop.
+   */
+  /** This job's place in the run, e.g. 2; null while the parcel is not on the road. */
+  run_stop_no?: number | null;
+  run_stops_total?: number | null;
+  /** True once `heading` has named this job as where the rider is going now. */
+  is_current_stop?: boolean;
+}
+
+/** `heading`'s answer. `success: false` also covers an older server without the route. */
+export interface HeadingResult {
+  success: boolean;
+  stop_no?: number;
+  stops_total?: number;
+  status?: DeliveryStatus;
 }
 
 export interface JobProblem {
   reason: string;
+  /** e.g. "Address is wrong"; `other` reads "Something else" (19.0.22.6.0). */
+  reason_label?: string;
+  /** The rider's own words, up to 500 characters, or "". */
+  note?: string;
   at: string;
   /** UTC end of the wait before a return is allowed, or "". */
   wait_until: string;
   waiting_for: 'customer' | 'customer_location' | '';
   return_reason: string;
+}
+
+/** One "Report a problem" on the job (Rider_App_Report_Notes.pdf). */
+export interface JobReport {
+  id: number;
+  at: string;
+  /** Who reported it: the login name. */
+  rider: string;
+  reason: string;
+  reason_label: string;
+  note: string;
+  /** When the shop pressed Done on the card, or "" while still open. */
+  handled_at: string;
+  photos: { id: number; name: string; url: string }[];
 }
 
 export interface DropPoint {
@@ -525,7 +578,10 @@ export interface ProofPhotoRef {
   name: string;
   url: string;
   size: number;
+  /** When it reached the server, UTC. */
   at: string;
+  /** The same moment in the company's zone, "2026-10-05 19:23:08" (19.0.22.9.0). */
+  at_local?: string;
 }
 
 /** `/auth/me`: when the server marks "near" by itself (Delivery Settings). */
@@ -745,6 +801,19 @@ export interface Fix {
   accuracy: number;
 }
 
+/** What an SOS sends to the office (`POST /api/delivery/sos`). */
+export interface SosReport {
+  /** When the rider held the button, UTC. */
+  at: string;
+  latitude?: number;
+  longitude?: number;
+  accuracy?: number;
+  /** The job in hand, when there is one. */
+  delivery_order_id?: number;
+  /** The rider's emergency contacts, so the office can call them too. */
+  contacts: { name: string; phone: string }[];
+}
+
 export type VehicleIssueCategory = 'flat_tyre' | 'breakdown' | 'accident' | 'other';
 
 export interface LogResult {
@@ -819,6 +888,8 @@ export type ApiErrorCode =
   | 'wait'
   // Delivered, Return or Start while rider A waits for rider B to take over.
   | 'handover_waiting'
+  // Signing in as the wrong kind of rider: see `registeredKind`.
+  | 'wrong_kind'
   | 'no_database'
   | 'network'
   | 'unknown';
@@ -837,6 +908,8 @@ export class ApiError extends Error {
   allowedActions?: Action[];
   /** On a 409 `wait`: when a return becomes possible, UTC. */
   waitUntil?: string;
+  /** On `wrong_kind`: what the office has this number down as. */
+  registeredKind?: RiderKind;
 
   constructor(
     code: ApiErrorCode,
@@ -846,6 +919,7 @@ export class ApiError extends Error {
       statusName?: DeliveryStatus;
       allowedActions?: Action[];
       waitUntil?: string;
+      registeredKind?: RiderKind;
     } = {}
   ) {
     super(message);
@@ -855,6 +929,7 @@ export class ApiError extends Error {
     this.statusName = opts.statusName;
     this.allowedActions = opts.allowedActions;
     this.waitUntil = opts.waitUntil;
+    this.registeredKind = opts.registeredKind;
   }
 }
 
@@ -920,14 +995,37 @@ export interface CodeRequestResult {
   retry_after_seconds?: number;
 }
 
+/**
+ * Office rider (staff, on salary) or Delivery Partner (paid per trip). Picked
+ * on the sign-in screen and checked against `Rider.kind`.
+ */
+export type RiderKind = 'own' | 'third_party';
+
+/** What a customer-code resend answers. */
+export interface ResendResult {
+  sent: boolean;
+  /** The number it went to, already masked by the server ("•••0133"). */
+  sent_to?: string;
+  /** Seconds before another may be asked for. */
+  retry_after?: number;
+  /** Why not, when `sent` is false: `too_soon`, `limit`, `whatsapp_failed` or `wrong_state`. */
+  reason?: string;
+  message?: string;
+  /** How many resends this job has had, and the most it may (5 by default). */
+  resends?: number;
+  limit?: number;
+  status?: DeliveryStatus;
+  allowed_actions?: Action[];
+}
+
 export interface ApiAdapter {
   /**
    * Step one of signing in: Odoo sends a code to this number on WhatsApp, if
    * the number belongs to a rider. The answer never says which.
    */
-  requestCode(phone: string): Promise<CodeRequestResult>;
+  requestCode(phone: string, kind?: RiderKind): Promise<CodeRequestResult>;
   /** Step two: trade the code for the tokens every later call carries. */
-  verifyCode(phone: string, code: string): Promise<void>;
+  verifyCode(phone: string, code: string, kind?: RiderKind): Promise<void>;
   /** End the session on the server. Best effort: a failure must never block signing out. */
   logout(): Promise<void>;
 
@@ -987,6 +1085,17 @@ export interface ApiAdapter {
    * the last. Never in `allowed_actions`; the job screen calls it itself.
    */
   reachedCustomer(id: number, key?: string): Promise<ActionResult>;
+  /**
+   * "I'm going to this customer now": the job becomes the rider's current
+   * stop, which turns an Express customer's tracking page live and sends them
+   * "You're next". Best effort - without it the server takes the nearest drop.
+   */
+  heading(id: number): Promise<HeadingResult>;
+  /**
+   * At the door, after Reached: a fresh customer code, the last one voided.
+   * On a server without the resend route, Reached is sent again instead.
+   */
+  resendCustomerCode(id: number): Promise<ResendResult>;
   verifyDeliveryOtp(id: number, otp: string): Promise<ActionResult>;
 
   sendLocation(
@@ -1009,6 +1118,9 @@ export interface ApiAdapter {
 
   /** Deactivate a token on sign-out. */
   unregisterPush(token: string): Promise<void>;
+
+  /** An SOS: the rider needs help. The office is alerted at once. */
+  sos(report: SosReport): Promise<void>;
 
   /**
    * One parcel photo, after the pickup code or the customer's code: 2 to 4
