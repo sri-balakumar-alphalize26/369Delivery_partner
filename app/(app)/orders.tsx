@@ -14,16 +14,15 @@ import {
   gradius,
   gspace,
 } from '../../src/theme/glass';
-import { useWide } from '../../src/ui/useWide';
 import { GlassButton } from '../../src/ui/glass/GlassButton';
 import { GlassCard } from '../../src/ui/glass/GlassCard';
 import { GlassHeader } from '../../src/ui/glass/GlassHeader';
 import { GlassIcon } from '../../src/ui/glass/GlassIcon';
-import { GlassJobCard } from '../../src/ui/glass/GlassJobCard';
 import { GlassPill } from '../../src/ui/glass/GlassPill';
 import { GlassProblem } from '../../src/ui/glass/GlassProblem';
 import { GlassScreen } from '../../src/ui/glass/GlassScreen';
 import { GlassText } from '../../src/ui/glass/GlassText';
+import { StageList } from '../../src/ui/StageList';
 
 /**
  * The buckets a rider can browse.
@@ -78,7 +77,6 @@ export default function Orders() {
   const insets = useSafeAreaInsets();
   const timezone = useSession((s) => s.timezone);
   const { data, isLoading, isError, error, isRefetching, refetch } = useOrders();
-  const wide = useWide();
 
   const { bucket } = useLocalSearchParams<{ bucket?: string }>();
   const [filter, setFilter] = useState<JobFilter>('all');
@@ -164,52 +162,38 @@ export default function Orders() {
               />
             ) : null}
 
-            {/* Only worth drawing when there is something to sort through. "All"
-                always sits first, and is what keeps a `returning` job reachable —
-                Odoo lists those but counts them in no bucket at all. */}
-            {all.length ? (
+            {/* Home's tile asked for one group: say so, with the way back. */}
+            {filter !== 'all' && all.length ? (
               <View
                 style={{
                   flexDirection: 'row',
-                  flexWrap: 'wrap',
-                  gap: gspace.sm,
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
                   marginBottom: gspace.md,
                 }}
               >
-                {FILTERS.map((f) => (
-                  <FilterChip
-                    key={f.key}
-                    label={f.label}
-                    active={filter === f.key}
-                    onPress={() => {
-                      setFilter(f.key);
-                      // Drop any instruction still in the URL, so it cannot
-                      // reassert itself over a choice made here.
-                      if (bucket) router.setParams({ bucket: '' });
-                    }}
-                  />
-                ))}
+                <GlassText variant="body" tone="soft">
+                  {`Showing ${FILTERS.find((x) => x.key === filter)?.label ?? ''} only`}
+                </GlassText>
+                <FilterChip
+                  label="Show all"
+                  active={false}
+                  onPress={() => {
+                    setFilter('all');
+                    if (bucket) router.setParams({ bucket: '' });
+                  }}
+                />
               </View>
             ) : null}
 
             {jobs.length ? (
-              /* Two across on a tablet, one on a phone — the same grid Home uses,
-                 so the two lists cannot drift apart in shape any more than the
-                 card they share can. */
-              <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: gspace.md }}>
-                {jobs.map((job) => (
-                  <View
-                    key={job.delivery_order_id}
-                    style={wide ? { flexBasis: 0, flexGrow: 1, minWidth: 320 } : { width: '100%' }}
-                  >
-                    <GlassJobCard
-                      job={job}
-                      timezone={timezone}
-                      onPress={() => router.push(`/order/${job.delivery_order_id}`)}
-                    />
-                  </View>
-                ))}
-              </View>
+              /* Grouped by stage, the job to do now drawn large (StageList). */
+              <StageList
+                jobs={all}
+                only={filter === 'all' ? null : filter}
+                timezone={timezone}
+                onOpen={(job) => router.push(`/order/${job.delivery_order_id}`)}
+              />
             ) : all.length ? (
               /* Jobs exist, just none of this kind. Say which kind is empty, and
                  offer the way out — a filter with no visible cause is how a rider
