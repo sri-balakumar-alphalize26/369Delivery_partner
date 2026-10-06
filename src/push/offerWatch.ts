@@ -1,4 +1,3 @@
-import * as Notifications from 'expo-notifications';
 import { AppState } from 'react-native';
 import { getServer } from '../api/config';
 import { api } from '../api/endpoints';
@@ -6,7 +5,7 @@ import { ApiError, DeliveryOrder } from '../api/types';
 import { syncClock } from '../lib/clock';
 import { shopName } from '../lib/format';
 import { announced, keepOnly, loadLedger, markAnnounced } from './offerLedger';
-import { ALARM_CHANNEL, ensureAlarmChannel } from './register';
+import { ringJob } from './fullScreenRing';
 
 /**
  * One look for new offers while the app is out of sight — the duty watch calls
@@ -49,23 +48,15 @@ export async function checkOffers(): Promise<boolean | null> {
   }
 }
 
-/** The lock-screen alert. Tapping it opens the job, through `usePush`. */
+/**
+ * The lock-screen alert: rung like an incoming call (`fullScreenRing.ts`).
+ * Answering it opens the job, through `usePush`.
+ */
 export async function ringOffer(job: DeliveryOrder): Promise<void> {
-  try {
-    await ensureAlarmChannel();
-    const from = shopName(job.shop);
-    await Notifications.scheduleNotificationAsync({
-      content: {
-        title: 'New job offered',
-        body: from ? `${from} → ${job.customer_name}` : job.customer_name,
-        // The shape a real push will carry, so one tap handler serves both.
-        data: { delivery_order_id: job.delivery_order_id },
-        sound: true,
-        priority: Notifications.AndroidNotificationPriority.MAX,
-      },
-      trigger: { channelId: ALARM_CHANNEL },
-    });
-  } catch (err) {
-    console.warn('[offer] could not ring:', (err as Error)?.message);
-  }
+  const from = shopName(job.shop);
+  await ringJob({
+    id: job.delivery_order_id,
+    title: 'New job offered',
+    body: from ? `${from} → ${job.customer_name}` : job.customer_name,
+  });
 }

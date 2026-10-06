@@ -1,11 +1,11 @@
 import { useRouter, useSegments } from 'expo-router';
-import * as Notifications from 'expo-notifications';
 import { useEffect, useRef } from 'react';
 import { AppState, Platform, Vibration } from 'react-native';
 import { DeliveryOrder } from '../api/types';
 import { shopName } from '../lib/format';
+import { playNewJob, stopNewJob } from '../lib/sounds';
 import { announced, clearLedger, keepOnly, loadLedger, markAnnounced } from '../push/offerLedger';
-import { ALARM_CHANNEL, ensureAlarmChannel } from '../push/register';
+import { ringJob, stopAllRings } from '../push/fullScreenRing';
 import { pushArrivedRecently } from '../push/usePush';
 import { useOrders } from './useOrders';
 
@@ -17,10 +17,10 @@ import { useOrders } from './useOrders';
  * screen this puts up already existed — nothing routed to it on its own, and
  * nothing made a sound.
  *
- * Vibration rather than a bundled alarm tone deliberately: `Vibration` is React
- * Native core, so this needs no new native module and no rebuild, and a phone in
- * a jacket pocket at 60km/h is felt long before it is heard. The notification
- * channel supplies the sound in the one case a banner is used.
+ * Vibration first: a phone in a jacket pocket at 60km/h is felt long before it
+ * is heard. The app's own ring (`new_job.wav`, src/lib/sounds.ts) plays with it
+ * while the app is open; the notification channel supplies the sound in the one
+ * case a banner is used.
  */
 
 /** Wait, buzz, pause — repeated until something stops it. */
@@ -52,36 +52,30 @@ export function stopOfferAlert(): void {
     ceiling = null;
   }
   if (Platform.OS !== 'web') Vibration.cancel();
+  stopNewJob();
+  // And the call-style ring, if one is still going on the lock screen.
+  void stopAllRings();
 }
 
 function startBuzzing(): void {
   // react-native-web has no vibration and warns rather than no-opping.
   if (Platform.OS === 'web') return;
   Vibration.vibrate(PATTERN, true);
+  // The app's own ring with it, so a phone on the counter is heard too.
+  playNewJob();
   if (ceiling) clearTimeout(ceiling);
   ceiling = setTimeout(stopOfferAlert, CEILING_MS);
 }
 
 /** A banner for an offer the rider is too busy to be shown. */
 async function announce(job: DeliveryOrder): Promise<void> {
-  try {
-    await ensureAlarmChannel();
-    await Notifications.scheduleNotificationAsync({
-      content: {
-        title: 'New job offered',
-        body: `${shopName(job.shop)} → ${job.customer_name}`,
-        // Matches a real push, so tapping it routes through the same handler.
-        data: { delivery_order_id: job.delivery_order_id },
-        sound: true,
-      },
-      // `trigger: null` posted on Android's fallback channel, not on any of ours.
-      trigger: { channelId: ALARM_CHANNEL },
-    });
-  } catch (err) {
-    // A missing banner makes the alert quieter, never broken — the phone is
-    // already buzzing by the time this runs.
-    console.warn('[offer] could not announce:', (err as Error)?.message);
-  }
+  // The same call-style ring as the lock screen (fullScreenRing.ts). It never
+  // throws: the phone is already buzzing by the time this runs.
+  await ringJob({
+    id: job.delivery_order_id,
+    title: 'New job offered',
+    body: `${shopName(job.shop)} → ${job.customer_name}`,
+  });
 }
 
 export function useOfferAlert(connected: boolean): void {

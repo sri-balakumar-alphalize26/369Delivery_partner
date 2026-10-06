@@ -4,6 +4,8 @@ import * as Notifications from 'expo-notifications';
 import { useEffect } from 'react';
 import { registerForPush } from './register';
 import { claimNearAuto } from './nearAutoLedger';
+import { feedback } from '../lib/feedback';
+import { onRingAnswered } from './fullScreenRing';
 
 /**
  * Wires push into the running app: register once connected, refresh on arrival,
@@ -46,7 +48,11 @@ export function usePush(connected: boolean) {
       lastPushAt = Date.now();
       // The server's own "near the customer" push rang already: the job screen
       // must not chime again when its next poll sees the same change.
-      const data = n.request.content.data as { type?: string; delivery_order_id?: string } | undefined;
+      const data = n.request.content.data as
+        | { type?: string; delivery_order_id?: string; status?: string }
+        | undefined;
+      // A job cancelled, or gone to another rider: a falling tone and a long buzz.
+      if (data?.status === 'passed' || data?.status === 'cancelled') feedback.jobGone();
       if (data?.type === 'near_customer_auto' && data.delivery_order_id) {
         claimNearAuto(Number(data.delivery_order_id));
       }
@@ -68,6 +74,16 @@ export function usePush(connected: boolean) {
       tapped.remove();
     };
   }, [qc, router]);
+
+  // The call-style ring answered: a tap, "Open job", or the full-screen launch
+  // on a locked phone. Straight onto the offer.
+  useEffect(() => {
+    if (!connected) return;
+    return onRingAnswered((id) => {
+      qc.invalidateQueries({ queryKey: ['orders'] });
+      router.push(`/order/${id}`);
+    });
+  }, [connected, qc, router]);
 
   /**
    * A tap that started the app.

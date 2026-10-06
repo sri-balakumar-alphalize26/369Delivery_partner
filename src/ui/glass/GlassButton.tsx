@@ -1,4 +1,5 @@
 import { ActivityIndicator, Pressable, View, ViewStyle } from 'react-native';
+import { feedback } from '../../lib/feedback';
 import { glass, gradius, gspace } from '../../theme/glass';
 import { GlassIcon, GlassIconName } from './GlassIcon';
 import { GlassText } from './GlassText';
@@ -63,7 +64,15 @@ export function GlassButton({
 
   return (
     <Pressable
-      onPress={onPress}
+      // A light tick under the thumb, as the big rider apps give on every main button.
+      onPress={
+        onPress
+          ? () => {
+              feedback.tap();
+              onPress();
+            }
+          : undefined
+      }
       disabled={off}
       accessibilityRole="button"
       accessibilityLabel={title}
