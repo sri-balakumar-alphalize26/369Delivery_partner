@@ -4,14 +4,13 @@ import { useRouter } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { Modal, Pressable, RefreshControl, ScrollView, Switch, View, ViewStyle } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { sortForRider, useDuty, useOrders, useTakeVehicle } from '../../src/hooks/useOrders';
+import { sortForRider, useDuty, useOrders } from '../../src/hooks/useOrders';
 import { money, onDutyFor } from '../../src/lib/format';
 import { useNow } from '../../src/hooks/useNow';
 import { useSession } from '../../src/store/session';
 import { useRefreshOnFocus } from '../../src/hooks/useSettingsRefresh';
 import { CONTENT_MAX_W, glass, gradius, gspace } from '../../src/theme/glass';
 import { useWide } from '../../src/ui/useWide';
-import { VehicleSheet } from '../../src/ui/VehicleSheet';
 import { LocationPrimer } from '../../src/ui/LocationPrimer';
 import { SharingRow } from '../../src/ui/SharingRow';
 import { DutyWatchRow } from '../../src/ui/DutyWatchRow';
@@ -28,13 +27,14 @@ import {
  */
 let askedDutyLocation = false;
 import { GlassCard } from '../../src/ui/glass/GlassCard';
-import { GlassIcon } from '../../src/ui/glass/GlassIcon';
 import { GlassJobCard } from '../../src/ui/glass/GlassJobCard';
 import { HomeJobCard } from '../../src/ui/glass/HomeJobCard';
 import { GlassPill } from '../../src/ui/glass/GlassPill';
 import { GlassProblem } from '../../src/ui/glass/GlassProblem';
 import { GlassScreen } from '../../src/ui/glass/GlassScreen';
 import { GlassText } from '../../src/ui/glass/GlassText';
+import { NotificationsOffBanner, PhoneSetupCard } from '../../src/ui/PhoneSetupCard';
+import { SosShield } from '../../src/ui/SosSheet';
 
 /**
  * The rider's day, in the Glass Light style.
@@ -60,31 +60,17 @@ export default function Home() {
   const wide = useWide();
   // Tabs stay mounted, so the "you are here" map is told when Home is out of view.
   const focused = useIsFocused();
-  // Only a server with delivery_fleet_ops sends this; without it the switch
-  // clocks on directly, as it always has.
-  const fleet = useSession((s) => s.fleet);
   // A Delivery Partner with the shop's partner riders switched off: nothing
   // will be offered, however long they stay on duty, so say so.
   const partnerIdle = useSession(
     (s) => s.rider?.kind === 'third_party' && s.thirdPartyEnabled === false
   );
-  // Settings the office changed since this phone opened (vehicles, sharing).
+  // Settings the office changed since this phone opened (sharing).
   useRefreshOnFocus();
-  const [pickingVehicle, setPickingVehicle] = useState(false);
-  const take = useTakeVehicle();
 
-  const setDuty = (on: boolean, vehicleId?: number) => {
-    setPickingVehicle(false);
-    take.reset();
-    duty.mutate({ on, vehicleId });
-  };
-
-  const pickVehicle = (vehicleId: number) => {
-    if (!onDuty) return setDuty(true, vehicleId);
-    setPickingVehicle(false);
-    duty.reset();
-    take.mutate(vehicleId);
-  };
+  // No vehicle step: the delivery server keeps no vehicles, so the switch
+  // clocks on directly.
+  const setDuty = (on: boolean) => duty.mutate({ on });
 
   // The server is the authority on duty; the stored rider is only the fallback
   // before the first /orders comes back.
@@ -93,8 +79,7 @@ export default function Home() {
   /**
    * On a fleet server the office's live map wants this rider's position while
    * they are on duty with the app open. Ask once, in words first, and only
-   * once they are actually on duty — never at the switch itself, where the
-   * vehicle sheet is already asking something.
+   * once they are actually on duty — never at the switch itself.
    */
   const [askingLocation, setAskingLocation] = useState(false);
   const [grantingLocation, setGrantingLocation] = useState(false);
@@ -109,7 +94,7 @@ export default function Home() {
     return () => {
       alive = false;
     };
-  }, [onDuty, fleet]);
+  }, [onDuty]);
 
   const grantLocation = async () => {
     setGrantingLocation(true);
@@ -161,12 +146,18 @@ export default function Home() {
             paddingHorizontal: gspace.xl,
           }}
         >
-          <GlassText variant="caption" style={{ color: glass.bandSoft }}>
-            {greeting()}
-          </GlassText>
-          <GlassText variant="hero" tone="white" numberOfLines={1}>
-            {rider?.name ?? 'Rider'}
-          </GlassText>
+          <View style={{ flexDirection: 'row', alignItems: 'center', columnGap: gspace.md }}>
+            <View style={{ flex: 1 }}>
+              <GlassText variant="caption" style={{ color: glass.bandSoft }}>
+                {greeting()}
+              </GlassText>
+              <GlassText variant="hero" tone="white" numberOfLines={1}>
+                {rider?.name ?? 'Rider'}
+              </GlassText>
+            </View>
+            {/* Emergency help, always in the same corner (SosSheet.tsx). */}
+            <SosShield />
+          </View>
           {/* No bell: nothing registers for push (useOrders polls instead), so
               it would be a control that does nothing. */}
         </View>
@@ -249,54 +240,13 @@ export default function Home() {
             <Switch
               value={onDuty}
               disabled={duty.isPending}
-              onValueChange={(next) =>
-                next && fleet ? setPickingVehicle(true) : setDuty(next)
-              }
+              onValueChange={setDuty}
               trackColor={{ true: glass.green, false: glass.dividerDashed }}
               // Android's default thumb is its own blue accent.
               thumbColor={onDuty ? glass.accent : glass.white}
             />
           </View>
 
-          {/* The vehicle in hand, and the way to swap it mid-shift. */}
-          {fleet && onDuty ? (
-            <Pressable
-              onPress={() => setPickingVehicle(true)}
-              accessibilityRole="button"
-              accessibilityLabel={
-                fleet.vehicle
-                  ? `Riding ${fleet.vehicle.plate || fleet.vehicle.name}. Change vehicle.`
-                  : 'No vehicle. Pick one.'
-              }
-              hitSlop={6}
-              style={({ pressed }) => ({
-                flexDirection: 'row',
-                alignItems: 'center',
-                marginTop: gspace.md,
-                paddingTop: gspace.md,
-                borderTopWidth: 1,
-                borderTopColor: glass.divider,
-                opacity: pressed ? 0.6 : 1,
-              })}
-            >
-              <GlassIcon
-                name={fleet.vehicle?.type === 'car' ? 'car' : 'bike'}
-                color={glass.inkSoft}
-                size={20}
-                style={{ marginRight: gspace.sm }}
-              />
-              <GlassText variant="body" style={{ flex: 1 }} numberOfLines={1}>
-                {fleet.vehicle
-                  ? `${fleet.vehicle.plate || fleet.vehicle.name}${
-                      fleet.vehicle.model ? ` · ${fleet.vehicle.model}` : ''
-                    }`
-                  : 'No vehicle'}
-              </GlassText>
-              <GlassText variant="caption" tone="indigo">
-                {fleet.vehicle ? 'Change' : 'Pick one'}
-              </GlassText>
-            </Pressable>
-          ) : null}
 
           {/* The day at a glance, inside the duty card. */}
           <View style={{ flexDirection: 'row', gap: gspace.sm, marginTop: gspace.lg }}>
@@ -308,7 +258,15 @@ export default function Home() {
             <Stat
               label="On the road"
               value={(counts?.picked_up ?? 0) + (counts?.out_for_delivery ?? 0)}
-              onPress={() => router.push('/orders?bucket=out_for_delivery')}
+              // The tile counts collected and on-the-road jobs; open whichever
+              // filter holds them, never an empty one.
+              onPress={() =>
+                router.push(
+                  counts?.out_for_delivery
+                    ? '/orders?bucket=out_for_delivery'
+                    : '/orders?bucket=picked_up'
+                )
+              }
             />
             <Stat label="Cash to collect" value={money(toCollect, currency)} />
           </View>
@@ -325,6 +283,13 @@ export default function Home() {
           {onDuty ? <DutyWatchRow /> : null}
         </GlassCard>
 
+        {/* Phone settings a job alert depends on: a warning when notifications
+            are off, and the setup checklist until it is done. */}
+        <View style={{ marginTop: gspace.lg, rowGap: gspace.md }}>
+          <NotificationsOffBanner />
+          <PhoneSetupCard />
+        </View>
+
         {partnerIdle ? (
           <GlassProblem
             tone="quiet"
@@ -332,14 +297,6 @@ export default function Home() {
           />
         ) : null}
 
-        <VehicleSheet
-          visible={pickingVehicle}
-          onDuty={onDuty}
-          busy={duty.isPending || take.isPending}
-          onPick={pickVehicle}
-          onSkip={() => setDuty(true)}
-          onClose={() => setPickingVehicle(false)}
-        />
 
         <Modal
           visible={askingLocation}
@@ -383,16 +340,6 @@ export default function Home() {
         {duty.isError ? (
           <GlassText variant="bodyStrong" tone="red" style={{ marginTop: gspace.lg }}>
             {duty.error.message}
-          </GlassText>
-        ) : null}
-        {take.data?.message ? (
-          <GlassText variant="bodyStrong" tone="indigo" style={{ marginTop: gspace.lg }}>
-            {take.data.message}
-          </GlassText>
-        ) : null}
-        {take.isError ? (
-          <GlassText variant="bodyStrong" tone="red" style={{ marginTop: gspace.lg }}>
-            {take.error.message}
           </GlassText>
         ) : null}
 

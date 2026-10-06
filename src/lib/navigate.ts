@@ -95,12 +95,14 @@ export async function openNavigation(dest: Destination): Promise<boolean> {
  * WhatsApp, so a customer's number is already in that form; a number too short
  * to carry a country code is refused rather than opened onto the wrong person.
  */
-export function whatsappUrl(number: string | null | undefined): string | null {
+export function whatsappUrl(number: string | null | undefined, text?: string): string | null {
   const digits = normalisePhone(number ?? '');
-  return digits.length >= 8 ? `https://wa.me/${digits}` : null;
+  if (digits.length < 8) return null;
+  // `text` arrives typed in the chat, ready to send: the quick replies and SOS.
+  return text ? `https://wa.me/${digits}?text=${encodeURIComponent(text)}` : `https://wa.me/${digits}`;
 }
 
-export function openWhatsApp(number: string | null | undefined): void {
-  const url = whatsappUrl(number);
+export function openWhatsApp(number: string | null | undefined, text?: string): void {
+  const url = whatsappUrl(number, text);
   if (url) Linking.openURL(url).catch(() => {});
 }

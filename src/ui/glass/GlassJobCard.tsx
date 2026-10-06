@@ -1,6 +1,6 @@
 import { View } from 'react-native';
 import { Image } from 'expo-image';
-import { DeliveryOrder, isAtShop, isDropLocked } from '../../api/types';
+import { DeliveryOrder, isAtShop, isDropLocked, stopLabel } from '../../api/types';
 import { dueIn, money, shopInfo, shopName } from '../../lib/format';
 import { useNow } from '../../hooks/useNow';
 import { useJobDistance } from '../../hooks/useJobDistance';
@@ -117,6 +117,8 @@ export function GlassJobCard({
           {job.delivery_type ? (
             <GlassPill label={job.delivery_type} tone="soft" />
           ) : null}
+          {/* Several parcels on the road: which drop this is in the server's run. */}
+          {stopLabel(job) ? <GlassPill label={stopLabel(job)!} tone="soft" /> : null}
           {/* A step tapped with no signal; it goes by itself once there is one. */}
           {waiting ? <GlassPill label="WAITING FOR SIGNAL" tone="soft" /> : null}
         </View>
