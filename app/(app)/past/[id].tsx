@@ -2,11 +2,11 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { ReactNode } from 'react';
 import { ScrollView, View } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { api } from '../../../src/api/endpoints';
-import { HistoryResponse, PastJob } from '../../../src/api/types';
+import { HistoryResponse, PastJob, ProofPhotoRef } from '../../../src/api/types';
+import { useBottomInset } from '../../../src/hooks/useBottomInset';
 import { useHistory } from '../../../src/hooks/useOrders';
-import { money, promisedAt, shopInfo, shopName } from '../../../src/lib/format';
+import { money, promisedAt, shopInfo, shopName, timeOnly } from '../../../src/lib/format';
 import { useSession } from '../../../src/store/session';
 import {
   CONTENT_MAX_W,
@@ -24,6 +24,7 @@ import { GlassPill } from '../../../src/ui/glass/GlassPill';
 import { GlassProgress } from '../../../src/ui/glass/GlassProgress';
 import { GlassScreen } from '../../../src/ui/glass/GlassScreen';
 import { GlassText } from '../../../src/ui/glass/GlassText';
+import { ServerPhoto } from '../../../src/ui/ServerPhoto';
 
 /**
  * A finished job, read-only, opened from Orders → Past.
@@ -38,7 +39,7 @@ import { GlassText } from '../../../src/ui/glass/GlassText';
  */
 export default function PastJobScreen() {
   const router = useRouter();
-  const insets = useSafeAreaInsets();
+  const bottomInset = useBottomInset();
   const qc = useQueryClient();
   const sessionTz = useSession((s) => s.timezone);
 
@@ -108,7 +109,7 @@ export default function PastJobScreen() {
           width: '100%',
           maxWidth: CONTENT_MAX_W,
           alignSelf: 'center',
-          paddingBottom: gspace.xxxl + insets.bottom,
+          paddingBottom: gspace.xxl + bottomInset,
           gap: gspace.lg,
         }}
         showsVerticalScrollIndicator={false}
@@ -204,6 +205,28 @@ export default function PastJobScreen() {
           ) : null}
         </Section>
 
+        {/* The parcel photos the server keeps, by stage (on /history since
+            19.0.22.7.0). A tap opens one full size. */}
+        {photoGroups(job).length ? (
+          <Section icon="camera" title="Photos">
+            {photoGroups(job).map((g, i) => (
+              <View key={g.label} style={{ marginTop: i === 0 ? 0 : gspace.md }}>
+                <GlassText variant="bodyStrong">{g.label}</GlassText>
+                <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: gspace.sm, marginTop: gspace.xs }}>
+                  {g.photos.map((p) => (
+                    <View key={p.id} style={{ alignItems: 'center' }}>
+                      <ServerPhoto path={p.url} size={72} />
+                      <GlassText variant="caption" tone="soft" nums style={{ marginTop: 2 }}>
+                        {photoTime(p, timezone)}
+                      </GlassText>
+                    </View>
+                  ))}
+                </View>
+              </View>
+            ))}
+          </Section>
+        ) : null}
+
         {/* The step times, from the server where it sent them. */}
         <Section icon="clock" title="Timeline">
           <GlassProgress order={job} timezone={timezone} />
@@ -211,6 +234,23 @@ export default function PastJobScreen() {
       </ScrollView>
     </GlassScreen>
   );
+}
+
+/** The stages that have photos, in the order they happened. */
+function photoGroups(job: PastJob): { label: string; photos: ProofPhotoRef[] }[] {
+  const p = job.photos;
+  if (!p) return [];
+  return [
+    { label: 'Pickup', photos: p.pickup ?? [] },
+    { label: 'Delivery', photos: p.delivery ?? [] },
+    { label: 'Problem report', photos: p.problem ?? [] },
+  ].filter((g) => g.photos.length > 0);
+}
+
+/** When it reached the server: the company-zone time the server sends, else UTC shown in the job's zone. */
+function photoTime(p: ProofPhotoRef, timezone?: string): string {
+  const local = p.at_local?.match(/[0-9]{2}:[0-9]{2}/)?.[0];
+  return local ?? timeOnly(p.at, timezone);
 }
 
 function Section({
