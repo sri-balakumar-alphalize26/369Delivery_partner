@@ -93,3 +93,18 @@ export function cashToday(jobs: PastJob[] | undefined, now: number, timeZone?: s
 
   return { total, currency, rows };
 }
+
+/**
+ * Every job delivered today in the shop's zone, newest first: the trips list on
+ * Earnings. Same day rule as `cashToday`.
+ */
+export function tripsToday(jobs: PastJob[] | undefined, now: number, timeZone?: string): PastJob[] {
+  const today = dayKey(now, timeZone);
+  return (jobs ?? [])
+    .filter((job) => {
+      if (job.delivery_status !== 'delivered' || !job.finished_at) return false;
+      const at = Date.parse(asUtc(job.finished_at));
+      return !Number.isNaN(at) && dayKey(at, timeZone) === today;
+    })
+    .sort((a, b) => (b.finished_at ?? '').localeCompare(a.finished_at ?? ''));
+}

@@ -4,18 +4,20 @@ import { RefreshControl, ScrollView, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useNow } from '../../src/hooks/useNow';
 import { sortForRider, useHistory, useOrders } from '../../src/hooks/useOrders';
-import { cashToday } from '../../src/lib/cash';
+import { cashToday, tripsToday } from '../../src/lib/cash';
 import { money, onDutyFor, timeOnly } from '../../src/lib/format';
 import { useSession } from '../../src/store/session';
-import { CONTENT_MAX_W, glass, gradius, gspace } from '../../src/theme/glass';
-import { GlassCard } from '../../src/ui/glass/GlassCard';
-import { GlassHeader } from '../../src/ui/glass/GlassHeader';
+import { CONTENT_MAX_W, font, glass, gradius, gspace } from '../../src/theme/glass';
+import { GlassIcon } from '../../src/ui/glass/GlassIcon';
 import { GlassProblem } from '../../src/ui/glass/GlassProblem';
 import { GlassScreen } from '../../src/ui/glass/GlassScreen';
 import { GlassText } from '../../src/ui/glass/GlassText';
 
 /**
- * The rider's day.
+ * The rider's day, "today first" (layout A of the Earnings canvas, 6 Oct
+ * 2026): today's pay or deliveries big at the top, week, month and all time
+ * under it, the cash being carried said plainly as the shop's money, then
+ * today's trips.
  *
  * Since delivery 19.0.21.5.0 the server has a pay model, for Delivery Partners
  * only (`rider.kind = "third_party"`): a fee per trip, totalled on `/history`
@@ -33,6 +35,9 @@ export default function Earnings() {
   const { data, isError, error, isRefetching, refetch } = useOrders();
   const rider = useSession((s) => s.rider);
   const timezone = useSession((s) => s.timezone);
+  // The company's currency from sign-in: the fallback when no job carries one,
+  // so an empty day still reads "OMR 0.000" rather than a bare "0.00".
+  const sessionCurrency = useSession((s) => s.currency);
   const now = useNow();
 
   const counts = data?.counts;
@@ -70,18 +75,50 @@ export default function Earnings() {
   const rawPay = history.data?.earnings;
   const pay = rawPay && typeof rawPay === 'object' ? rawPay : null;
 
+  // Today's delivered trips, newest first, for the list and the average.
+  const trips = tripsToday(history.data?.jobs, now, history.data?.timezone ?? timezone);
+  const tripCount = trips.length;
+  const deliveredToday = counts?.delivered_today ?? tripCount;
+  // Every amount on this screen in one style, the app's ("OMR 1.846"); the
+  // server's own strings use the Arabic symbol and read differently.
+  const cur = trips.find((t) => t.currency)?.currency ?? currency ?? sessionCurrency;
+  const fmt = (m?: { amount: number } | null) => (m ? money(m.amount, cur) : '—');
+  const average = partner && pay?.today && tripCount > 0 ? money(pay.today.amount / tripCount, cur) : null;
+
+  /** The shop's money the rider is carrying: taken at the door plus still to take. */
+  const cashCurrency = collected.currency ?? currency ?? sessionCurrency;
+  const cashWithYou = collected.total + toCollect;
+
   return (
     <GlassScreen>
-      <GlassHeader title="Today" />
+      {/* Who this tab is for, on the green band: paid per trip or on salary. */}
+      <View
+        style={{
+          backgroundColor: glass.band,
+          paddingTop: insets.top + gspace.lg,
+          paddingBottom: 72,
+          paddingHorizontal: gspace.xl,
+        }}
+      >
+        <View style={{ width: '100%', maxWidth: CONTENT_MAX_W, alignSelf: 'center' }}>
+          <GlassText variant="hero" tone="white">
+            Earnings
+          </GlassText>
+          <GlassText variant="body" style={{ color: glass.bandSoft, marginTop: 2 }}>
+            {partner ? 'Delivery Partner · paid per trip' : 'Office rider · on salary'}
+          </GlassText>
+        </View>
+      </View>
 
       <ScrollView
+        style={{ marginTop: -56 }}
         contentContainerStyle={{
-          paddingHorizontal: gspace.xl,
-          // A column, not a full-width sprawl. Binds only above CONTENT_MAX_W.
+          paddingHorizontal: gspace.lg,
           width: '100%',
           maxWidth: CONTENT_MAX_W,
           alignSelf: 'center',
-          paddingBottom: gspace.xxxl + insets.bottom,
+          paddingBottom: gspace.xxl + insets.bottom,
+          rowGap: gspace.md,
         }}
         showsVerticalScrollIndicator={false}
         refreshControl={
@@ -94,19 +131,83 @@ export default function Earnings() {
           />
         }
       >
+        {/* Today first: a partner's pay, or an office rider's deliveries. Read
+            from /history exactly as the server formats it; the app never works
+            pay out. */}
+        <View
+          style={{
+            backgroundColor: glass.white,
+            borderRadius: 20,
+            borderWidth: 1,
+            borderColor: glass.divider,
+            padding: gspace.lg,
+          }}
+        >
+          <GlassText variant="label" tone="soft" upper>
+            Today
+          </GlassText>
+          {partner ? (
+            pay ? (
+              <>
+                <GlassText
+                  nums
+                  style={{ fontFamily: font.bold, fontSize: 40, letterSpacing: -1, color: glass.green, marginTop: 2 }}
+                >
+                  {fmt(pay.today)}
+                </GlassText>
+                <GlassText variant="body" tone="soft" nums>
+                  {`${tripCount} ${tripCount === 1 ? 'trip' : 'trips'}${average ? ` · avg ${average} a trip` : ''}`}
+                </GlassText>
+              </>
+            ) : (
+              <GlassText variant="body" tone="soft" style={{ marginTop: gspace.sm }}>
+                {history.isLoading ? 'Checking your earnings…' : 'This server does not send pay yet.'}
+              </GlassText>
+            )
+          ) : (
+            <>
+              <GlassText
+                nums
+                style={{ fontFamily: font.bold, fontSize: 40, letterSpacing: -1, color: glass.green, marginTop: 2 }}
+              >
+                {String(deliveredToday)}
+              </GlassText>
+              <GlassText variant="body" tone="soft" nums>
+                {`Delivered today${shift ? ` · on duty ${shift}` : ''}`}
+              </GlassText>
+            </>
+          )}
+
+          <View style={{ height: 1, backgroundColor: glass.divider, marginVertical: gspace.lg }} />
+
+          <View style={{ flexDirection: 'row', gap: gspace.sm }}>
+            {partner ? (
+              <>
+                <Tile label="This week" value={fmt(pay?.week)} />
+                <Tile label="This month" value={fmt(pay?.month)} />
+                <Tile
+                  label="All time"
+                  value={fmt(pay?.total ?? (typeof pay?.amount === 'number' ? { amount: pay.amount } : null))}
+                />
+              </>
+            ) : (
+              <>
+                <Tile label="This week" value={String(counts?.delivered_week ?? '—')} />
+                <Tile label="This month" value={String(counts?.delivered_month ?? '—')} />
+                <Tile label="On road now" value={String(counts?.out_for_delivery ?? 0)} />
+              </>
+            )}
+          </View>
+        </View>
+
         {/**
          * A dead server used to produce a confident zero here — `counts?.delivered
          * ?? 0` cannot tell "you have delivered nothing" from "nobody answered".
          * Of the two, a rider is far better served by being told which.
          */}
         {isError && !data ? (
-          <GlassProblem
-            message={error.message}
-            onRetry={() => refetch()}
-            retrying={isRefetching}
-          />
+          <GlassProblem message={error.message} onRetry={() => refetch()} retrying={isRefetching} />
         ) : null}
-
         {isError && data ? (
           <GlassProblem
             tone="quiet"
@@ -114,145 +215,90 @@ export default function Earnings() {
           />
         ) : null}
 
-        {/* A Delivery Partner's pay, first, because it is what they open this
-            tab for. Read from /history exactly as the server formats it; the
-            app never works pay out. Own riders are on salary and see none. */}
-        {partner ? (
-          <GlassCard style={{ marginBottom: gspace.lg }}>
-            <GlassText variant="caption" tone="soft">
-              Earned today
+        {/* Cash: somebody else's money, said plainly so it is never read as pay. */}
+        <View
+          style={{
+            flexDirection: 'row',
+            alignItems: 'center',
+            columnGap: gspace.md,
+            padding: gspace.lg,
+            borderRadius: gradius.card,
+            borderWidth: 1,
+            borderColor: glass.orangeLine,
+            backgroundColor: glass.orangeSoft,
+          }}
+        >
+          <GlassIcon name="cash" size={26} color={glass.orange} />
+          <View style={{ flex: 1 }}>
+            <GlassText variant="bodyStrong" nums>
+              {`Cash with you · ${money(cashWithYou, cashCurrency)}`}
             </GlassText>
-            {pay ? (
-              <>
-                <GlassText variant="amount" tone="green" nums style={{ marginTop: 2 }}>
-                  {pay.today?.formatted ?? '—'}
-                </GlassText>
-                <View style={{ flexDirection: 'row', gap: gspace.sm, marginTop: gspace.lg }}>
-                  <Tile label="This week" value={pay.week?.formatted ?? '—'} />
-                  <Tile label="This month" value={pay.month?.formatted ?? '—'} />
-                  <Tile label="All time" value={pay.total?.formatted ?? pay.formatted ?? '—'} />
-                </View>
-              </>
-            ) : (
-              <GlassText variant="body" tone="soft" style={{ marginTop: gspace.sm }}>
-                {history.isLoading
-                  ? 'Checking your earnings…'
-                  : 'This server does not send pay yet.'}
+            <GlassText variant="caption" tone="soft" style={{ marginTop: 2 }}>
+              The shop&rsquo;s money, not your pay. Hand it over at the counter.
+            </GlassText>
+            {toCollect > 0 ? (
+              <GlassText variant="caption" tone="soft" nums style={{ marginTop: 2 }}>
+                {`${money(collected.total, cashCurrency)} collected · ${money(toCollect, cashCurrency)} still to collect`}
               </GlassText>
-            )}
-          </GlassCard>
-        ) : null}
-
-        <GlassCard>
-          {/* Today's, not all time: `counts.delivered` counts every job ever,
-              which is why this read high. An older server sends no dated
-              counts, and the all-time figure is then all there is. */}
-          <GlassText variant="caption" tone="soft">
-            Delivered today
-          </GlassText>
-          <GlassText variant="amount" nums style={{ marginTop: 2 }}>
-            {counts?.delivered_today ?? counts?.delivered ?? 0}
-          </GlassText>
-          {counts?.delivered_week !== undefined ? (
-            <GlassText variant="caption" tone="soft" nums style={{ marginTop: 2 }}>
-              {counts.delivered_week} this week · {counts.delivered_month ?? 0} this month
-            </GlassText>
-          ) : null}
-
-          <View style={{ flexDirection: 'row', gap: gspace.sm, marginTop: gspace.lg }}>
-            <Tile label="On road" value={String(counts?.out_for_delivery ?? 0)} />
-            <Tile label="Assigned" value={String(counts?.assigned ?? 0)} />
-            <Tile label="On duty" value={shift ?? '—'} />
+            ) : null}
           </View>
-        </GlassCard>
+        </View>
 
-        {/* Cash already taken at the door today. Somebody else's money, so it
-            gets its own card, with the jobs behind the figure. */}
-        <GlassCard style={{ marginTop: gspace.lg }}>
-          <GlassText variant="caption" tone="soft">
-            Cash collected today
-          </GlassText>
-          {collected.rows.length ? (
-            <>
-              <GlassText variant="amount" tone="orange" nums style={{ marginTop: 2 }}>
-                {money(collected.total, collected.currency)}
-              </GlassText>
-              <GlassText variant="body" tone="soft">
-                {collected.rows.length === 1
-                  ? '1 cash order delivered'
-                  : `${collected.rows.length} cash orders delivered`}
-              </GlassText>
-              <View style={{ marginTop: gspace.md }}>
-                {collected.rows.map((row, i) => (
-                  <View
-                    key={row.orderId}
-                    style={{
-                      flexDirection: 'row',
-                      alignItems: 'center',
-                      paddingVertical: gspace.sm,
-                      borderTopWidth: i === 0 ? 0 : 1,
-                      borderTopColor: glass.divider,
-                    }}
-                  >
-                    <View style={{ flex: 1, minWidth: 0 }}>
-                      <GlassText variant="bodyStrong" numberOfLines={1}>
-                        {row.customer || row.code}
-                      </GlassText>
-                      <GlassText variant="caption" tone="soft" nums numberOfLines={1}>
-                        {[row.code, timeOnly(row.at, history.data?.timezone ?? timezone)]
-                          .filter(Boolean)
-                          .join(' · ')}
-                      </GlassText>
-                    </View>
-                    <GlassText variant="bodyStrong" nums>
-                      {money(row.amount, collected.currency)}
+        {/* Today's trips: what each paid a partner; an office rider sees the list without pay. */}
+        <GlassText variant="label" tone="soft" upper style={{ marginTop: gspace.sm }}>
+          Today&rsquo;s trips
+        </GlassText>
+        <View
+          style={{
+            backgroundColor: glass.white,
+            borderRadius: gradius.card,
+            borderWidth: 1,
+            borderColor: glass.divider,
+          }}
+        >
+          {trips.length ? (
+            trips.map((t, i) => {
+              const km = t.shop_to_customer_m ? `${(t.shop_to_customer_m / 1000).toFixed(1)} km` : null;
+              return (
+                <View
+                  key={t.delivery_order_id}
+                  style={{
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    paddingHorizontal: gspace.md,
+                    paddingVertical: gspace.md,
+                    borderTopWidth: i === 0 ? 0 : 1,
+                    borderTopColor: glass.divider,
+                  }}
+                >
+                  <View style={{ flex: 1, minWidth: 0 }}>
+                    <GlassText variant="bodyStrong" numberOfLines={1}>
+                      {t.customer_name}
+                    </GlassText>
+                    <GlassText variant="caption" tone="soft" nums numberOfLines={1}>
+                      {[timeOnly(t.finished_at, history.data?.timezone ?? timezone), t.sales_order || t.delivery_order_name, km]
+                        .filter(Boolean)
+                        .join(' · ')}
                     </GlassText>
                   </View>
-                ))}
-              </View>
-            </>
+                  {partner && t.rider_fee ? (
+                    <GlassText variant="bodyStrong" nums style={{ color: glass.green }}>
+                      {`+${fmt(t.rider_fee)}`}
+                    </GlassText>
+                  ) : null}
+                </View>
+              );
+            })
           ) : (
-            <GlassText variant="body" tone="soft" style={{ marginTop: gspace.sm }}>
+            <GlassText variant="body" tone="soft" style={{ padding: gspace.lg }}>
               {history.isError
                 ? "Could not load today's deliveries. Pull down to try again."
                 : history.isLoading
                   ? 'Checking today’s deliveries…'
-                  : 'No cash collected yet today.'}
+                  : 'No deliveries yet today.'}
             </GlassText>
           )}
-        </GlassCard>
-
-        {/* Cash on the jobs still being carried: not collected yet. This card
-            was titled "Cash in hand", which it never was. Hidden at zero. */}
-        {toCollect > 0 ? (
-          <GlassCard style={{ marginTop: gspace.lg }}>
-            <GlassText variant="caption" tone="soft">
-              Still to collect
-            </GlassText>
-            <GlassText variant="amount" nums style={{ marginTop: 2 }}>
-              {money(toCollect, currency)}
-            </GlassText>
-            <GlassText variant="body" tone="soft" style={{ marginTop: gspace.sm }}>
-              On the cash orders you are carrying now.
-            </GlassText>
-          </GlassCard>
-        ) : null}
-
-        <GlassText variant="caption" tone="soft" style={{ marginTop: gspace.md }}>
-          Hand collected cash to the shop. Handovers will be confirmed in the app
-          once the server supports it.
-        </GlassText>
-
-        {/* Quiet, at the foot: why an own rider sees no pay here. */}
-        {partner ? null : (
-          <GlassText
-            variant="caption"
-            tone="faint"
-            style={{ marginTop: gspace.xxl, textAlign: 'center' }}
-          >
-            You are a staff rider on salary, so trips show no pay here.
-          </GlassText>
-        )}
+        </View>
       </ScrollView>
     </GlassScreen>
   );
