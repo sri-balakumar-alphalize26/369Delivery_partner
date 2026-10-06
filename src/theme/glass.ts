@@ -70,15 +70,17 @@ export const glass = {
 } as const;
 
 /**
- * Manrope, one step heavier than each name says: thin strokes are the second
+ * Inter, one step heavier than each name says: thin strokes are the second
  * thing glare takes away, so "regular" is the 500 face and "bold" the 800.
+ * Inter over Manrope (6 Oct 2026): its 0/O and 1/l are told apart at a
+ * glance, which is what the codes and amounts at the door need.
  */
 export const font = {
-  regular: 'Manrope_500Medium',
-  medium: 'Manrope_600SemiBold',
-  semibold: 'Manrope_700Bold',
-  bold: 'Manrope_800ExtraBold',
-  extrabold: 'Manrope_800ExtraBold',
+  regular: 'Inter_500Medium',
+  medium: 'Inter_600SemiBold',
+  semibold: 'Inter_700Bold',
+  bold: 'Inter_800ExtraBold',
+  extrabold: 'Inter_800ExtraBold',
 } as const;
 
 /** The name the faces were first exported under; a few files still use it. */

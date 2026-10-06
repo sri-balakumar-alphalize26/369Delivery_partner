@@ -1,8 +1,8 @@
 import { Ionicons } from '@expo/vector-icons';
 import {
-  Manrope_700Bold,
+  Inter_700Bold,
   useFonts,
-} from '@expo-google-fonts/manrope';
+} from '@expo-google-fonts/inter';
 import { Tabs, usePathname, useRouter } from 'expo-router';
 import { useEffect } from 'react';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -71,7 +71,7 @@ export default function AppLayout() {
    * splash is covering this.
    */
   // The face `font.semibold` names, which is what the label below is set in.
-  const [fontsLoaded, fontError] = useFonts({ Manrope_700Bold });
+  const [fontsLoaded, fontError] = useFonts({ Inter_700Bold });
   useOwedPhotosGuard();
   if (!fontsLoaded && !fontError) return null;
 
@@ -169,6 +169,16 @@ export default function AppLayout() {
       {/* The parcel photos after a code. No bar: there is nowhere else to go. */}
       <Tabs.Screen
         name="photos/[id]"
+        options={{ href: null, tabBarStyle: { display: 'none' } }}
+      />
+      {/* "Delivered, thank you" after the delivery photos. No bar: it leads back to the jobs. */}
+      <Tabs.Screen
+        name="done/[id]"
+        options={{ href: null, tabBarStyle: { display: 'none' } }}
+      />
+      {/* "Set up your phone", from Home and Profile. No bar: it has its own back. */}
+      <Tabs.Screen
+        name="setup"
         options={{ href: null, tabBarStyle: { display: 'none' } }}
       />
     </Tabs>

@@ -1,12 +1,12 @@
 import {
-  Manrope_500Medium,
-  Manrope_600SemiBold,
-  Manrope_700Bold,
-  Manrope_800ExtraBold,
+  Inter_500Medium,
+  Inter_600SemiBold,
+  Inter_700Bold,
+  Inter_800ExtraBold,
   useFonts,
-} from '@expo-google-fonts/manrope';
+} from '@expo-google-fonts/inter';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { Stack, useRouter, useSegments } from 'expo-router';
+import { Stack, usePathname, useRouter, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { StatusBar as ExpoStatusBar } from 'expo-status-bar';
 import { ReactNode, useCallback, useEffect, useState } from 'react';
@@ -15,6 +15,7 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { glass } from '../src/theme/glass';
 import { SplashAnimation } from '../src/ui/SplashAnimation';
 import { CameraHost } from '../src/ui/CameraSheet';
+import { ConfirmHost } from '../src/ui/ConfirmSheet';
 import * as Notifications from 'expo-notifications';
 import { useOfferAlert } from '../src/hooks/useOfferAlert';
 import { useDutyLocation } from '../src/location/dutyLocation';
@@ -23,8 +24,16 @@ import { useOutbox } from '../src/hooks/useOutbox';
 import { useSettingsRefresh } from '../src/hooks/useSettingsRefresh';
 import { usePush } from '../src/push/usePush';
 import { useSession } from '../src/store/session';
+import { flushCrashes, installCrashHandler, noteRoute } from '../src/lib/crashReport';
+import { registerRingBackgroundHandler } from '../src/push/fullScreenRing';
+import { useWidgetSync } from '../src/widget/useWidgetSync';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
+
+// Errors nothing else caught are kept and sent to the server (crashReport.ts).
+installCrashHandler();
+// "Not now" on a job ringing with the app in the background (fullScreenRing.ts).
+registerRingBackgroundHandler();
 
 // Any screen that throws lands here rather than on a blank page, and is reported.
 export { ErrorBoundary } from '../src/ui/CrashScreen';
@@ -108,6 +117,19 @@ function Gate({ children }: { children: ReactNode }) {
   // What the office switches in Delivery Settings reaches an open phone too.
   useSettingsRefresh(connected);
 
+  // The home-screen widget shows duty, today's deliveries and the job in hand.
+  useWidgetSync(connected);
+
+  // Crashes kept on the phone go to the server once signed in; each report
+  // names the screen it happened on.
+  const pathname = usePathname();
+  useEffect(() => {
+    noteRoute(pathname);
+  }, [pathname]);
+  useEffect(() => {
+    if (connected) void flushCrashes();
+  }, [connected]);
+
   useEffect(() => {
     if (!ready) return;
     if (!connected && segments[0] !== 'connect') router.replace('/connect');
@@ -118,10 +140,10 @@ function Gate({ children }: { children: ReactNode }) {
 
 export default function RootLayout() {
   const [fontsLoaded, fontError] = useFonts({
-    Manrope_500Medium,
-    Manrope_600SemiBold,
-    Manrope_700Bold,
-    Manrope_800ExtraBold,
+    Inter_500Medium,
+    Inter_600SemiBold,
+    Inter_700Bold,
+    Inter_800ExtraBold,
   });
 
   const ready = useSession((s) => s.ready);
@@ -177,6 +199,8 @@ export default function RootLayout() {
           </Gate>
           {/* The one camera every photo uses, inside the app (see CameraSheet). */}
           <CameraHost />
+          {/* The red-and-white "are you sure?" for steps that cannot be undone. */}
+          <ConfirmHost />
         </SafeAreaProvider>
       </QueryClientProvider>
 

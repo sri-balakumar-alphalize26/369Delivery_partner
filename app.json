@@ -48,24 +48,8 @@
         "POST_NOTIFICATIONS",
         "WAKE_LOCK",
         "VIBRATE",
-        "android.permission.ACCESS_COARSE_LOCATION",
-        "android.permission.ACCESS_FINE_LOCATION",
-        "android.permission.ACCESS_BACKGROUND_LOCATION",
-        "android.permission.FOREGROUND_SERVICE",
-        "android.permission.FOREGROUND_SERVICE_LOCATION",
-        "ACCESS_COARSE_LOCATION",
-        "ACCESS_FINE_LOCATION",
-        "ACCESS_BACKGROUND_LOCATION",
-        "FOREGROUND_SERVICE",
-        "FOREGROUND_SERVICE_LOCATION",
-        "POST_NOTIFICATIONS",
-        "WAKE_LOCK",
-        "VIBRATE",
-        "android.permission.ACCESS_COARSE_LOCATION",
-        "android.permission.ACCESS_FINE_LOCATION",
-        "android.permission.ACCESS_BACKGROUND_LOCATION",
-        "android.permission.FOREGROUND_SERVICE",
-        "android.permission.FOREGROUND_SERVICE_LOCATION"
+        "USE_FULL_SCREEN_INTENT",
+        "ACCESS_NOTIFICATION_POLICY"
       ]
     },
     "web": {
@@ -106,13 +90,36 @@
           "icon": "./assets/images/android-icon-monochrome.png",
           "color": "#0042B3",
           "sounds": [
-            "./assets/sounds/near_customer.wav"
+            "./assets/sounds/near_customer.wav",
+            "./assets/sounds/new_job.wav",
+            "./assets/sounds/success.wav",
+            "./assets/sounds/wrong.wav",
+            "./assets/sounds/job_gone.wav"
           ]
         }
       ],
       "expo-video",
       "expo-audio",
-      "expo-asset"
+      "expo-asset",
+      "./plugins/withLockScreenRing",
+      [
+        "react-native-android-widget",
+        {
+          "widgets": [
+            {
+              "name": "RiderWidget",
+              "label": "369 Delivery",
+              "description": "Duty, today's deliveries and the job in hand",
+              "minWidth": "250dp",
+              "minHeight": "110dp",
+              "targetCellWidth": 4,
+              "targetCellHeight": 2,
+              "resizeMode": "horizontal|vertical",
+              "updatePeriodMillis": 1800000
+            }
+          ]
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true
