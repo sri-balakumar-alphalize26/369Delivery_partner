@@ -28,6 +28,9 @@ import { useSession } from '../src/store/session';
 import { flushCrashes, installCrashHandler, noteRoute } from '../src/lib/crashReport';
 import { registerRingBackgroundHandler } from '../src/push/fullScreenRing';
 import { useWidgetSync } from '../src/widget/useWidgetSync';
+import { usePhotoUploads } from '../src/hooks/usePhotoUploads';
+import { registerUploadService } from '../src/photos/uploadNotification';
+import { UploadBar } from '../src/ui/UploadBar';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
@@ -35,6 +38,8 @@ SplashScreen.preventAutoHideAsync().catch(() => {});
 installCrashHandler();
 // "Not now" on a job ringing with the app in the background (fullScreenRing.ts).
 registerRingBackgroundHandler();
+// Keeps the parcel photos uploading with the phone in a pocket (uploadNotification.ts).
+registerUploadService();
 
 // Any screen that throws lands here rather than on a blank page, and is reported.
 export { ErrorBoundary } from '../src/ui/CrashScreen';
@@ -111,6 +116,8 @@ function Gate({ children }: { children: ReactNode }) {
 
   // Steps tapped with no signal go by themselves once there is one.
   useOutbox(connected);
+  // Parcel photos go up after Send while the rider carries on.
+  usePhotoUploads(connected);
   // On a server with the fleet module: where this rider is, for the office's
   // live map, while on duty with the app open.
   useDutyLocation(connected);
@@ -200,6 +207,8 @@ export default function RootLayout() {
           </Gate>
           {/* Popups a screen draws from deep in its content, e.g. the code card. */}
           <OverlayHost />
+          {/* Parcel photos going up after Send (see photos/uploader). */}
+          <UploadBar />
           {/* The one camera every photo uses, inside the app (see CameraSheet). */}
           <CameraHost />
           {/* The red-and-white "are you sure?" for steps that cannot be undone. */}

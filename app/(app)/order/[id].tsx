@@ -67,6 +67,8 @@ import {
 import { stopOfferAlert } from '../../../src/hooks/useOfferAlert';
 import { shopTimeZone, useSession } from '../../../src/store/session';
 import { photoProblem, takePhoto } from '../../../src/ui/takePhoto';
+import { dropPhotos, shrinkPhoto } from '../../../src/photos/shrink';
+import { useReportUpload } from '../../../src/photos/uploader';
 import * as Notifications from 'expo-notifications';
 import { playNearCustomer } from '../../../src/lib/sounds';
 import { claimNearAuto } from '../../../src/push/nearAutoLedger';
@@ -957,12 +959,29 @@ export default function Job() {
           // this. An older server might; its refusal re-renders from the truth.
           res = await api.confirmReturn(orderId);
           break;
-        case 'report_issue':
-          res = await api.reportIssue(orderId, reason ?? 'other', undefined, {
-            ...(photo ? { photoUri: photo.uri, photoName: photo.name } : {}),
-            ...(note ? { note } : {}),
-          });
+        case 'report_issue': {
+          // The photo made lighter first (same size, 80%), its upload shown in
+          // the bar at the top; the lighter copy goes once sent.
+          const small = photo ? await shrinkPhoto(photo.uri) : null;
+          const ref = order ? photoRef(order) : `order${orderId}`;
+          try {
+            res = await api.reportIssue(orderId, reason ?? 'other', undefined, {
+              ...(photo && small
+                ? {
+                    photoUri: small,
+                    photoName: photo.name,
+                    onProgress: (fraction: number) =>
+                      useReportUpload.setState({ ref, fraction }),
+                  }
+                : {}),
+              ...(note ? { note } : {}),
+            });
+          } finally {
+            useReportUpload.setState({ ref: null }, true);
+            if (photo && small && small !== photo.uri) dropPhotos([small]);
+          }
           break;
+        }
         case 'verify_handover':
           // Rider B: rider A's code. The reply carries the job, now B's and
           // unlocked, the same as a verified pickup code.

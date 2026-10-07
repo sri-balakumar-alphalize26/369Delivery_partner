@@ -45,6 +45,7 @@
         "ACCESS_BACKGROUND_LOCATION",
         "FOREGROUND_SERVICE",
         "FOREGROUND_SERVICE_LOCATION",
+        "FOREGROUND_SERVICE_DATA_SYNC",
         "POST_NOTIFICATIONS",
         "WAKE_LOCK",
         "VIBRATE",
@@ -102,6 +103,7 @@
       "expo-audio",
       "expo-asset",
       "./plugins/withLockScreenRing",
+      "./plugins/withPhotoUploadService",
       [
         "react-native-android-widget",
         {

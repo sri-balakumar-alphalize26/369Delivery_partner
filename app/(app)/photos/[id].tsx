@@ -13,7 +13,6 @@ import {
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useBottomInset } from '../../../src/hooks/useBottomInset';
 import { api } from '../../../src/api/endpoints';
-import { ApiError } from '../../../src/api/types';
 import { photoFileName } from '../../../src/lib/photoName';
 import {
   clearOwed,
@@ -23,13 +22,15 @@ import {
   OwedPhotos,
   PhotoStage,
   Shot,
+  submitOwed,
   updateShots,
 } from '../../../src/photos/owed';
+import { dropPhotos, keepPhoto } from '../../../src/photos/shrink';
+import { drainPhotos } from '../../../src/photos/uploader';
 import { serverNow } from '../../../src/lib/clock';
 import { timeOnly } from '../../../src/lib/format';
-import { shopTimeZone, useSession } from '../../../src/store/session';
+import { useSession } from '../../../src/store/session';
 import { glass, gradius, gspace } from '../../../src/theme/glass';
-import { notice } from '../../../src/ui/ConfirmSheet';
 import { photoProblem, takePhoto } from '../../../src/ui/takePhoto';
 import { GlassButton } from '../../../src/ui/glass/GlassButton';
 import { GlassIcon } from '../../../src/ui/glass/GlassIcon';
@@ -75,11 +76,10 @@ const SLOTS: Record<PhotoStage, { title: string; hint: string }[]> = {
  * photos are saved - no back button, Android's back swallowed - and the app
  * layout sends the rider back here while `owed` still lists the job.
  *
- * Nothing goes up until Save: the rider sees every photo first and can retake
- * any of them. Save sends the unsent ones one by one, so a signal dropping at
- * photo 3 leaves 1 and 2 on the server and only 3 and 4 to try again. Should
- * photo 3 have arrived after all, the server keeps one copy of a name it has
- * already seen (`duplicate: true`), so sending it again is harmless.
+ * Nothing goes up until Send: the rider sees every photo first and can retake
+ * any of them. Send hands them to the uploader (`photos/uploader.ts`) and moves
+ * on at once - the photos go up in the background, made lighter first, with a
+ * bar at the top and a notification saying how far along they are.
  */
 export default function Photos() {
   const { id, stage: stageParam } = useLocalSearchParams<{
@@ -97,10 +97,6 @@ export default function Photos() {
   const [loaded, setLoaded] = useState(false);
   /** The photo open full size, or none. */
   const [viewing, setViewing] = useState<number | null>(null);
-  /** The photo going up right now, for its row's status. */
-  const [sendingAt, setSendingAt] = useState<number | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [sending, setSending] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const opened = useRef(false);
 
@@ -172,9 +168,10 @@ export default function Photos() {
     }, [orderId, stage])
   );
 
-  // Nothing owed (saved already, or a stale link): back to the work.
+  // Nothing owed (saved already, or a stale link), or already sent off and
+  // going up in the background: back to the work.
   useEffect(() => {
-    if (loaded && !entry) leave();
+    if (loaded && (!entry || entry.submitted)) leave();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [loaded, entry]);
 
@@ -235,10 +232,11 @@ export default function Photos() {
       setError(photoProblem(shot.error));
       return;
     }
-    // Named again in the company's zone when it is sent; see saveAll.
+    // Named again in the company's zone when it is sent; see uploader.ts.
     const takenAt = serverNow();
     const fresh: Shot = {
-      uri: shot.uri,
+      // Out of the camera's cache: it may wait a while for signal.
+      uri: keepPhoto(shot.uri),
       name: timezone ? photoFileName(entry.ref, new Date(takenAt), timezone) : '',
       takenAt,
       sent: false,
@@ -247,63 +245,15 @@ export default function Photos() {
     const next =
       at === undefined ? [...current, fresh] : current.map((s, i) => (i === at ? fresh : s));
     await store(next);
+    if (at !== undefined && current[at]) dropPhotos([current[at].uri, current[at].small]);
   }
 
+  /** The photos are final: they go up in the background, and the rider moves on. */
   async function saveAll() {
     if (!entry || !enough) return;
-    setBusy(true);
-    setError(null);
-    let next = [...entry.shots];
-    const todo = next.filter((s) => !s.sent).length;
-    let n = 0;
-    try {
-      // Every photo of the stage named in the one zone, the company's, from
-      // the moment it was taken - never the phone's zone.
-      const zone = await shopTimeZone();
-      next = next.map((s) =>
-        !s.sent && s.takenAt
-          ? { ...s, name: photoFileName(entry.ref, new Date(s.takenAt), zone) }
-          : s
-      );
-      for (let i = 0; i < next.length; i++) {
-        if (next[i].sent) continue;
-        n += 1;
-        setSending(`Sending ${n} of ${todo}…`);
-        setSendingAt(i);
-        await api.uploadProof(orderId, next[i].uri, next[i].name, stage);
-        next = next.map((s, j) => (j === i ? { ...s, sent: true } : s));
-        await store(next);
-      }
-      await clearOwed(orderId, stage);
-      leave();
-    } catch (err) {
-      // The server holds the most it keeps, or the job closed for photos
-      // 24 h after it ended. Either way nothing more can go up, and the
-      // rider must not be held on a screen with no way out.
-      if (
-        err instanceof ApiError &&
-        (err.code === 'too_many_photos' || err.code === 'wrong_state')
-      ) {
-        await clearOwed(orderId, stage);
-        void notice(
-          'Photos',
-          err.code === 'too_many_photos'
-            ? 'The shop already has 4 photos for this parcel.'
-            : err.message
-        );
-        leave();
-        return;
-      }
-      setError(
-        err instanceof ApiError && err.code !== 'network'
-          ? err.message
-          : "Couldn't send. Your photos are kept — try again."
-      );
-    } finally {
-      setSending(null);
-      setSendingAt(null);
-      setBusy(false);
-    }
+    await submitOwed(orderId, stage);
+    void drainPhotos();
+    leave();
   }
 
   // A plain spinner, not the box animation: this is a moment's read from the
@@ -403,15 +353,13 @@ export default function Photos() {
                   </GlassText>
                   <RowStatus
                     sent={s.sent}
-                    sendingNow={sendingAt === i}
-                    waiting={busy && !s.sent && sendingAt !== i}
                     taken={timeOnly(
                       s.takenAt ? new Date(s.takenAt).toISOString() : undefined,
                       timezone
                     )}
                   />
                 </View>
-                {!s.sent && !busy ? (
+                {!s.sent ? (
                   <Pressable
                     onPress={() => shoot(i)}
                     accessibilityRole="button"
@@ -437,7 +385,7 @@ export default function Photos() {
             <Pressable
               key={i}
               onPress={() => shoot()}
-              disabled={!next || busy}
+              disabled={!next}
               accessibilityRole="button"
               accessibilityLabel={`Take photo ${i + 1}: ${slot.title}`}
               style={({ pressed }) => ({
@@ -504,15 +452,10 @@ export default function Photos() {
         ) : null}
         {enough ? (
           <GlassButton
-            title={
-              busy
-                ? (sending ?? 'Sending…')
-                : `Send ${shots.length} photos${stage === 'delivery' ? ' and finish' : ''}`
-            }
+            title={`Send ${shots.length} photos${stage === 'delivery' ? ' and finish' : ''}`}
             kind="green"
             icon="check"
             onPress={saveAll}
-            loading={busy}
           />
         ) : (
           <GlassButton
@@ -520,13 +463,12 @@ export default function Photos() {
             kind="green"
             icon="camera"
             onPress={() => shoot()}
-            disabled={busy}
           />
         )}
         <GlassText variant="caption" tone="soft" style={{ textAlign: 'center' }}>
-          {enough && !done && !busy
-            ? 'Add up to 4 if it helps. Photos stay on the phone until they are sent.'
-            : 'Photos stay on the phone until they are sent.'}
+          {enough && !done
+            ? 'Add up to 4 if it helps. They upload in the background - you can carry on.'
+            : 'They upload in the background - you can carry on.'}
         </GlassText>
       </View>
 
@@ -556,7 +498,7 @@ export default function Photos() {
               paddingBottom: bottomInset + gspace.md,
             }}
           >
-            {big && !big.sent && !busy && viewing !== null ? (
+            {big && !big.sent && viewing !== null ? (
               <GlassButton
                 title="Retake"
                 kind="ghost"
@@ -581,18 +523,8 @@ export default function Photos() {
   );
 }
 
-/** Under each taken photo: when it was taken, then how its upload is going. */
-function RowStatus({
-  sent,
-  sendingNow,
-  waiting,
-  taken,
-}: {
-  sent: boolean;
-  sendingNow: boolean;
-  waiting: boolean;
-  taken: string;
-}) {
+/** Under each taken photo: when it was taken, or Sent. Uploads show in `UploadBar`. */
+function RowStatus({ sent, taken }: { sent: boolean; taken: string }) {
   if (sent) {
     return (
       <View
@@ -610,26 +542,9 @@ function RowStatus({
       </View>
     );
   }
-  if (sendingNow) {
-    return (
-      <View
-        style={{
-          flexDirection: 'row',
-          alignItems: 'center',
-          columnGap: 6,
-          marginTop: 4,
-        }}
-      >
-        <ActivityIndicator size="small" color={glass.band} />
-        <GlassText variant="label" tone="soft">
-          Sending…
-        </GlassText>
-      </View>
-    );
-  }
   return (
-    <GlassText variant="label" tone={waiting ? 'faint' : 'green'} style={{ marginTop: 4 }}>
-      {waiting ? 'Waiting to send' : taken ? `Taken ${taken}` : 'Taken'}
+    <GlassText variant="label" tone="green" style={{ marginTop: 4 }}>
+      {taken ? `Taken ${taken}` : 'Taken'}
     </GlassText>
   );
 }

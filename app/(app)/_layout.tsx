@@ -6,13 +6,16 @@ import {
 import { Tabs, usePathname, useRouter } from 'expo-router';
 import { useEffect } from 'react';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { firstOwed, onOwedChange } from '../../src/photos/owed';
+import { firstUnsubmitted, onOwedChange } from '../../src/photos/owed';
 import { font, glass, gradius } from '../../src/theme/glass';
 
 /**
  * While a job owes its parcel photos, every screen leads back to them: a
  * restart, a push opening another job, a tab tapped from a stale screen. The
  * code is already accepted, so this is the only thing holding the rider to it.
+ *
+ * Only until Send: from then the photos go up in the background and the rider
+ * carries on (`UploadBar` shows how it is going).
  */
 function useOwedPhotosGuard() {
   const pathname = usePathname();
@@ -20,7 +23,7 @@ function useOwedPhotosGuard() {
   useEffect(() => {
     let live = true;
     const check = () =>
-      firstOwed().then((owed) => {
+      firstUnsubmitted().then((owed) => {
         if (!live || !owed) return;
         if (pathname === `/photos/${owed.orderId}`) return;
         router.replace({

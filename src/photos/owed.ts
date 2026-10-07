@@ -1,5 +1,6 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Money } from '../api/types';
+import { dropPhotos } from './shrink';
 
 /**
  * Photos a job still owes, after its pickup code or the customer's code.
@@ -8,6 +9,9 @@ import { Money } from '../api/types';
  * holds the rider to the photos. This list does: while it has an entry the app
  * keeps the rider on the photo screen, and it lives in storage so closing the
  * app or a restart lands back there with the photos already taken.
+ *
+ * Send marks the entry `submitted`: the rider is free to go, and the uploader
+ * (`uploader.ts`) sends its photos in the background, clearing it once all are up.
  */
 
 export type PhotoStage = 'pickup' | 'delivery';
@@ -23,6 +27,8 @@ export interface Shot {
   takenAt?: number;
   /** Up on the server; a retry after a dropped signal skips it. */
   sent: boolean;
+  /** The lighter copy that goes up (`shrinkPhoto`), made once. */
+  small?: string;
 }
 
 export interface OwedPhotos {
@@ -36,6 +42,8 @@ export interface OwedPhotos {
   /** When the server marked it delivered, UTC. Delivery stage only. */
   deliveredAt?: string;
   shots: Shot[];
+  /** Send pressed: the photos are final and upload in the background. */
+  submitted?: boolean;
 }
 
 const KEY = 'd369.owedPhotos';
@@ -78,9 +86,36 @@ export async function getOwed(orderId: number, stage: PhotoStage): Promise<OwedP
   return (await load()).find((e) => e.orderId === orderId && e.stage === stage) ?? null;
 }
 
-/** The oldest job still owing photos: where the app sends the rider back to. */
-export async function firstOwed(): Promise<OwedPhotos | null> {
-  return (await load())[0] ?? null;
+/** The oldest job whose photos are still to be taken: where the app sends the rider back to. */
+export async function firstUnsubmitted(): Promise<OwedPhotos | null> {
+  return (await load()).find((e) => !e.submitted) ?? null;
+}
+
+/** The oldest job whose photos are taken and still going up. */
+export async function nextToUpload(): Promise<OwedPhotos | null> {
+  return (await load()).find((e) => e.submitted && e.shots.some((s) => !s.sent)) ?? null;
+}
+
+/** Sent jobs left behind: the app closed between the last upload and clearing it. */
+export async function clearFinished(): Promise<void> {
+  for (const e of await load()) {
+    if (e.submitted && e.shots.every((s) => s.sent)) await clearOwed(e.orderId, e.stage);
+  }
+}
+
+/** Photos taken, sent off with Send, and not up yet - for the upload bar. */
+export async function pendingCount(): Promise<number> {
+  return (await load())
+    .filter((e) => e.submitted)
+    .reduce((n, e) => n + e.shots.filter((s) => !s.sent).length, 0);
+}
+
+/** Send: the photos are final, and the rider may leave. */
+export async function submitOwed(orderId: number, stage: PhotoStage): Promise<void> {
+  const all = await load();
+  await save(
+    all.map((e) => (e.orderId === orderId && e.stage === stage ? { ...e, submitted: true } : e))
+  );
 }
 
 export async function updateShots(orderId: number, stage: PhotoStage, shots: Shot[]): Promise<void> {
@@ -88,7 +123,10 @@ export async function updateShots(orderId: number, stage: PhotoStage, shots: Sho
   await save(all.map((e) => (e.orderId === orderId && e.stage === stage ? { ...e, shots } : e)));
 }
 
+/** Ends the debt and deletes its files: all sent, or the server will take no more. */
 export async function clearOwed(orderId: number, stage: PhotoStage): Promise<void> {
   const all = await load();
-  await save(all.filter((e) => !(e.orderId === orderId && e.stage === stage)));
+  const gone = all.find((e) => e.orderId === orderId && e.stage === stage);
+  await save(all.filter((e) => e !== gone));
+  if (gone) dropPhotos(gone.shots.flatMap((s) => [s.uri, s.small]));
 }
