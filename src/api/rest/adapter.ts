@@ -346,7 +346,7 @@ export const restAdapter: ApiAdapter = {
    * at most (a larger one is refused `too_large`). `stage` is ours, not the
    * contract's yet: the server keeps the file and drops the field for now.
    */
-  async uploadProof(id, uri, fileName, stage) {
+  async uploadProof(id, uri, fileName, stage, onProgress) {
     const form = new FormData();
     form.append('delivery_order_id', String(id));
     form.append('stage', stage);
@@ -355,8 +355,9 @@ export const restAdapter: ApiAdapter = {
     const r = await request<{ attachment_id: number }>('/api/delivery/proof', {
       method: 'POST',
       form,
-      // A photo on a weak signal takes longer than a JSON call.
+      // A minute with nothing moving: a weak signal is slow, not dead.
       timeoutMs: 60_000,
+      onProgress: onProgress && ((sent, total) => onProgress(total > 0 ? sent / total : 0)),
     });
     return { attachment_id: r.attachment_id };
   },
@@ -398,6 +399,9 @@ export const restAdapter: ApiAdapter = {
           form,
           idempotencyKey: key,
           timeoutMs: 60_000,
+          onProgress:
+            extra.onProgress &&
+            ((sent, total) => extra.onProgress?.(total > 0 ? sent / total : 0)),
         })
       );
     }

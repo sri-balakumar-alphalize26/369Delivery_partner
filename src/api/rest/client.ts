@@ -142,10 +142,14 @@ export interface RequestOptions {
    */
   idempotencyKey?: string;
   /**
-   * A multipart body instead of JSON — the door photo. `fetch` writes its
-   * own Content-Type with the boundary, so none is set here.
+   * A multipart body instead of JSON — the door photo. It goes by
+   * XMLHttpRequest, which writes its own Content-Type with the boundary, so
+   * none is set here. Its `timeoutMs` counts from the last byte that moved,
+   * not from the start: a big photo on a slow but working signal is not cut off.
    */
   form?: FormData;
+  /** For a `form`: bytes gone up so far, of the whole body. */
+  onProgress?: (sent: number, total: number) => void;
 }
 
 interface Raw {
@@ -187,25 +191,89 @@ async function send(path: string, opts: RequestOptions, token: string | null, ke
   if (method !== 'GET') headers['Idempotency-Key'] = key;
   if (opts.body && !opts.form) headers['Content-Type'] = 'application/json';
 
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? DEFAULT_TIMEOUT_MS);
-
-  let res: Response;
-  try {
-    res = await fetch(`${url}${path}`, {
-      method,
-      headers,
-      body: opts.form ?? (opts.body ? JSON.stringify(opts.body) : undefined),
-      signal: controller.signal,
-    });
-  } catch {
-    throw new ApiError('network', 'Could not reach the server. Check your connection.');
-  } finally {
-    clearTimeout(timer);
+  let reply: Reply;
+  if (opts.form) {
+    reply = await sendForm(`${url}${path}`, method, headers, opts);
+  } else {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), opts.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+    try {
+      const res = await fetch(`${url}${path}`, {
+        method,
+        headers,
+        body: opts.body ? JSON.stringify(opts.body) : undefined,
+        signal: controller.signal,
+      });
+      reply = {
+        status: res.status,
+        contentType: res.headers.get('content-type') ?? '',
+        text: await res.text(),
+      };
+    } catch {
+      throw new ApiError('network', 'Could not reach the server. Check your connection.');
+    } finally {
+      clearTimeout(timer);
+    }
   }
+  return readReply(reply);
+}
 
+interface Reply {
+  status: number;
+  contentType: string;
+  text: string;
+}
+
+/**
+ * A multipart body by XMLHttpRequest: `fetch` says nothing while it uploads,
+ * and a photo bar needs the bytes. Given up only when nothing has moved for
+ * `timeoutMs` - the upload, then the server's answer.
+ */
+function sendForm(
+  url: string,
+  method: string,
+  headers: Record<string, string>,
+  opts: RequestOptions
+): Promise<Reply> {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    const idleMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const quiet = () => {
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => xhr.abort(), idleMs);
+    };
+    const fail = () => {
+      if (timer) clearTimeout(timer);
+      reject(new ApiError('network', 'Could not reach the server. Check your connection.'));
+    };
+
+    xhr.open(method, url);
+    for (const [k, v] of Object.entries(headers)) xhr.setRequestHeader(k, v);
+    xhr.upload.onprogress = (e) => {
+      quiet();
+      if (e.lengthComputable) opts.onProgress?.(e.loaded, e.total);
+    };
+    xhr.onload = () => {
+      if (timer) clearTimeout(timer);
+      resolve({
+        status: xhr.status,
+        contentType: xhr.getResponseHeader('content-type') ?? '',
+        text: xhr.responseText,
+      });
+    };
+    xhr.onerror = fail;
+    xhr.onabort = fail;
+    xhr.ontimeout = fail;
+    quiet();
+    xhr.send(opts.form);
+  });
+}
+
+/** The envelope out of an answer, or why there is none. */
+function readReply(res: Reply): Raw {
   // A wrong database or a dead tunnel answers with an HTML page, never JSON.
-  const contentType = res.headers.get('content-type') ?? '';
+  const contentType = res.contentType;
   if (!contentType.includes('application/json')) {
     if (res.status === 404) {
       throw new ApiError(
@@ -220,7 +288,7 @@ async function send(path: string, opts: RequestOptions, token: string | null, ke
   }
 
   try {
-    return { status: res.status, payload: (await res.json()) as Envelope };
+    return { status: res.status, payload: JSON.parse(res.text) as Envelope };
   } catch {
     throw new ApiError('unknown', 'The server sent a response the app could not read.', {
       status: res.status,

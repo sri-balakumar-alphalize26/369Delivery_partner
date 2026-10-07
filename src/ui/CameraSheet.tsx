@@ -90,8 +90,9 @@ export function CameraHost() {
     if (!camera.current || busy || !ready) return;
     setBusy(true);
     try {
-      // Half quality: a parcel or a receipt must be legible, not beautiful,
-      // and it goes up over a rider's mobile data.
+      // The camera's own JPEG, straight away: `skipProcessing` keeps the
+      // shutter instant, and Android then ignores `quality`. The file is made
+      // lighter later, off the rider's time, before it goes up (photos/shrink.ts).
       const pic = await camera.current.takePictureAsync({
         quality: 0.5,
         skipProcessing: true,

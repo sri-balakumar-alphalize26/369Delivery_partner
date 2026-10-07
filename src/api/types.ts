@@ -1134,7 +1134,9 @@ export interface ApiAdapter {
     id: number,
     uri: string,
     fileName: string,
-    stage: 'pickup' | 'delivery'
+    stage: 'pickup' | 'delivery',
+    /** 0 to 1, as the file goes up. */
+    onProgress?: (fraction: number) => void
   ): Promise<{ attachment_id: number }>;
 
   /** Into Fleet's service log, against the vehicle in hand. Needs `fuel`. */
@@ -1166,8 +1168,16 @@ export interface ApiAdapter {
     id: number,
     reason: string,
     key?: string,
-    /** `note`: the rider's own words, sent with any reason code. */
-    extra?: { photoUri?: string; photoName?: string; note?: string }
+    /**
+     * `note`: the rider's own words, sent with any reason code.
+     * `onProgress`: 0 to 1 as the photo goes up.
+     */
+    extra?: {
+      photoUri?: string;
+      photoName?: string;
+      note?: string;
+      onProgress?: (fraction: number) => void;
+    }
   ): Promise<ActionResult>;
 
   /** Rider B: the 6-digit code rider A shows. On success the job is B's, unlocked. */

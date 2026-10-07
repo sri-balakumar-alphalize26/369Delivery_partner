@@ -705,8 +705,12 @@ export const mockAdapter: ApiAdapter = {
     guard();
   },
 
-  async uploadProof() {
-    await wait(600);
+  async uploadProof(_id, _uri, _name, _stage, onProgress) {
+    // Ticks like a real upload, so the photo bar can be seen moving.
+    for (let i = 1; i <= 10; i++) {
+      await wait(60);
+      onProgress?.(i / 10);
+    }
     guard();
     return { attachment_id: Date.now() };
   },
