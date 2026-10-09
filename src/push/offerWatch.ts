@@ -6,6 +6,24 @@ import { syncClock } from '../lib/clock';
 import { shopName } from '../lib/format';
 import { announced, keepOnly, loadLedger, markAnnounced } from './offerLedger';
 import { ringJob } from './fullScreenRing';
+import { serviceApi } from '../api/service';
+
+/**
+ * Whether this person works in Service. Asked again every ten minutes, so a
+ * change the office makes to Works In reaches the lock-screen watch too.
+ */
+let serviceLine: { yes: boolean; at: number } | null = null;
+const LINES_MAX_AGE_MS = 10 * 60_000;
+async function worksInService(): Promise<boolean> {
+  if (!serviceLine || Date.now() - serviceLine.at > LINES_MAX_AGE_MS) {
+    try {
+      serviceLine = { yes: (await api.partnerMe()).lines.includes('service'), at: Date.now() };
+    } catch {
+      return serviceLine?.yes ?? false;
+    }
+  }
+  return serviceLine.yes;
+}
 
 /**
  * One look for new offers while the app is out of sight — the duty watch calls
@@ -39,6 +57,24 @@ export async function checkOffers(): Promise<boolean | null> {
       if (announced(job.delivery_order_id)) continue;
       markAnnounced(job.delivery_order_id);
       await ringOffer(job);
+    }
+
+    // Service offers too, for someone the office set to work in Service. The
+    // lines are what the app last heard; a fresh context reads them again.
+    if (await worksInService()) {
+      const { jobs } = await serviceApi.jobs();
+      const visits = jobs.filter((j) => j.status === 'offered');
+      keepOnly(new Set(visits.map((j) => j.id)), 'service');
+      for (const v of visits) {
+        if (announced(v.id, 'service')) continue;
+        markAnnounced(v.id, 'service');
+        await ringJob({
+          id: v.id,
+          kind: 'service',
+          title: 'New service job',
+          body: `${v.title} · ${v.area}`,
+        });
+      }
     }
     return true;
   } catch (err) {

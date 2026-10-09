@@ -39,7 +39,6 @@ import {
   isDropLocked,
   JobProblem,
   JobReport,
-  Money,
   PRIMARY_ACTIONS,
   stopLabel,
   trackingWanted,
@@ -66,6 +65,9 @@ import {
 } from '../../../src/location/tracking';
 import { stopOfferAlert } from '../../../src/hooks/useOfferAlert';
 import { shopTimeZone, useSession } from '../../../src/store/session';
+import { passBackOtherOffers, useAcceptLock, withAcceptLock } from '../../../src/store/acceptLock';
+import { useWorkload } from '../../../src/hooks/useWorkload';
+import { showToast } from '../../../src/ui/Toast';
 import { photoProblem, takePhoto } from '../../../src/ui/takePhoto';
 import { dropPhotos, shrinkPhoto } from '../../../src/photos/shrink';
 import { useReportUpload } from '../../../src/photos/uploader';
@@ -123,8 +125,8 @@ import { GlassText } from '../../../src/ui/glass/GlassText';
  * screen when the delivery code is due, and the sheet-over-map for everything
  * between.
  *
- * The per-trip fee ("You earn") is drawn only when the server sends
- * `rider_fee` — Delivery Partners only, worked out on the server, never here.
+ * No pay is shown: every rider is the shop's own, on salary. A `rider_fee`
+ * the server may still send is not read.
  */
 
 /**
@@ -344,6 +346,9 @@ export default function Job() {
   const waitNearRef = useRef(false);
 
   const [busy, setBusy] = useState(false);
+  // A hybrid agent: a service offer waiting too, and the one-Accept-at-a-time lock.
+  const { offers: waitingOffers } = useWorkload();
+  const acceptLock = useAcceptLock((s) => s.busy);
   const [error, setError] = useState<string | null>(null);
   const [otp, setOtp] = useState('');
   const [otpError, setOtpError] = useState<string | null>(null);
@@ -893,7 +898,12 @@ export default function Job() {
       let res: ActionResult;
       switch (action) {
         case 'accept':
-          res = await api.accept(orderId);
+          // One Accept at a time across Delivery and Service; then any service
+          // offer still open goes back, since this rider is busy now.
+          res = await withAcceptLock(`delivery:${orderId}`, () => api.accept(orderId));
+          void passBackOtherOffers('delivery').then((n) => {
+            if (n) showToast("You're busy now. The service offer went to the next technician.");
+          });
           break;
         case 'decline':
           res = await api.decline(orderId, reason);
@@ -1036,7 +1046,7 @@ export default function Job() {
           customerName: res.order?.customer_name || order.customer_name,
           // For the thank-you screen after the delivery photos.
           ...(photoStage === 'delivery'
-            ? { fee: order.rider_fee ?? null, deliveredAt: res.delivered_at ?? new Date().toISOString() }
+            ? { fee: null, deliveredAt: res.delivered_at ?? new Date().toISOString() }
             : {}),
         });
       }
@@ -1077,6 +1087,12 @@ export default function Job() {
         stopOfferAlert();
         await qc.invalidateQueries({ queryKey: ['orders'] });
         void showNotice('Offer expired', 'It went to another rider.');
+        router.replace('/');
+      } else if (err instanceof ApiError && action === 'accept' && err.code === 'agent_busy') {
+        // A service visit is already in hand: this delivery is the next rider's.
+        stopOfferAlert();
+        await qc.invalidateQueries();
+        void showNotice('That job could not be taken', err.message);
         router.replace('/');
       } else if (err instanceof ApiError) {
         // Their message is written for riders — never replace it.
@@ -1849,6 +1865,9 @@ export default function Job() {
             </GlassText>
             {order.delivery_type ? <GlassPill label={order.delivery_type} tone="soft" /> : null}
             {stopLabel(order) ? <GlassPill label={stopLabel(order)!} tone="soft" /> : null}
+            {waitingOffers.service ? (
+              <GlassPill label={`+${waitingOffers.service} more offer · Service`} bg="#E6EAF7" fg="#1C2C5B" />
+            ) : null}
           </View>
 
           {/* What a rider weighs an offer on, in one glance: the money, the
@@ -1866,7 +1885,6 @@ export default function Job() {
               tone={due?.late ? glass.red : undefined}
             />
           </View>
-          {order.rider_fee ? <FeeLine label="You earn on this trip" fee={order.rider_fee} /> : null}
 
           {/* Where the shop is from here. The shop's pin is real on the live
               server even while customer rows carry none; `heading` resolves to
@@ -2014,9 +2032,14 @@ export default function Job() {
             icon="check"
             onPress={() => run(primary)}
             loading={busy}
-            disabled={offerGone}
+            disabled={offerGone || (!!acceptLock && acceptLock !== `delivery:${orderId}`)}
             style={{ marginTop: order.offer_expires_at ? gspace.lg : gspace.xxl }}
           />
+          {acceptLock && acceptLock !== `delivery:${orderId}` ? (
+            <GlassText variant="caption" tone="soft" style={{ textAlign: 'center', marginTop: gspace.sm }}>
+              Another job is being accepted. One moment.
+            </GlassText>
+          ) : null}
 
           {/* An offer has no "something wrong" yet: Decline sits there plainly. */}
           <TroubleRow
@@ -2449,7 +2472,7 @@ export default function Job() {
 
           {/* Collect, Items and Due. `promised_by` was only ever shown on the
               list, so the rider had to go back a screen to see when a job was
-              due. The trip's pay follows, for a Delivery Partner. */}
+              due. */}
           <View style={{ flexDirection: 'row', gap: gspace.md, marginTop: gspace.lg }}>
             <Tile
               label="Collect"
@@ -2469,7 +2492,6 @@ export default function Job() {
               tone={due?.late ? glass.red : undefined}
             />
           </View>
-          {order.rider_fee ? <FeeLine label="You earn on this trip" fee={order.rider_fee} /> : null}
 
           {order.products?.length ? (
             <View style={{ marginTop: gspace.lg }}>
@@ -2771,7 +2793,6 @@ function DeclineSummary({
           {facts.join(' · ')}
         </GlassText>
       ) : null}
-      {order.rider_fee ? <FeeLine label="You would earn" fee={order.rider_fee} /> : null}
       {order.offer_expires_at ? (
         <View style={{ marginTop: gspace.md }}>
           <OfferCountdown expiresAt={order.offer_expires_at} onExpired={() => {}} />
@@ -2883,30 +2904,6 @@ function DeliveryNote({ note }: { note?: string }) {
     <GlassText variant="bodyStrong" style={{ marginTop: gspace.xs }}>
       {text}
     </GlassText>
-  );
-}
-
-/** This trip's pay, exactly as the server worked it out. Delivery Partners only. */
-function FeeLine({ label, fee }: { label: string; fee: Money }) {
-  return (
-    <View
-      style={{
-        flexDirection: 'row',
-        alignItems: 'center',
-        marginTop: gspace.md,
-        padding: gspace.md,
-        borderRadius: gradius.chip,
-        backgroundColor: glass.greenSoft,
-      }}
-    >
-      <GlassIcon name="cash" size={18} color={glass.green} />
-      <GlassText variant="body" style={{ flex: 1, marginLeft: gspace.sm }}>
-        {label}
-      </GlassText>
-      <GlassText variant="subtitle" nums style={{ color: glass.green }}>
-        {fee.formatted}
-      </GlassText>
-    </View>
   );
 }
 

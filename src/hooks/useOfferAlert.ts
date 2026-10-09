@@ -7,7 +7,9 @@ import { playNewJob, stopNewJob } from '../lib/sounds';
 import { announced, clearLedger, keepOnly, loadLedger, markAnnounced } from '../push/offerLedger';
 import { ringJob, stopAllRings } from '../push/fullScreenRing';
 import { pushArrivedRecently } from '../push/usePush';
+import { openJob } from '../push/openJob';
 import { useOrders } from './useOrders';
+import { useServiceJobs } from './useServiceJobs';
 
 /**
  * Making a new job impossible to miss.
@@ -80,6 +82,7 @@ async function announce(job: DeliveryOrder): Promise<void> {
 
 export function useOfferAlert(connected: boolean): void {
   const { data } = useOrders();
+  const { data: service } = useServiceJobs();
   const router = useRouter();
   // Cast: expo-router types this as a tuple of known route literals, which
   // then refuses `includes` against a plain string.
@@ -140,7 +143,12 @@ export function useOfferAlert(connected: boolean): void {
    * Read through a ref so that changing tab does not re-run the detection
    * effect — only new data should be able to raise an alert.
    */
-  const canTakeOver = segments[0] === '(app)' && !segments.includes('order');
+  const canTakeOver =
+    segments[0] === '(app)' &&
+    !segments.includes('order') &&
+    !segments.includes('service') &&
+    !segments.includes('photos') &&
+    !segments.includes('service-photos');
   const canTakeOverRef = useRef(canTakeOver);
   canTakeOverRef.current = canTakeOver;
 
@@ -189,7 +197,10 @@ export function useOfferAlert(connected: boolean): void {
 
     startBuzzing();
 
-    const job = fresh[0];
+    // Two at once: the one that runs out first.
+    const job = [...fresh].sort((a, b) =>
+      (a.offer_expires_at ?? '~').localeCompare(b.offer_expires_at ?? '~')
+    )[0];
 
     /**
      * The guard that matters most.
@@ -207,8 +218,45 @@ export function useOfferAlert(connected: boolean): void {
       return;
     }
 
-    router.push(`/order/${job.delivery_order_id}`);
+    // On the Delivery side, switching over first if Service is open.
+    openJob({ kind: 'delivery', id: job.delivery_order_id });
   }, [connected, data, router]);
+
+  /**
+   * The same for service offers, for someone who works in Service. Same rules:
+   * the first list and the clock-on backlog are not news, an agent inside a
+   * job gets a banner instead of being moved, and otherwise the offer opens on
+   * the Service side.
+   */
+  const seededService = useRef(false);
+  useEffect(() => {
+    if (!connected) {
+      seededService.current = false;
+      return;
+    }
+    if (!service) return;
+    const offered = service.jobs.filter((j) => j.status === 'offered');
+    keepOnly(new Set(offered.map((j) => j.id)), 'service');
+    const baseline = !seededService.current || Date.now() < backlogUntil.current;
+    seededService.current = true;
+
+    const fresh = offered.filter((j) => !announced(j.id, 'service'));
+    if (!fresh.length) return;
+    for (const j of fresh) markAnnounced(j.id, 'service');
+    if (baseline || AppState.currentState !== 'active') return;
+
+    startBuzzing();
+    const job = [...fresh].sort((a, b) =>
+      (a.offer_expires_at ?? '~').localeCompare(b.offer_expires_at ?? '~')
+    )[0];
+    if (!canTakeOverRef.current) {
+      if (!pushArrivedRecently()) {
+        void ringJob({ id: job.id, kind: 'service', title: 'New service job', body: `${job.title} · ${job.area}` });
+      }
+      return;
+    }
+    openJob({ kind: 'service', id: job.id });
+  }, [connected, service]);
 
   // A phone put away mid-alert should go quiet, and so should one whose app is
   // being torn down.

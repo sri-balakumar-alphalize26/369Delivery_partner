@@ -1,11 +1,14 @@
 import { QueryClient, useQueryClient } from '@tanstack/react-query';
-import { useRouter } from 'expo-router';
+import { router as appRouter, useRouter } from 'expo-router';
 import * as Notifications from 'expo-notifications';
 import { useEffect } from 'react';
 import { registerForPush } from './register';
 import { claimNearAuto } from './nearAutoLedger';
 import { feedback } from '../lib/feedback';
 import { onRingAnswered } from './fullScreenRing';
+import { flushPendingJob, jobFromData, openJob } from './openJob';
+import { useSession } from '../store/session';
+import { WORKSPACE_HOME } from '../theme/workspace';
 
 /**
  * Wires push into the running app: register once connected, refresh on arrival,
@@ -60,13 +63,15 @@ export function usePush(connected: boolean) {
       // The open job too: `pickup_code_ready` is the counter having pressed
       // Dispatch, and the rider is standing there waiting for the code boxes.
       qc.invalidateQueries({ queryKey: ['order'] });
+      qc.invalidateQueries({ queryKey: ['service-jobs'] });
+      qc.invalidateQueries({ queryKey: ['service-job'] });
     });
 
-    // Tapping the banner should land on the job it was about.
+    // Tapping the banner should land on the job it was about - on its own side.
     const tapped = Notifications.addNotificationResponseReceivedListener((res) => {
       if (handled.has(res.notification.request.identifier)) return;
       handled.add(res.notification.request.identifier);
-      openFor(res, qc, router);
+      openFor(res, qc);
     });
 
     return () => {
@@ -76,14 +81,20 @@ export function usePush(connected: boolean) {
   }, [qc, router]);
 
   // The call-style ring answered: a tap, "Open job", or the full-screen launch
-  // on a locked phone. Straight onto the offer.
+  // on a locked phone. Straight onto the offer, switching sides if need be.
+  // Listened for from the start: a launch tap is held by `openJob` until the
+  // session is back.
   useEffect(() => {
-    if (!connected) return;
-    return onRingAnswered((id) => {
-      qc.invalidateQueries({ queryKey: ['orders'] });
-      router.push(`/order/${id}`);
+    return onRingAnswered((job) => {
+      qc.invalidateQueries({ queryKey: [job.kind === 'service' ? 'service-jobs' : 'orders'] });
+      openJob(job);
     });
-  }, [connected, qc, router]);
+  }, [qc]);
+
+  // A tap held while signing back in is opened now.
+  useEffect(() => {
+    if (connected) flushPendingJob();
+  }, [connected]);
 
   /**
    * A tap that started the app.
@@ -104,7 +115,7 @@ export function usePush(connected: boolean) {
         handled.add(key);
         // Spent: the next launch must not reopen this job.
         Notifications.clearLastNotificationResponseAsync().catch(() => {});
-        openFor(res, qc, router);
+        openFor(res, qc);
       })
       .catch(() => {});
     return () => {
@@ -113,32 +124,25 @@ export function usePush(connected: boolean) {
   }, [connected, qc, router]);
 }
 
-/** Open the job a tapped notification was about. */
-function openFor(
-  res: Notifications.NotificationResponse,
-  qc: QueryClient,
-  router: ReturnType<typeof useRouter>
-) {
+/** Open the job a tapped notification was about, on the side it belongs to. */
+function openFor(res: Notifications.NotificationResponse, qc: QueryClient) {
   qc.invalidateQueries({ queryKey: ['orders'] });
+  qc.invalidateQueries({ queryKey: ['service-jobs'] });
 
-  const data = res.notification.request.content.data as
-    | { delivery_order_id?: number | string; status?: string }
-    | undefined;
-  const id = Number(data?.delivery_order_id);
+  const data = res.notification.request.content.data as Record<string, unknown> | undefined;
 
   // "Moved on to another rider" and "cancelled" are about a job that is no
   // longer this rider's: opening it would only answer `not_found`. The
   // refreshed list is where the news shows.
   if (data?.status === 'passed' || data?.status === 'cancelled') {
-    router.replace('/');
+    appRouter.replace(WORKSPACE_HOME[useSession.getState().workspace]);
     return;
   }
 
   // Only navigate on a real id — a malformed payload should leave the rider
   // where they are rather than on a broken screen.
-  if (Number.isFinite(id) && id > 0) {
-    router.push(`/order/${id}`);
-  }
+  const job = jobFromData(data);
+  if (job) openJob(job);
 }
 
 /** Notification taps already acted on, so a cold-start tap opens its job once. */

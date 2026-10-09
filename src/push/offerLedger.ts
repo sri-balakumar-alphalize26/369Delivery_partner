@@ -34,25 +34,35 @@ function persist(): void {
   AsyncStorage.setItem(KEY, JSON.stringify([...ids])).catch(() => {});
 }
 
-export function announced(id: number): boolean {
-  return ids.has(id);
+/**
+ * Delivery and service offers are numbered by different models, so the same
+ * number can be one of each. A service offer is kept as its negative.
+ */
+type Kind = 'delivery' | 'service';
+const key = (id: number, kind: Kind) => (kind === 'service' ? -id : id);
+
+export function announced(id: number, kind: Kind = 'delivery'): boolean {
+  return ids.has(key(id, kind));
 }
 
-export function markAnnounced(id: number): void {
-  if (ids.has(id)) return;
-  ids.add(id);
+export function markAnnounced(id: number, kind: Kind = 'delivery'): void {
+  const k = key(id, kind);
+  if (ids.has(k)) return;
+  ids.add(k);
   persist();
 }
 
 /**
- * Forget anything no longer on offer: the set cannot grow all shift, and a job
- * offered a second time announces itself again.
+ * Forget any offer of this kind no longer on offer: the set cannot grow all
+ * shift, and a job offered a second time announces itself again. The other
+ * kind's entries are left alone.
  */
-export function keepOnly(live: Set<number>): void {
+export function keepOnly(live: Set<number>, kind: Kind = 'delivery'): void {
   let changed = false;
-  for (const id of ids) {
-    if (!live.has(id)) {
-      ids.delete(id);
+  for (const k of ids) {
+    if (kind === 'service' ? k >= 0 : k < 0) continue;
+    if (!live.has(Math.abs(k))) {
+      ids.delete(k);
       changed = true;
     }
   }
