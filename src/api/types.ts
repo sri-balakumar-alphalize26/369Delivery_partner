@@ -890,6 +890,8 @@ export type ApiErrorCode =
   | 'handover_waiting'
   // Signing in as the wrong kind of rider: see `registeredKind`.
   | 'wrong_kind'
+  // An Accept refused because a job in the other line is already in hand.
+  | 'agent_busy'
   | 'no_database'
   | 'network'
   | 'unknown';
@@ -996,10 +998,39 @@ export interface CodeRequestResult {
 }
 
 /**
- * Office rider (staff, on salary) or Delivery Partner (paid per trip). Picked
- * on the sign-in screen and checked against `Rider.kind`.
+ * Office rider (staff, on salary) or Delivery Partner (paid per trip). Set by
+ * the office on the rider record (`Rider.kind`); it decides pay, nothing else.
  */
 export type RiderKind = 'own' | 'third_party';
+
+/** The two lines of work the partner app carries. */
+export type WorkLine = 'delivery' | 'service';
+
+/**
+ * What `GET /api/partner/me` answers (our `partner_app` module): which lines
+ * this person works in, as the office set "Works In" on their record, and
+ * whether a job in hand makes them busy for the other line.
+ *
+ * `lines` is what the app opens. Service is left out until the service module
+ * is on the server, even for someone set to both.
+ */
+export interface PartnerInfo {
+  work_type: 'delivery' | 'service' | 'both';
+  lines: WorkLine[];
+  busy_line: 'none' | WorkLine;
+  /** The job that makes them busy, as the office knows it ("DT/OUT/00014"). */
+  busy_ref: string | null;
+  service_available: boolean;
+}
+
+/** A server without `partner_app`: the delivery app as it always was. */
+export const DELIVERY_ONLY: PartnerInfo = {
+  work_type: 'delivery',
+  lines: ['delivery'],
+  busy_line: 'none',
+  busy_ref: null,
+  service_available: false,
+};
 
 /** What a customer-code resend answers. */
 export interface ResendResult {
@@ -1030,6 +1061,12 @@ export interface ApiAdapter {
   logout(): Promise<void>;
 
   me(): Promise<Identity>;
+
+  /**
+   * Which lines this person works in (Delivery, Service or both) and whether
+   * they are busy. A server without `partner_app` answers "Delivery only".
+   */
+  partnerMe(): Promise<PartnerInfo>;
 
   /**
    * `vehicleId` only when `me` carried a `fleet` block. `fix` goes with

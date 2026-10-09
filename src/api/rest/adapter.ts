@@ -2,6 +2,7 @@ import {
   ActionResult,
   ApiAdapter,
   ApiError,
+  DELIVERY_ONLY,
   DeliveryOrder,
   DeliveryStatus,
   DutyResult,
@@ -9,8 +10,10 @@ import {
   HistoryResponse,
   Identity,
   OrdersResponse,
+  PartnerInfo,
   PastJob,
   ResendResult,
+  WorkLine,
 } from '../types';
 import { logout, normaliseActions, request, requestCode, verifyCode } from './client';
 
@@ -113,6 +116,31 @@ export const restAdapter: ApiAdapter = {
   async me() {
     const r = await request<Identity>('/api/delivery/auth/me');
     return { ...r, features: ['location', 'track_from_accept'] };
+  },
+
+  // Our `partner_app` module, signed in with the same token. A server without
+  // it answers 404 - an HTML page, not JSON - and that is "Delivery only", the
+  // app as it always was. Only a dead session or no signal is passed on, so
+  // the caller keeps what it last knew.
+  async partnerMe() {
+    try {
+      const r = await request<PartnerInfo & { success?: boolean }>('/api/partner/me');
+      const lines = (r.lines ?? []).filter(
+        (l): l is WorkLine => l === 'delivery' || l === 'service'
+      );
+      return {
+        work_type: r.work_type ?? 'delivery',
+        lines: lines.length ? lines : ['delivery'],
+        busy_line: r.busy_line ?? 'none',
+        busy_ref: r.busy_ref ?? null,
+        service_available: !!r.service_available,
+      };
+    } catch (err) {
+      if (err instanceof ApiError && (err.code === 'unauthorized' || err.code === 'network')) {
+        throw err;
+      }
+      return DELIVERY_ONLY;
+    }
   },
 
   // No vehicle on this API: `me` has no fleet block, so none is ever picked.

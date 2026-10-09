@@ -62,6 +62,7 @@ const KNOWN_CODES: ApiErrorCode[] = [
   'wait',
   'handover_waiting',
   'wrong_kind',
+  'agent_busy',
 ];
 
 function toCode(raw: unknown): ApiErrorCode {
