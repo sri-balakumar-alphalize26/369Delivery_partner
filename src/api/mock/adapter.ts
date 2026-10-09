@@ -11,15 +11,15 @@ import {
   Identity,
   inBucket,
   LocationResult,
-  Money,
   OrdersResponse,
   OrderTimestamps,
+  PartnerInfo,
   Rider,
-  RiderKind,
   RiderLocationResult,
   TakeVehicleResult,
   Vehicle,
   VehiclesResponse,
+  WorkLine,
 } from '../types';
 import {
   MOCK_DELIVERY_OTP,
@@ -29,7 +29,7 @@ import {
   makeFailed,
   makeOffer,
 } from './fixtures';
-import { getRiderKind } from '../../lib/riderKind';
+import { demo } from './shared';
 
 /**
  * An in-memory stand-in for Odoo, matching the published contract exactly —
@@ -113,28 +113,6 @@ const rider: Rider = {
   duty_since: '',
 };
 
-/**
- * The demo rider is whichever kind was picked at sign-in, so both Earnings
- * views can be shown. A Delivery Partner sees a fee on every job; an office
- * rider sees none, as on DUBAI_TEST.
- */
-function becomeKind(kind: RiderKind | undefined) {
-  rider.kind = kind ?? 'own';
-  for (const o of [...state.orders, ...state.pending, ...state.finished]) withFee(o);
-}
-
-function omr(amount: number): Money {
-  return { amount, formatted: `${OMR.symbol} ${amount.toFixed(OMR.decimals)}` };
-}
-
-/** The partner's pay for one trip: a base and a little per km, as Delivery Settings would. */
-function withFee(o: DeliveryOrder): DeliveryOrder {
-  o.rider_fee =
-    rider.kind === 'third_party'
-      ? omr(1.5 + Math.round(((o.shop_to_customer_m ?? 0) / 1000) * 0.2 * 1000) / 1000)
-      : null;
-  return o;
-}
 
 /**
  * Two bikes from the Fleet app, so demo mode shows the vehicle picker the way
@@ -196,6 +174,22 @@ function numberRun() {
     o.is_current_stop = i >= 0 && o.delivery_order_id === state.currentStop;
   }
 }
+
+/** Delivery jobs that make the rider busy for service: taken, not just offered. */
+const IN_HAND: readonly DeliveryStatus[] = [
+  'accepted',
+  'picked',
+  'dispatched',
+  'out_for_delivery',
+  'returning',
+  'handover_waiting',
+];
+
+demo.onDuty = () => rider.on_duty;
+demo.deliveryBusyRef = () => {
+  const o = state.orders.find((x) => IN_HAND.includes(x.delivery_status));
+  return o ? o.delivery_order_name : null;
+};
 
 function guard() {
   if (mockFlags.offline) {
@@ -275,9 +269,17 @@ function advance(o: DeliveryOrder, to: DeliveryStatus): ActionResult {
  * To Dispatch, which is what makes the duty endpoint load-bearing.
  */
 function offer() {
-  const job = withFee(makeOffer());
-  if (rider.on_duty) state.orders.push(job);
+  const job = makeOffer();
+  if (rider.on_duty && canDeliver()) state.orders.push(job);
   else state.pending.push(job);
+}
+
+/**
+ * partner_app's rule: nobody set to Service only, and nobody out on a service
+ * visit, is handed a delivery.
+ */
+function canDeliver(): boolean {
+  return demo.worksIn !== 'service' && !demo.serviceBusyRef();
 }
 
 export const mockAdapter: ApiAdapter = {
@@ -291,14 +293,30 @@ export const mockAdapter: ApiAdapter = {
   async me(): Promise<Identity> {
     await wait(200);
     guard();
-    const kind = (await getRiderKind()) ?? 'own';
-    if (kind !== rider.kind) becomeKind(kind);
+    // Own staff only: the app has no third-party riders.
     return {
       rider: { ...rider },
       timezone: MOCK_TIMEZONE,
       currency: OMR,
       fleet: { ...fleet },
-      ...(rider.kind === 'third_party' ? { third_party_enabled: true } : {}),
+    };
+  },
+
+  // "Works In" comes from Profile's demo controls; Service is always "on this
+  // server" in demo mode, since the service fake is.
+  async partnerMe(): Promise<PartnerInfo> {
+    await wait(150);
+    guard();
+    const lines: WorkLine[] =
+      demo.worksIn === 'both' ? ['delivery', 'service'] : [demo.worksIn];
+    const service = demo.serviceBusyRef();
+    const delivery = demo.deliveryBusyRef();
+    return {
+      work_type: demo.worksIn,
+      lines,
+      busy_line: service ? 'service' : delivery ? 'delivery' : 'none',
+      busy_ref: service ?? delivery,
+      service_available: true,
     };
   },
 
@@ -373,10 +391,13 @@ export const mockAdapter: ApiAdapter = {
 
     rider.duty_since = utcNow();
 
-    // Clocking on picks up whatever was waiting.
-    const waiting = state.pending.length;
-    state.orders.push(...state.pending);
-    state.pending = [];
+    // Clocking on picks up whatever was waiting - not for a Service-only
+    // agent, or one already out on a visit.
+    const waiting = canDeliver() ? state.pending.length : 0;
+    if (waiting) {
+      state.orders.push(...state.pending);
+      state.pending = [];
+    }
 
     return {
       on_duty: true,
@@ -436,27 +457,8 @@ export const mockAdapter: ApiAdapter = {
       }))
       .sort((a, b) => b.finished_at.localeCompare(a.finished_at))
       .slice(0, limit);
-    if (rider.kind !== 'third_party') return { jobs, timezone: MOCK_TIMEZONE, earnings: 0 };
-    // A partner's pay: every delivered fee, in each period it falls in.
-    const paid = jobs.filter((j) => j.delivery_status === 'delivered');
-    const sum = (since: number) =>
-      omr(
-        paid
-          .filter((j) => Date.parse(j.finished_at) >= since)
-          .reduce((n, j) => n + (j.rider_fee?.amount ?? 0), 0)
-      );
-    const day = new Date();
-    day.setHours(0, 0, 0, 0);
-    return {
-      jobs,
-      timezone: MOCK_TIMEZONE,
-      earnings: {
-        today: sum(day.getTime()),
-        week: sum(day.getTime() - 6 * 86_400_000),
-        month: sum(day.getTime() - 29 * 86_400_000),
-        total: sum(0),
-      },
-    };
+    // Own staff are on salary: no pay on the history.
+    return { jobs, timezone: MOCK_TIMEZONE, earnings: 0 };
   },
 
   async order(id) {
@@ -470,6 +472,17 @@ export const mockAdapter: ApiAdapter = {
     guard();
     const o = find(id);
     requireAction(o, 'accept');
+
+    // A service visit in hand: the delivery goes to the next rider.
+    if (demo.serviceBusyRef()) {
+      state.orders = state.orders.filter((x) => x.delivery_order_id !== id);
+      state.pending.push(o);
+      throw new ApiError(
+        'agent_busy',
+        'You already have a service visit in hand. This job goes to the next rider.',
+        { status: 409 }
+      );
+    }
 
     if (mockFlags.stealNextOrder) {
       mockFlags.stealNextOrder = false;
