@@ -17,6 +17,7 @@ import { SplashAnimation } from '../src/ui/SplashAnimation';
 import { CameraHost } from '../src/ui/CameraSheet';
 import { ConfirmHost } from '../src/ui/ConfirmSheet';
 import { OverlayHost } from '../src/ui/OverlayHost';
+import { ToastHost } from '../src/ui/Toast';
 import * as Notifications from 'expo-notifications';
 import { useOfferAlert } from '../src/hooks/useOfferAlert';
 import { useDutyLocation } from '../src/location/dutyLocation';
@@ -213,6 +214,8 @@ export default function RootLayout() {
           <CameraHost />
           {/* The red-and-white "are you sure?" for steps that cannot be undone. */}
           <ConfirmHost />
+          {/* "Switched to Service" when an alert opened the other side. */}
+          <ToastHost />
         </SafeAreaProvider>
       </QueryClientProvider>
 

@@ -3,6 +3,7 @@ import { View, ViewStyle } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useOnline } from '../../hooks/useOnline';
 import { glass, gradius, gshadow, gspace } from '../../theme/glass';
+import { useWorkspacePalette } from '../../theme/workspace';
 import { GlassIcon } from './GlassIcon';
 import { GlassText } from './GlassText';
 
@@ -27,6 +28,8 @@ import { GlassText } from './GlassText';
 export function GlassScreen({ children, style }: { children: ReactNode; style?: ViewStyle }) {
   const online = useOnline();
   const insets = useSafeAreaInsets();
+  // Green on Delivery, indigo on Service.
+  const { band } = useWorkspacePalette();
 
   return (
     <View style={[{ flex: 1, backgroundColor: glass.meshMid }, style]}>
@@ -44,7 +47,7 @@ export function GlassScreen({ children, style }: { children: ReactNode; style?: 
           left: 0,
           right: 0,
           height: insets.top,
-          backgroundColor: glass.band,
+          backgroundColor: band,
         }}
       />
 

@@ -7,7 +7,29 @@ import { Tabs, usePathname, useRouter } from 'expo-router';
 import { useEffect } from 'react';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { firstUnsubmitted, onOwedChange } from '../../src/photos/owed';
-import { font, glass, gradius } from '../../src/theme/glass';
+import { useSession } from '../../src/store/session';
+import { font, gradius } from '../../src/theme/glass';
+import { paletteFor, WORKSPACE_HOME } from '../../src/theme/workspace';
+
+/** Tabs that belong to one side only. Profile is shared, so it is in neither. */
+const SIDE_TABS = {
+  delivery: ['/', '/orders', '/earnings'],
+  service: ['/jobs', '/schedule', '/service-earnings'],
+} as const;
+
+/**
+ * Keeps the screen on the open side: after a switch, after the office changes
+ * Works In, or when a tab of the other side is reached some other way.
+ */
+function useWorkspaceGuard() {
+  const pathname = usePathname();
+  const router = useRouter();
+  const workspace = useSession((s) => s.workspace);
+  useEffect(() => {
+    const other = workspace === 'delivery' ? SIDE_TABS.service : SIDE_TABS.delivery;
+    if ((other as readonly string[]).includes(pathname)) router.replace(WORKSPACE_HOME[workspace]);
+  }, [pathname, workspace, router]);
+}
 
 /**
  * While a job owes its parcel photos, every screen leads back to them: a
@@ -76,6 +98,13 @@ export default function AppLayout() {
   // The face `font.semibold` names, which is what the label below is set in.
   const [fontsLoaded, fontError] = useFonts({ Inter_700Bold });
   useOwedPhotosGuard();
+  useWorkspaceGuard();
+  // Each side has its own tabs and colours; Profile is in both. A tab of the
+  // other side keeps its route but leaves the bar (`href: null`).
+  const workspace = useSession((s) => s.workspace);
+  const p = paletteFor(workspace);
+  const onDelivery = workspace === 'delivery' ? undefined : null;
+  const onService = workspace === 'service' ? undefined : null;
   if (!fontsLoaded && !fontError) return null;
 
   return (
@@ -85,8 +114,8 @@ export default function AppLayout() {
       backBehavior="history"
       screenOptions={{
         headerShown: false,
-        tabBarActiveTintColor: glass.tabOn,
-        tabBarInactiveTintColor: glass.tabOff,
+        tabBarActiveTintColor: p.tabOn,
+        tabBarInactiveTintColor: p.tabOff,
         // React Navigation picks the label position itself, and on a screen
         // 768dp or wider — this tablet is ~800dp — it puts the label in a row
         // beside the icon instead. The label then gets only the width the icon
@@ -97,7 +126,7 @@ export default function AppLayout() {
         tabBarStyle: {
           // A solid band, the same green as the headers: it frames the screen
           // top and bottom, and needs no hairline to separate it.
-          backgroundColor: glass.band,
+          backgroundColor: p.band,
           borderTopWidth: 0,
           elevation: 0,
           // Tall enough for icon + label with the label's full line box. At 68
@@ -123,6 +152,7 @@ export default function AppLayout() {
         name="index"
         options={{
           title: 'Home',
+          href: onDelivery,
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="home-outline" size={size ?? 22} color={color} />
           ),
@@ -132,6 +162,7 @@ export default function AppLayout() {
         name="orders"
         options={{
           title: 'Orders',
+          href: onDelivery,
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="list-outline" size={size ?? 22} color={color} />
           ),
@@ -141,6 +172,38 @@ export default function AppLayout() {
         name="earnings"
         options={{
           title: 'Earnings',
+          href: onDelivery,
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="wallet-outline" size={size ?? 22} color={color} />
+          ),
+        }}
+      />
+      {/* Service's own tabs, only while Service is open. */}
+      <Tabs.Screen
+        name="jobs"
+        options={{
+          title: 'Jobs',
+          href: onService,
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="construct-outline" size={size ?? 22} color={color} />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="schedule"
+        options={{
+          title: 'Schedule',
+          href: onService,
+          tabBarIcon: ({ color, size }) => (
+            <Ionicons name="calendar-outline" size={size ?? 22} color={color} />
+          ),
+        }}
+      />
+      <Tabs.Screen
+        name="service-earnings"
+        options={{
+          title: 'Earnings',
+          href: onService,
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="wallet-outline" size={size ?? 22} color={color} />
           ),
@@ -182,6 +245,19 @@ export default function AppLayout() {
       {/* "Set up your phone", from Home and Profile. No bar: it has its own back. */}
       <Tabs.Screen
         name="setup"
+        options={{ href: null, tabBarStyle: { display: 'none' } }}
+      />
+      {/* A service visit, its photos, and "Signed off". Like a delivery job, no bar. */}
+      <Tabs.Screen
+        name="service/[id]"
+        options={{ href: null, tabBarStyle: { display: 'none' } }}
+      />
+      <Tabs.Screen
+        name="service-photos/[id]"
+        options={{ href: null, tabBarStyle: { display: 'none' } }}
+      />
+      <Tabs.Screen
+        name="service-done/[id]"
         options={{ href: null, tabBarStyle: { display: 'none' } }}
       />
     </Tabs>

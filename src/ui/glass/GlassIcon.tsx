@@ -49,6 +49,11 @@ const MAP = {
   flashOff: 'flash-off-outline',
   undo: 'arrow-undo-outline',
   offline: 'cloud-offline-outline',
+  tool: 'construct-outline',
+  calendar: 'calendar-outline',
+  swap: 'swap-horizontal',
+  timer: 'stopwatch-outline',
+  pause: 'pause-circle-outline',
 } as const;
 
 export type GlassIconName = keyof typeof MAP;

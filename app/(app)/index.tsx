@@ -35,6 +35,8 @@ import { GlassScreen } from '../../src/ui/glass/GlassScreen';
 import { GlassText } from '../../src/ui/glass/GlassText';
 import { NotificationsOffBanner, PhoneSetupCard } from '../../src/ui/PhoneSetupCard';
 import { SosShield } from '../../src/ui/SosSheet';
+import { WorkspaceChip } from '../../src/ui/WorkspaceChip';
+import { BusyPill, PausedCard, WorkspaceIntro } from '../../src/ui/WorkspaceBits';
 
 /**
  * The rider's day, in the Glass Light style.
@@ -60,11 +62,6 @@ export default function Home() {
   const wide = useWide();
   // Tabs stay mounted, so the "you are here" map is told when Home is out of view.
   const focused = useIsFocused();
-  // A Delivery Partner with the shop's partner riders switched off: nothing
-  // will be offered, however long they stay on duty, so say so.
-  const partnerIdle = useSession(
-    (s) => s.rider?.kind === 'third_party' && s.thirdPartyEnabled === false
-  );
   // Settings the office changed since this phone opened (sharing).
   useRefreshOnFocus();
 
@@ -154,6 +151,12 @@ export default function Home() {
               <GlassText variant="hero" tone="white" numberOfLines={1}>
                 {rider?.name ?? 'Rider'}
               </GlassText>
+              {/* Someone who also works in Service: the switch, and whether a
+                  job in hand makes them busy. Nothing for anyone else. */}
+              <View style={{ flexDirection: 'row', flexWrap: 'wrap', columnGap: gspace.sm }}>
+                <WorkspaceChip />
+                <BusyPill onDuty={onDuty} />
+              </View>
             </View>
             {/* Emergency help, always in the same corner (SosSheet.tsx). */}
             <SosShield />
@@ -283,6 +286,9 @@ export default function Home() {
           {onDuty ? <DutyWatchRow /> : null}
         </GlassCard>
 
+        <WorkspaceIntro />
+        <PausedCard side="delivery" />
+
         {/* Phone settings a job alert depends on: a warning when notifications
             are off, and the setup checklist until it is done. */}
         <View style={{ marginTop: gspace.lg, rowGap: gspace.md }}>
@@ -290,12 +296,6 @@ export default function Home() {
           <PhoneSetupCard />
         </View>
 
-        {partnerIdle ? (
-          <GlassProblem
-            tone="quiet"
-            message="The shop is not using partner riders right now, so no offers will arrive. Your history and pay are still here."
-          />
-        ) : null}
 
 
         <Modal
