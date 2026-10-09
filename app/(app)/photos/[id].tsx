@@ -125,7 +125,6 @@ export default function Photos() {
         id: String(orderId),
         ref: e.ref,
         customer: e.customerName,
-        fee: e.fee?.formatted ?? '',
         at: e.deliveredAt ?? '',
       },
     });

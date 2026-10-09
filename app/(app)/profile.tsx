@@ -28,7 +28,14 @@ import { EmergencyContactsCard } from '../../src/ui/EmergencyContactsCard';
 import { GlassIcon, GlassIconName } from '../../src/ui/glass/GlassIcon';
 import { useNow } from '../../src/hooks/useNow';
 import { onDutyFor } from '../../src/lib/format';
-import { kindLabel } from '../../src/lib/riderKind';
+import { staffLabel } from '../../src/lib/riderKind';
+import { useQueryClient } from '@tanstack/react-query';
+import { demo } from '../../src/api/mock/shared';
+import { MOCK_SIGNOFF_CODE } from '../../src/api/mock/serviceFixtures';
+import { WorkLine } from '../../src/api/types';
+import { paletteFor, useWorkspacePalette, WORKSPACE_LABEL } from '../../src/theme/workspace';
+import { switchTo } from '../../src/ui/WorkspaceSheet';
+import { useWorkload } from '../../src/hooks/useWorkload';
 import { setupProgress } from '../../src/lib/phoneSetup';
 import { getContacts } from '../../src/lib/emergencyContacts';
 
@@ -47,7 +54,12 @@ import { getContacts } from '../../src/lib/emergencyContacts';
 export default function Profile() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
-  const { rider, server, connected, disconnect } = useSession();
+  const { rider, server, connected, disconnect, lines, workspace, refresh } = useSession();
+  // Profile is shared by both sides, and wears the colours of the open one.
+  const p = useWorkspacePalette();
+  const qc = useQueryClient();
+  const { offers } = useWorkload();
+  const [worksIn, setWorksIn] = useState(demo.worksIn);
   // The office may have switched fuel logs on or off since this phone opened.
   useRefreshOnFocus();
   // Only to give the test notification a real job to open.
@@ -93,7 +105,7 @@ export default function Profile() {
       {/* Who is signed in: avatar, name and role, on the green band. */}
       <View
         style={{
-          backgroundColor: glass.band,
+          backgroundColor: p.band,
           paddingTop: insets.top + gspace.lg,
           paddingBottom: 64,
           alignItems: 'center',
@@ -105,14 +117,14 @@ export default function Profile() {
             width: 72,
             height: 72,
             borderRadius: 36,
-            backgroundColor: glass.accent,
+            backgroundColor: p.accent,
             borderWidth: 3,
-            borderColor: glass.tabOn,
+            borderColor: p.tabOn,
             alignItems: 'center',
             justifyContent: 'center',
           }}
         >
-          <GlassText variant="hero" style={{ color: glass.accentInk }}>
+          <GlassText variant="hero" style={{ color: p.accentInk }}>
             {initials(rider?.name)}
           </GlassText>
         </View>
@@ -126,11 +138,11 @@ export default function Profile() {
               paddingHorizontal: gspace.md,
               paddingVertical: 4,
               borderRadius: 12,
-              backgroundColor: glass.tabOn,
+              backgroundColor: p.tabOn,
             }}
           >
-            <GlassText variant="label" upper style={{ color: glass.accentInk }}>
-              {`${kindLabel(rider.kind)} · ID ${rider.id}`}
+            <GlassText variant="label" upper style={{ color: p.accentInk }}>
+              {`${staffLabel(lines)} · ID ${rider.id}`}
             </GlassText>
           </View>
         ) : null}
@@ -164,6 +176,50 @@ export default function Profile() {
           <Stat value={String(counts?.delivered_week ?? 0)} label="this week" divider />
           <Stat value={onDutyTime ?? (rider?.on_duty ? '—' : 'Off duty')} label="on duty today" />
         </View>
+
+        {/* For someone the office set to work in both lines: which side is
+            open, and a tap to switch. Nothing for anyone else. */}
+        {lines.length > 1 ? (
+          <GlassCard>
+            <GlassText variant="label" tone="soft" upper>
+              Workspaces
+            </GlassText>
+            {lines.map((ws: WorkLine) => {
+              const wp = paletteFor(ws);
+              const current = ws === workspace;
+              return (
+                <Pressable
+                  key={ws}
+                  onPress={() => !current && switchTo(ws)}
+                  accessibilityRole="button"
+                  style={({ pressed }) => ({
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: gspace.md,
+                    marginTop: gspace.sm,
+                    padding: gspace.md,
+                    borderRadius: gradius.card,
+                    borderWidth: current ? 2 : 1,
+                    borderColor: current ? wp.band : glass.border,
+                    backgroundColor: current ? wp.soft : glass.white,
+                    opacity: pressed ? 0.75 : 1,
+                  })}
+                >
+                  <View style={{ width: 34, height: 34, borderRadius: 9, backgroundColor: wp.band, alignItems: 'center', justifyContent: 'center' }}>
+                    <GlassIcon name={ws === 'service' ? 'tool' : 'box'} size={18} color={wp.bandInk} />
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <GlassText variant="bodyStrong">{WORKSPACE_LABEL[ws]}</GlassText>
+                    <GlassText variant="caption" tone="soft">
+                      {current ? 'Open now' : `Tap to switch${offers[ws] ? ` · ${offers[ws]} offer waiting` : ''}`}
+                    </GlassText>
+                  </View>
+                  <GlassIcon name={current ? 'check' : 'chev'} size={18} color={current ? wp.band : glass.inkSoft} />
+                </Pressable>
+              );
+            })}
+          </GlassCard>
+        ) : null}
 
         {/* The four things a rider comes here for, one tap each. */}
         <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: gspace.md }}>
@@ -229,7 +285,7 @@ export default function Profile() {
           <GlassCard padding={gspace.sm}>
             <Row label="Rider ID" value={rider ? String(rider.id) : '—'} />
             <Row label="Phone" value={rider?.mobile || '—'} />
-            <Row label="Type" value={kindLabel(rider?.kind)} />
+            <Row label="Works in" value={lines.map((l) => WORKSPACE_LABEL[l]).join(' and ')} />
             {/* Read-only here: Home owns the switch. */}
             <Row label="Duty" value={rider?.on_duty ? 'On duty' : 'Off duty'} />
             <Row label="Mode" value={mock ? 'Demo data' : 'Live server'} />
@@ -280,8 +336,28 @@ export default function Profile() {
               }}
             />
 
+            {/* On a live server the office sets these on the rider record in
+                Odoo; here they stand in for it. */}
+            <GlassText variant="label" tone="soft" upper style={{ marginTop: gspace.lg }}>
+              Works In (set by the office)
+            </GlassText>
+            <Segments
+              value={worksIn}
+              options={[
+                { key: 'delivery', label: 'Delivery' },
+                { key: 'service', label: 'Service' },
+                { key: 'both', label: 'Both' },
+              ]}
+              onChange={(v) => {
+                demo.worksIn = v;
+                setWorksIn(v);
+                void refresh().then(() => qc.invalidateQueries());
+              }}
+            />
+
             <GlassText variant="caption" tone="soft" nums style={{ marginTop: gspace.lg }}>
-              Pickup code {MOCK_PICKUP_OTP} · delivery code {MOCK_DELIVERY_OTP}
+              Pickup code {MOCK_PICKUP_OTP} · delivery code {MOCK_DELIVERY_OTP} · sign-off code{' '}
+              {MOCK_SIGNOFF_CODE}
             </GlassText>
           </GlassCard>
         ) : null}
@@ -481,6 +557,45 @@ function Toggle({
         trackColor={{ true: glass.green, false: glass.dividerDashed }}
         thumbColor={value ? glass.accent : glass.white}
       />
+    </View>
+  );
+}
+
+/** A row of choices, one picked - the demo stand-ins for the office's fields. */
+function Segments<K extends string>({
+  value,
+  options,
+  onChange,
+}: {
+  value: K;
+  options: { key: K; label: string }[];
+  onChange: (v: K) => void;
+}) {
+  return (
+    <View style={{ flexDirection: 'row', gap: gspace.sm, marginTop: gspace.sm }}>
+      {options.map((o) => {
+        const on = o.key === value;
+        return (
+          <Pressable
+            key={o.key}
+            onPress={() => !on && onChange(o.key)}
+            accessibilityRole="radio"
+            accessibilityState={{ checked: on }}
+            style={({ pressed }) => ({
+              flex: 1,
+              alignItems: 'center',
+              paddingVertical: gspace.sm,
+              borderRadius: gradius.chip,
+              borderWidth: on ? 2 : 1,
+              borderColor: on ? glass.indigo : glass.border,
+              backgroundColor: on ? glass.fill : glass.white,
+              opacity: pressed ? 0.7 : 1,
+            })}
+          >
+            <GlassText variant={on ? 'bodyStrong' : 'body'}>{o.label}</GlassText>
+          </Pressable>
+        );
+      })}
     </View>
   );
 }

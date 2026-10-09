@@ -6,7 +6,7 @@ import { useBottomInset } from '../../../src/hooks/useBottomInset';
 import { feedback } from '../../../src/lib/feedback';
 import { timeOnly } from '../../../src/lib/format';
 import { useSession } from '../../../src/store/session';
-import { glass, gradius, gspace } from '../../../src/theme/glass';
+import { glass, gspace } from '../../../src/theme/glass';
 import { GlassButton } from '../../../src/ui/glass/GlassButton';
 import { GlassCard } from '../../../src/ui/glass/GlassCard';
 import { GlassIcon } from '../../../src/ui/glass/GlassIcon';
@@ -22,18 +22,17 @@ const MAX_W = 480;
 /**
  * "Delivered — thank you" after the customer's code and the delivery photos.
  *
- * The end of a job: a big green tick, the order, the customer, the time it was
- * handed over and, for a Delivery Partner, what the trip paid. Everything comes
+ * The end of a job: a big green tick, the order, the customer and the time it
+ * was handed over. Everything comes
  * in the route's params from the photo screen - the job has already left
  * /orders, and nothing here is worth a fetch. Back to the jobs by the button,
  * by Android's back, or by itself after a few seconds.
  */
 export default function Done() {
-  const { ref, customer, fee, at } = useLocalSearchParams<{
+  const { ref, customer, at } = useLocalSearchParams<{
     id: string;
     ref?: string;
     customer?: string;
-    fee?: string;
     at?: string;
   }>();
   const router = useRouter();
@@ -129,27 +128,6 @@ export default function Done() {
             {ref ? <Row label="Order" value={ref} /> : null}
             {customer ? <Row label="Customer" value={customer} /> : null}
             {time ? <Row label="Delivered at" value={time} /> : null}
-            {fee ? (
-              <View
-                style={{
-                  marginTop: gspace.md,
-                  borderRadius: gradius.chip,
-                  backgroundColor: glass.greenSoft,
-                  paddingVertical: gspace.md,
-                  paddingHorizontal: gspace.lg,
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                }}
-              >
-                <GlassText variant="body" tone="soft">
-                  You earn on this trip
-                </GlassText>
-                <GlassText variant="title" tone="green" nums>
-                  {fee}
-                </GlassText>
-              </View>
-            ) : null}
           </GlassCard>
 
           <GlassButton
