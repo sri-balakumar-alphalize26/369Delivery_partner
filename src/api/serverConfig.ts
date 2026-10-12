@@ -24,6 +24,7 @@ export function normaliseServer(cfg: ServerConfig): ServerConfig {
     // Optional and absent from every config saved before it existed.
     supportPhone: cfg.supportPhone?.trim() ?? '',
     orsKey: cfg.orsKey?.trim() ?? '',
+    serviceKey: cfg.serviceKey?.trim() ?? '',
     useMock: cfg.useMock,
   };
 }
@@ -40,6 +41,8 @@ export function resolveServer(
     merged.useMock = false;
     merged.supportPhone = fromBuild.supportPhone;
     merged.orsKey = fromBuild.orsKey;
+    // The build's key when it has one; otherwise the office may type it once.
+    if (fromBuild.serviceKey) merged.serviceKey = fromBuild.serviceKey;
   }
   return normaliseServer(merged);
 }

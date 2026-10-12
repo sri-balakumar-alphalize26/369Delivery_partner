@@ -31,6 +31,7 @@ const FROM_ENV: ServerConfig = {
   login: '',
   supportPhone: process.env.EXPO_PUBLIC_SUPPORT_PHONE ?? '',
   orsKey: process.env.EXPO_PUBLIC_ORS_KEY ?? '',
+  serviceKey: process.env.EXPO_PUBLIC_SERVICE_KEY ?? '',
   // Demo data until someone signs in to a real server, so a fresh install is
   // never a dead screen — except in a locked build, which riders install.
   useMock: !SERVER_LOCKED && process.env.EXPO_PUBLIC_API_MODE !== 'real',

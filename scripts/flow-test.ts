@@ -452,6 +452,7 @@ async function main() {
     login: '',
     supportPhone: '+971500000000',
     orsKey: 'build-key',
+    serviceKey: '',
     useMock: false,
   };
   const savedTest = {
@@ -460,6 +461,7 @@ async function main() {
     login: '971000000369',
     supportPhone: '',
     orsKey: '',
+    serviceKey: 'typed-on-the-phone',
     useMock: true,
   };
   const lockedCfg = resolveServer(build, savedTest, true);
@@ -468,6 +470,7 @@ async function main() {
   check('locked: demo mode cannot be switched on from storage', lockedCfg.useMock === false);
   check('locked: support number comes from the build', lockedCfg.supportPhone === build.supportPhone);
   check('locked: the rider\'s number is still remembered', lockedCfg.login === '971000000369');
+  check('locked: a service key typed once is kept when the build has none', lockedCfg.serviceKey === 'typed-on-the-phone');
   const openCfg = resolveServer(build, savedTest, false);
   check('unlocked: a saved address still wins (the test tunnel moves)', openCfg.url === 'https://test.example.com');
   check('unlocked: a saved demo choice still wins', openCfg.useMock === true);

@@ -959,6 +959,13 @@ export interface ServerConfig {
    * back to the straight dashed leg it drew before, and no ETA is claimed.
    */
   orsKey: string;
+  /**
+   * The Odoo API key the Service side uses for the website repair bookings
+   * (Store ▸ Website Bookings), through Odoo's own `/json/2` door. One shared
+   * key, for the "Technician App" user. Empty: the Service side has no
+   * bookings to show.
+   */
+  serviceKey: string;
   /** Run against the built-in simulation instead of the live server. */
   useMock: boolean;
 }

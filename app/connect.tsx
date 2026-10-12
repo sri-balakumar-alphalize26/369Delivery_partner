@@ -124,6 +124,7 @@ export default function Connect() {
   const [cooldown, setCooldown] = useState(0);
   const [supportPhone, setSupportPhone] = useState('');
   const [orsKey, setOrsKey] = useState('');
+  const [serviceKey, setServiceKey] = useState('');
   const [useMock, setUseMock] = useState(true);
   const [moreOpen, setMoreOpen] = useState(false);
 
@@ -162,6 +163,7 @@ export default function Connect() {
     setLocal(saved.local);
     setSupportPhone(server?.supportPhone ?? ENV_DEFAULTS.supportPhone);
     setOrsKey(server?.orsKey ?? ENV_DEFAULTS.orsKey);
+    setServiceKey(server?.serviceKey ?? ENV_DEFAULTS.serviceKey);
     setUseMock(SERVER_LOCKED ? false : (server?.useMock ?? true));
     if (server) filled.current = true;
   }, [server]);
@@ -275,6 +277,7 @@ export default function Connect() {
     login: phone,
     supportPhone,
     orsKey,
+    serviceKey,
     useMock,
   });
 
@@ -636,6 +639,17 @@ export default function Connect() {
                   autoCapitalize="none"
                   autoCorrect={false}
                   placeholder="openrouteservice.org key"
+                  style={{ fontSize: 16 }}
+                />
+                <Field
+                  label="Service key"
+                  icon="tool"
+                  value={serviceKey}
+                  onChangeText={setServiceKey}
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  secureTextEntry
+                  placeholder="Odoo API key for website repair bookings"
                   style={{ fontSize: 16 }}
                 />
                 <GlassText variant="caption" tone="faint" style={{ marginTop: -gspace.sm }}>
