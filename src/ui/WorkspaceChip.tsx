@@ -6,29 +6,53 @@ import { glass, gspace } from '../theme/glass';
 import { paletteFor, WORKSPACE_LABEL } from '../theme/workspace';
 import { GlassIcon } from './glass/GlassIcon';
 import { GlassText } from './glass/GlassText';
-import { WorkspaceSheet } from './WorkspaceSheet';
+import { rememberChipTap, WorkspaceSheet } from './WorkspaceSheet';
 
 /**
  * "DELIVERY ▾" under the name on a band header, for someone the office set to
  * work in both lines. Tapping it opens the switch sheet. A red number on it
  * means an offer is waiting on the other side.
  *
- * Draws nothing for someone in one line only: there is nothing to switch to.
+ * Someone in one line only gets the same pill, fixed: it names their line
+ * and has nothing to switch to.
  */
 export function WorkspaceChip() {
   const { lines, workspace } = useSession();
   const { offers } = useWorkload();
   const [open, setOpen] = useState(false);
-  if (lines.length < 2) return null;
 
   const p = paletteFor(workspace);
+  if (lines.length < 2) {
+    return (
+      <View
+        accessible
+        accessibilityLabel={`Works in ${WORKSPACE_LABEL[workspace]}`}
+        style={{
+          alignSelf: 'flex-start',
+          marginTop: gspace.xs,
+          paddingVertical: 4,
+          paddingHorizontal: gspace.md,
+          borderRadius: 999,
+          backgroundColor: p.accent,
+        }}
+      >
+        <GlassText variant="label" style={{ color: p.accentInk }}>
+          {WORKSPACE_LABEL[workspace].toUpperCase()}
+        </GlassText>
+      </View>
+    );
+  }
+
   const other = lines.find((l) => l !== workspace);
   const waiting = other ? offers[other] : 0;
 
   return (
     <>
       <Pressable
-        onPress={() => setOpen(true)}
+        onPress={(e) => {
+          rememberChipTap({ x: e.nativeEvent.pageX, y: e.nativeEvent.pageY });
+          setOpen(true);
+        }}
         accessibilityRole="button"
         accessibilityLabel={`${WORKSPACE_LABEL[workspace]} open. Switch workspace${waiting ? `, ${waiting} offer waiting on ${WORKSPACE_LABEL[other!]}` : ''}`}
         hitSlop={8}

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { openJob } from '../push/openJob';
 import { Pressable, View } from 'react-native';
+import { isServicePreview } from '../api/service';
 import { WorkLine } from '../api/types';
 import { useWorkload } from '../hooks/useWorkload';
 import { introSeen, markIntroSeen } from '../lib/workspace';
@@ -97,6 +98,24 @@ export function BusyPill({ onDuty }: { onDuty: boolean }) {
 }
 
 /**
+ * On the Service side of a test rider's preview: the jobs are samples, so
+ * nobody mistakes them for real bookings.
+ */
+export function ServicePreviewNote() {
+  if (!isServicePreview()) return null;
+  return (
+    <GlassCard
+      style={{ marginTop: gspace.lg, backgroundColor: glass.orangeSoft, borderColor: glass.orangeLine }}
+    >
+      <GlassText variant="bodyStrong">Sample service jobs</GlassText>
+      <GlassText variant="body" tone="soft" style={{ marginTop: gspace.xs }}>
+        Real visits come once the service module is on the server. Delivery is real.
+      </GlassText>
+    </GlassCard>
+  );
+}
+
+/**
  * Shown on one side's Home while a job in the other line is in hand: no new
  * offers come here until it is over, and Continue jumps straight back to it.
  */
@@ -121,10 +140,10 @@ export function PausedCard({ side }: { side: WorkLine }) {
         {who ? ` (${who})` : ''} is finished.
       </GlassText>
       <Pressable
-        onPress={() => {
+        onPress={(e) => {
           const id = onDelivery ? delivery?.delivery_order_id : visit?.id;
           if (id) openJob({ kind: busy, id });
-          else switchTo(busy);
+          else switchTo(busy, { x: e.nativeEvent.pageX, y: e.nativeEvent.pageY });
         }}
         accessibilityRole="button"
         style={({ pressed }) => ({

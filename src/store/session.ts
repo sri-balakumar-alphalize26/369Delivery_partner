@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { api } from '../api/endpoints';
 import { getServer, saveServer } from '../api/config';
+import { setServicePreview } from '../api/service';
 import { setFeatures } from '../api/features';
 import { setSessionExpiredHandler } from '../api/rest/client';
 import { getSavedWorkspace, pickWorkspace, saveWorkspace } from '../lib/workspace';
@@ -98,6 +99,8 @@ interface SessionState {
 async function loadLines(set: (s: Partial<SessionState>) => void): Promise<void> {
   try {
     const info = await api.partnerMe();
+    // A test rider's Service preview follows the real duty switch.
+    setServicePreview(info, () => !!useSession.getState().rider?.on_duty);
     const workspace = pickWorkspace(info.lines, await getSavedWorkspace());
     set({ lines: info.lines, workspace });
     console.log(`[login] works in: ${info.lines.join(' + ')}, opening ${workspace}`);
@@ -270,6 +273,7 @@ export const useSession = create<SessionState>((set, get) => ({
     // saved: none of them is a secret, and typing them again is what Connect
     // exists to avoid.
     await api.logout();
+    setServicePreview(null);
     set({
       rider: null,
       timezone: undefined,

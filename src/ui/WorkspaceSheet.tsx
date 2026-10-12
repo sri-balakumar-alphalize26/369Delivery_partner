@@ -10,6 +10,7 @@ import { paletteFor, WORKSPACE_HOME, WORKSPACE_LABEL } from '../theme/workspace'
 import { GlassIcon } from './glass/GlassIcon';
 import { GlassText } from './glass/GlassText';
 import { useOverlay } from './OverlayHost';
+import { burstTo, Point } from './WorkspaceTransition';
 
 /**
  * The Instagram-style switch for someone who works in both lines: one row per
@@ -23,12 +24,23 @@ const SUB: Record<WorkLine, string> = {
   service: 'Repairs and installs',
 };
 
-/** Open `ws` and land on its home. Shared by the sheet, Profile and the paused card. */
-export function switchTo(ws: WorkLine) {
+/** Where the name chip was last tapped: the sheet's switch bursts from there. */
+let chipAt: Point | null = null;
+export function rememberChipTap(at: Point) {
+  chipAt = at;
+}
+
+/**
+ * Open `ws` and land on its home, behind the colour burst growing from `at`
+ * (the tapped control). Shared by the sheet, Profile and the paused card.
+ */
+export function switchTo(ws: WorkLine, at: Point | null = null) {
   const s = useSession.getState();
-  if (!s.lines.includes(ws)) return;
-  s.setWorkspace(ws);
-  router.replace(WORKSPACE_HOME[ws]);
+  if (!s.lines.includes(ws) || s.workspace === ws) return;
+  burstTo(ws, at, () => {
+    useSession.getState().setWorkspace(ws);
+    router.replace(WORKSPACE_HOME[ws]);
+  });
 }
 
 export function WorkspaceSheet({ visible, onClose }: { visible: boolean; onClose: () => void }) {
@@ -85,7 +97,7 @@ export function WorkspaceSheet({ visible, onClose }: { visible: boolean; onClose
                   key={ws}
                   onPress={() => {
                     onClose();
-                    if (!current) switchTo(ws);
+                    if (!current) switchTo(ws, chipAt);
                   }}
                   accessibilityRole="radio"
                   accessibilityState={{ checked: current }}

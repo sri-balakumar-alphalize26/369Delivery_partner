@@ -190,7 +190,9 @@ export default function Profile() {
               return (
                 <Pressable
                   key={ws}
-                  onPress={() => !current && switchTo(ws)}
+                  onPress={(e) =>
+                    !current && switchTo(ws, { x: e.nativeEvent.pageX, y: e.nativeEvent.pageY })
+                  }
                   accessibilityRole="button"
                   style={({ pressed }) => ({
                     flexDirection: 'row',

@@ -12,6 +12,7 @@ import { GlassCard } from '../../src/ui/glass/GlassCard';
 import { GlassScreen } from '../../src/ui/glass/GlassScreen';
 import { GlassText } from '../../src/ui/glass/GlassText';
 import { StatusPill, SvcHeader } from '../../src/ui/service/ServiceKit';
+import { ServicePreviewNote } from '../../src/ui/WorkspaceBits';
 
 /**
  * Visits are booked into time slots, so Service has a day view Delivery does
@@ -85,6 +86,8 @@ export default function Schedule() {
             );
           })}
         </View>
+
+        <ServicePreviewNote />
 
         {visits.length ? (
           visits.map((j) => (

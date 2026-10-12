@@ -17,7 +17,7 @@ import { GlassText } from '../../src/ui/glass/GlassText';
 import { NotificationsOffBanner, PhoneSetupCard } from '../../src/ui/PhoneSetupCard';
 import { Chip, Countdown, km, slotText, StatusPill, SvcButton, Tile } from '../../src/ui/service/ServiceKit';
 import { SosShield } from '../../src/ui/SosSheet';
-import { BusyPill, PausedCard, WorkspaceIntro } from '../../src/ui/WorkspaceBits';
+import { BusyPill, PausedCard, ServicePreviewNote, WorkspaceIntro } from '../../src/ui/WorkspaceBits';
 import { WorkspaceChip } from '../../src/ui/WorkspaceChip';
 
 /**
@@ -121,6 +121,7 @@ export default function Jobs() {
           </View>
         </GlassCard>
 
+        <ServicePreviewNote />
         <WorkspaceIntro />
         <PausedCard side="service" />
 

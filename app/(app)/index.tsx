@@ -151,8 +151,8 @@ export default function Home() {
               <GlassText variant="hero" tone="white" numberOfLines={1}>
                 {rider?.name ?? 'Rider'}
               </GlassText>
-              {/* Someone who also works in Service: the switch, and whether a
-                  job in hand makes them busy. Nothing for anyone else. */}
+              {/* Which line this is - a switch for someone who also works in
+                  Service, with whether a job in hand makes them busy. */}
               <View style={{ flexDirection: 'row', flexWrap: 'wrap', columnGap: gspace.sm }}>
                 <WorkspaceChip />
                 <BusyPill onDuty={onDuty} />

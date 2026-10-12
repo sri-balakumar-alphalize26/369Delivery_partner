@@ -134,6 +134,7 @@ export const restAdapter: ApiAdapter = {
         busy_line: r.busy_line ?? 'none',
         busy_ref: r.busy_ref ?? null,
         service_available: !!r.service_available,
+        service_preview: !!r.service_preview,
       };
     } catch (err) {
       if (err instanceof ApiError && (err.code === 'unauthorized' || err.code === 'network')) {

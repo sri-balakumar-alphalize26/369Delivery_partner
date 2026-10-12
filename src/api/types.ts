@@ -1021,6 +1021,11 @@ export interface PartnerInfo {
   /** The job that makes them busy, as the office knows it ("DT/OUT/00014"). */
   busy_ref: string | null;
   service_available: boolean;
+  /**
+   * A test rider before the service module is on the server: Service is in
+   * `lines` anyway, filled by the app's sample jobs.
+   */
+  service_preview?: boolean;
 }
 
 /** A server without `partner_app`: the delivery app as it always was. */
