@@ -1,4 +1,5 @@
 import { peekServer } from './config';
+import { bookingMode } from './danatfix';
 import { demo } from './mock/shared';
 import { serviceMockAdapter } from './mock/serviceAdapter';
 import { ServiceApi } from './serviceTypes';
@@ -69,9 +70,35 @@ const serviceRestAdapter: ServiceApi = {
   addPhoto: async () => notYet(),
 };
 
+/**
+ * With a service key the Service side shows the website repair bookings
+ * (`danatfix.ts`), not visits. Whatever still asks for visits - the busy pill,
+ * the offer watch - hears "none" rather than an error every 10 seconds.
+ */
+const bookingModeAdapter: ServiceApi = {
+  ...serviceRestAdapter,
+  jobs: async () => ({
+    jobs: [],
+    history: [],
+    counts: {
+      signed_off_today: 0,
+      signed_off_week: 0,
+      signed_off_month: 0,
+      revisits: 0,
+      cash_to_collect: 0,
+      cash_collected: 0,
+    },
+  }),
+};
+
 export const serviceApi: ServiceApi = new Proxy({} as ServiceApi, {
   get(_target, prop: string) {
-    const adapter = peekServer().useMock || preview ? serviceMockAdapter : serviceRestAdapter;
+    const adapter =
+      peekServer().useMock || preview
+        ? serviceMockAdapter
+        : bookingMode()
+          ? bookingModeAdapter
+          : serviceRestAdapter;
     return (adapter as unknown as Record<string, unknown>)[prop];
   },
 });

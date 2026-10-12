@@ -1,7 +1,9 @@
 import { useRouter } from 'expo-router';
 import { Pressable, RefreshControl, ScrollView, Switch, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { bookingMode } from '../../src/api/danatfix';
 import { ServiceJob, SERVICE_IN_HAND } from '../../src/api/serviceTypes';
+import { BookingsHome } from '../../src/ui/service/BookingsHome';
 import { useNow } from '../../src/hooks/useNow';
 import { useDuty, useOrders } from '../../src/hooks/useOrders';
 import { useRefreshOnFocus } from '../../src/hooks/useSettingsRefresh';
@@ -21,12 +23,20 @@ import { BusyPill, PausedCard, ServicePreviewNote, WorkspaceIntro } from '../../
 import { WorkspaceChip } from '../../src/ui/WorkspaceChip';
 
 /**
- * Service's Home: the same duty switch as Delivery (one duty for both lines),
+ * Service's Home. With a service key: the website repair bookings
+ * (`BookingsHome`). Otherwise the visits of the demo / preview.
+ */
+export default function Jobs() {
+  return bookingMode() ? <BookingsHome /> : <Visits />;
+}
+
+/**
+ * The visits Home: the same duty switch as Delivery (one duty for both lines),
  * then any offer waiting, the visit in hand, and today's bookings.
  *
  * Indigo band, so a hybrid agent can tell at a glance which side is open.
  */
-export default function Jobs() {
+function Visits() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const rider = useSession((s) => s.rider);

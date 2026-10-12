@@ -6,6 +6,7 @@ import {
 import { Tabs, usePathname, useRouter } from 'expo-router';
 import { useEffect } from 'react';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { bookingMode } from '../../src/api/danatfix';
 import { firstUnsubmitted, onOwedChange } from '../../src/photos/owed';
 import { useSession } from '../../src/store/session';
 import { font, gradius } from '../../src/theme/glass';
@@ -105,6 +106,9 @@ export default function AppLayout() {
   const p = paletteFor(workspace);
   const onDelivery = workspace === 'delivery' ? undefined : null;
   const onService = workspace === 'service' ? undefined : null;
+  // Website bookings (a service key is set) have no slots and no pay: Jobs
+  // and Profile only.
+  const onVisits = workspace === 'service' && !bookingMode() ? undefined : null;
   if (!fontsLoaded && !fontError) return null;
 
   return (
@@ -193,7 +197,7 @@ export default function AppLayout() {
         name="schedule"
         options={{
           title: 'Schedule',
-          href: onService,
+          href: onVisits,
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="calendar-outline" size={size ?? 22} color={color} />
           ),
@@ -203,7 +207,7 @@ export default function AppLayout() {
         name="service-earnings"
         options={{
           title: 'Earnings',
-          href: onService,
+          href: onVisits,
           tabBarIcon: ({ color, size }) => (
             <Ionicons name="wallet-outline" size={size ?? 22} color={color} />
           ),
@@ -258,6 +262,11 @@ export default function AppLayout() {
       />
       <Tabs.Screen
         name="service-done/[id]"
+        options={{ href: null, tabBarStyle: { display: 'none' } }}
+      />
+      {/* A website repair booking (service key set). Like a job, no bar. */}
+      <Tabs.Screen
+        name="booking/[id]"
         options={{ href: null, tabBarStyle: { display: 'none' } }}
       />
     </Tabs>

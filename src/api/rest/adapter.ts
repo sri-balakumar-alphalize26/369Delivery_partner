@@ -15,6 +15,7 @@ import {
   ResendResult,
   WorkLine,
 } from '../types';
+import { bookingMode } from '../danatfix';
 import { logout, normaliseActions, request, requestCode, verifyCode } from './client';
 
 /**
@@ -125,16 +126,24 @@ export const restAdapter: ApiAdapter = {
   async partnerMe() {
     try {
       const r = await request<PartnerInfo & { success?: boolean }>('/api/partner/me');
-      const lines = (r.lines ?? []).filter(
+      let lines = (r.lines ?? []).filter(
         (l): l is WorkLine => l === 'delivery' || l === 'service'
       );
+      const workType = r.work_type ?? 'delivery';
+      // With a service key the Service side is the website repair bookings
+      // (danatfix, through Odoo's own API) for whoever works in Service -
+      // whatever the server says about its own service module.
+      const bookings = bookingMode() && workType !== 'delivery';
+      if (bookings) {
+        lines = workType === 'both' ? ['delivery', 'service'] : ['service'];
+      }
       return {
-        work_type: r.work_type ?? 'delivery',
+        work_type: workType,
         lines: lines.length ? lines : ['delivery'],
         busy_line: r.busy_line ?? 'none',
         busy_ref: r.busy_ref ?? null,
-        service_available: !!r.service_available,
-        service_preview: !!r.service_preview,
+        service_available: !!r.service_available || bookings,
+        service_preview: !!r.service_preview && !bookings,
       };
     } catch (err) {
       if (err instanceof ApiError && (err.code === 'unauthorized' || err.code === 'network')) {
