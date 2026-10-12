@@ -1,5 +1,5 @@
 import { useRouter } from 'expo-router';
-import { useEffect, useRef, useState } from 'react';
+import { ReactNode, useEffect, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Image,
@@ -8,13 +8,23 @@ import {
   Platform,
   Pressable,
   ScrollView,
+  TextInput,
   View,
 } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ENV_DEFAULTS, SERVER_LOCKED } from '../src/api/config';
 import { MOCK_DELIVERY_OTP, MOCK_PICKUP_OTP } from '../src/api/mock/fixtures';
-import { listDatabases, normalisePhone } from '../src/api/rest/client';
+import { databaseCountry, listDatabases, normalisePhone } from '../src/api/rest/client';
 import { ApiError } from '../src/api/types';
+import {
+  checkLocal,
+  cleanLocal,
+  DEFAULT_COUNTRY,
+  fromServer,
+  PHONE_COUNTRIES,
+  PhoneCountry,
+  splitSaved,
+} from '../src/lib/phoneCountries';
 import { useSession } from '../src/store/session';
 import { glass, gradius, gspace, poppins } from '../src/theme/glass';
 import { Field } from '../src/ui/Field';
@@ -91,7 +101,14 @@ export default function Connect() {
 
   const [url, setUrl] = useState('');
   const [db, setDb] = useState('');
-  const [login, setLogin] = useState('');
+  /**
+   * The number without its dialling code, and the country in front of it.
+   * The country follows the chosen database's company; the rider can still
+   * change it from the chip.
+   */
+  const [local, setLocal] = useState('');
+  const [country, setCountry] = useState<PhoneCountry>(DEFAULT_COUNTRY);
+  const [countryPickerOpen, setCountryPickerOpen] = useState(false);
   /**
    * The server, database and number a code was last sent for. A code belongs
    * to exactly those three, so editing any of them puts the form back to
@@ -138,7 +155,9 @@ export default function Connect() {
     if (filled.current) return;
     setUrl(server?.url ?? ENV_DEFAULTS.url);
     setDb(server?.db ?? ENV_DEFAULTS.db);
-    setLogin(server?.login ?? '');
+    const saved = splitSaved(normalisePhone(server?.login ?? ''));
+    setCountry(saved.country);
+    setLocal(saved.local);
     setSupportPhone(server?.supportPhone ?? ENV_DEFAULTS.supportPhone);
     setOrsKey(server?.orsKey ?? ENV_DEFAULTS.orsKey);
     setUseMock(SERVER_LOCKED ? false : (server?.useMock ?? true));
@@ -189,7 +208,35 @@ export default function Connect() {
     };
   }, [url, useMock, attempt, locked]);
 
-  const target = `${url.trim()}|${db.trim()}|${normalisePhone(login)}`;
+  // Once a database is chosen (or the build's own, in a locked build), open
+  // the number on its company's country. Paused while a typed database name
+  // is still changing; a server without the route leaves the country as is.
+  useEffect(() => {
+    if (useMock || !url.trim() || !db.trim()) return;
+    let alive = true;
+    const timer = setTimeout(async () => {
+      const found = await databaseCountry(url, db);
+      const next = found && fromServer(found.iso, found.phoneCode);
+      if (!alive || !next) return;
+      setCountry(next);
+      setLocal((prev) => cleanLocal(next, prev));
+    }, 400);
+    return () => {
+      alive = false;
+      clearTimeout(timer);
+    };
+  }, [url, db, useMock]);
+
+  function chooseCountry(next: PhoneCountry) {
+    setCountry(next);
+    setLocal((prev) => cleanLocal(next, prev));
+    setCountryPickerOpen(false);
+    setError(null);
+  }
+
+  /** The whole number, as the rider record holds it: code then number. */
+  const phone = local ? `${country.dial}${local}` : '';
+  const target = `${url.trim()}|${db.trim()}|${phone}`;
   const stage: 'number' | 'code' = !useMock && sentFor === target ? 'code' : 'number';
 
   // The resend countdown. The server enforces the window; this only times the link.
@@ -214,9 +261,8 @@ export default function Connect() {
       if (serverState.kind === 'failed') return COULD_NOT_LOAD;
       if (!db.trim()) return 'Choose a database.';
     }
-    if (normalisePhone(login).length < 8) {
-      return 'Enter your WhatsApp number with the country code, e.g. 968 9123 4567.';
-    }
+    const wrongNumber = checkLocal(country, local);
+    if (wrongNumber) return wrongNumber;
     if (stage === 'code' && code.length !== 6) return 'Enter the 6-digit code from WhatsApp.';
     return null;
   }
@@ -224,7 +270,7 @@ export default function Connect() {
   const config = () => ({
     url,
     db,
-    login: useMock ? login : normalisePhone(login),
+    login: phone,
     supportPhone,
     orsKey,
     useMock,
@@ -424,17 +470,28 @@ export default function Connect() {
 
                   <Field
                     label="WhatsApp number"
-                    icon="phone"
-                    value={login}
-                    onChangeText={setLogin}
+                    left={<CountryChip country={country} onPress={() => setCountryPickerOpen(true)} />}
+                    value={local}
+                    onChangeText={(text) => setLocal(cleanLocal(country, text))}
                     autoCapitalize="none"
                     autoCorrect={false}
-                    keyboardType="phone-pad"
-                    autoComplete="tel"
+                    keyboardType="number-pad"
+                    autoComplete="tel-national"
                     textContentType="telephoneNumber"
-                    placeholder="With country code, e.g. 968 9123 4567"
+                    maxLength={country.maxLen}
+                    placeholder={
+                      country.minLen === country.maxLen
+                        ? `${country.maxLen}-digit number`
+                        : 'Mobile number'
+                    }
                     returnKeyType="go"
                     onSubmitEditing={submit}
+                  />
+                  <CountryPicker
+                    visible={countryPickerOpen}
+                    value={country}
+                    onChoose={chooseCountry}
+                    onClose={() => setCountryPickerOpen(false)}
                   />
 
                   {stage === 'code' ? (
@@ -714,10 +771,129 @@ function DbField({
 }
 
 /**
- * The server's databases in a popup: a centred card over a dimmed screen,
- * closed by a choice, a tap outside, or the Android back button. No native
- * picker, so no rebuild. The list scrolls once it outgrows the card.
+ * The dialling code in front of the number: flag, code and a caret. Tapping it
+ * opens `CountryPicker`. A thin rule after it keeps code and number apart
+ * while both stay on the one underline.
  */
+function CountryChip({ country, onPress }: { country: PhoneCountry; onPress: () => void }) {
+  return (
+    <Pressable
+      onPress={onPress}
+      hitSlop={6}
+      accessibilityRole="button"
+      accessibilityLabel={`Country code ${country.name}, plus ${country.dial}. Change`}
+      style={({ pressed }) => ({
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingVertical: gspace.md,
+        paddingRight: gspace.sm,
+        marginRight: gspace.md,
+        borderRightWidth: 1,
+        borderRightColor: glass.divider,
+        opacity: pressed ? 0.6 : 1,
+      })}
+    >
+      <GlassText variant="body" style={{ fontSize: 18 }}>
+        {country.flag}
+      </GlassText>
+      <GlassText variant="bodyStrong" nums style={{ fontSize: 16, marginLeft: gspace.xs }}>
+        +{country.dial}
+      </GlassText>
+      <GlassIcon name="chevDown" size={14} color={glass.inkSoft} style={{ marginLeft: 2 }} />
+    </Pressable>
+  );
+}
+
+/** The countries the number field knows, in the same popup as the databases. */
+function CountryPicker({
+  visible,
+  value,
+  onChoose,
+  onClose,
+}: {
+  visible: boolean;
+  value: PhoneCountry;
+  onChoose: (country: PhoneCountry) => void;
+  onClose: () => void;
+}) {
+  const [query, setQuery] = useState('');
+  // One the database named that is not in the list stays choosable.
+  const all = PHONE_COUNTRIES.some((c) => c.iso === value.iso)
+    ? PHONE_COUNTRIES
+    : [value, ...PHONE_COUNTRIES];
+  const q = query.trim().toLowerCase().replace(/^\+/, '');
+  const options = q
+    ? all.filter((c) => c.name.toLowerCase().includes(q) || c.dial.startsWith(q) || c.iso.toLowerCase() === q)
+    : all;
+  const close = () => {
+    setQuery('');
+    onClose();
+  };
+  return (
+    <PickerSheet
+      visible={visible}
+      title="Country code"
+      subtitle="Set from your database. Change it if your number is from elsewhere."
+      onClose={close}
+      header={
+        <View style={{ paddingHorizontal: gspace.xl, marginBottom: gspace.sm }}>
+          <TextInput
+            value={query}
+            onChangeText={setQuery}
+            placeholder="Search country or code"
+            placeholderTextColor={glass.inkFaint}
+            autoCorrect={false}
+            allowFontScaling={false}
+            style={{
+              fontFamily: poppins.medium,
+              fontSize: 16,
+              color: glass.ink,
+              paddingVertical: gspace.sm,
+              borderBottomWidth: 1,
+              borderBottomColor: glass.divider,
+            }}
+          />
+        </View>
+      }
+    >
+      {options.length === 0 ? (
+        <GlassText variant="body" tone="soft" style={{ paddingHorizontal: gspace.xl, paddingVertical: gspace.lg }}>
+          No country matches "{query}".
+        </GlassText>
+      ) : null}
+      {options.map((c) => {
+        const selected = c.iso === value.iso;
+        return (
+          <PickerRow
+            key={c.iso}
+            selected={selected}
+            onPress={() => {
+              setQuery('');
+              onChoose(c);
+            }}
+          >
+            <GlassText variant="body" style={{ fontSize: 18, marginRight: gspace.md }}>
+              {c.flag}
+            </GlassText>
+            <GlassText
+              variant={selected ? 'bodyStrong' : 'body'}
+              tone={selected ? 'ink' : 'soft'}
+              numberOfLines={1}
+              style={{ flex: 1 }}
+            >
+              {c.name}
+            </GlassText>
+            <GlassText variant="body" tone="soft" nums style={{ marginRight: gspace.sm }}>
+              +{c.dial}
+            </GlassText>
+          </PickerRow>
+        );
+      })}
+    </PickerSheet>
+  );
+}
+
+/** The server's databases, in `PickerSheet`. */
 function DbPicker({
   visible,
   options,
@@ -730,6 +906,59 @@ function DbPicker({
   value: string;
   onChoose: (db: string) => void;
   onClose: () => void;
+}) {
+  return (
+    <PickerSheet
+      visible={visible}
+      title="Choose a database"
+      subtitle={`${options.length} found on this server`}
+      onClose={onClose}
+    >
+      {options.map((name) => {
+        const selected = name === value;
+        return (
+          <PickerRow key={name} selected={selected} onPress={() => onChoose(name)}>
+            <GlassIcon
+              name="database"
+              size={18}
+              color={selected ? glass.indigo : glass.inkFaint}
+              style={{ marginRight: gspace.md }}
+            />
+            <GlassText
+              variant={selected ? 'bodyStrong' : 'body'}
+              tone={selected ? 'ink' : 'soft'}
+              numberOfLines={1}
+              style={{ flex: 1 }}
+            >
+              {name}
+            </GlassText>
+          </PickerRow>
+        );
+      })}
+    </PickerSheet>
+  );
+}
+
+/**
+ * A list in a popup: a centred card over a dimmed screen, closed by a choice,
+ * a tap outside, or the Android back button. No native picker, so no rebuild.
+ * The list scrolls once it outgrows the card.
+ */
+function PickerSheet({
+  visible,
+  title,
+  subtitle,
+  header,
+  onClose,
+  children,
+}: {
+  visible: boolean;
+  title: string;
+  subtitle: string;
+  /** Stays put above the list: a search box, say. */
+  header?: ReactNode;
+  onClose: () => void;
+  children: ReactNode;
 }) {
   return (
     <Modal
@@ -766,57 +995,50 @@ function DbPicker({
           }}
         >
           <View style={{ paddingHorizontal: gspace.xl, marginBottom: gspace.md }}>
-            <GlassText variant="title">Choose a database</GlassText>
+            <GlassText variant="title">{title}</GlassText>
             <GlassText variant="caption" tone="soft" style={{ marginTop: 2 }}>
-              {options.length} found on this server
+              {subtitle}
             </GlassText>
           </View>
-          <ScrollView bounces={false}>
-            {options.map((name) => {
-              const selected = name === value;
-              return (
-                <Pressable
-                  key={name}
-                  onPress={() => onChoose(name)}
-                  accessibilityRole="radio"
-                  accessibilityState={{ selected }}
-                  style={({ pressed }) => ({
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    paddingHorizontal: gspace.xl,
-                    // 44+ tall: a gloved thumb has to hit one row, not two.
-                    minHeight: 52,
-                    borderTopWidth: 1,
-                    borderTopColor: glass.divider,
-                    backgroundColor: pressed
-                      ? glass.fill
-                      : selected
-                        ? glass.fillLight
-                        : 'transparent',
-                  })}
-                >
-                  <GlassIcon
-                    name="database"
-                    size={18}
-                    color={selected ? glass.indigo : glass.inkFaint}
-                    style={{ marginRight: gspace.md }}
-                  />
-                  <GlassText
-                    variant={selected ? 'bodyStrong' : 'body'}
-                    tone={selected ? 'ink' : 'soft'}
-                    numberOfLines={1}
-                    style={{ flex: 1 }}
-                  >
-                    {name}
-                  </GlassText>
-                  {selected ? <GlassIcon name="check" size={18} color={glass.indigo} /> : null}
-                </Pressable>
-              );
-            })}
+          {header}
+          <ScrollView bounces={false} keyboardShouldPersistTaps="handled">
+            {children}
           </ScrollView>
         </Pressable>
       </Pressable>
     </Modal>
+  );
+}
+
+/** One choice in `PickerSheet`, ticked when it is the current one. */
+function PickerRow({
+  selected,
+  onPress,
+  children,
+}: {
+  selected: boolean;
+  onPress: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <Pressable
+      onPress={onPress}
+      accessibilityRole="radio"
+      accessibilityState={{ selected }}
+      style={({ pressed }) => ({
+        flexDirection: 'row',
+        alignItems: 'center',
+        paddingHorizontal: gspace.xl,
+        // 44+ tall: a gloved thumb has to hit one row, not two.
+        minHeight: 52,
+        borderTopWidth: 1,
+        borderTopColor: glass.divider,
+        backgroundColor: pressed ? glass.fill : selected ? glass.fillLight : 'transparent',
+      })}
+    >
+      {children}
+      {selected ? <GlassIcon name="check" size={18} color={glass.indigo} /> : null}
+    </Pressable>
   );
 }
 

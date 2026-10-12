@@ -9,15 +9,17 @@ import { GlassText } from './glass/GlassText';
  * no cards. The underline thickens and turns brand blue on focus.
  *
  * `icon` sits before the text and `right` after it (a show-password eye, say);
- * both live inside the underline so the line still spans the whole field.
+ * `left` takes the icon's place for something richer (a country code chip).
+ * All live inside the underline so the line still spans the whole field.
  */
 export function Field({
   label,
   icon,
+  left,
   right,
   style,
   ...rest
-}: TextInputProps & { label: string; icon?: GlassIconName; right?: ReactNode }) {
+}: TextInputProps & { label: string; icon?: GlassIconName; left?: ReactNode; right?: ReactNode }) {
   const [focused, setFocused] = useState(false);
 
   return (
@@ -33,7 +35,9 @@ export function Field({
           borderBottomColor: focused ? glass.indigo : glass.divider,
         }}
       >
-        {icon ? (
+        {left ? (
+          left
+        ) : icon ? (
           <GlassIcon
             name={icon}
             size={20}
@@ -56,8 +60,11 @@ export function Field({
           style={[
             {
               flex: 1,
-              fontFamily: poppins.medium,
-              fontSize: 18,
+              // 16, the usual size for a phone form. The grey example text
+              // takes the same size in the lighter face, so it reads as a
+              // hint and not as something already typed.
+              fontFamily: rest.value ? poppins.medium : poppins.regular,
+              fontSize: 16,
               color: glass.ink,
               paddingVertical: gspace.md,
             },

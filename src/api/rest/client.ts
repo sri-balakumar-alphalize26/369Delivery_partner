@@ -553,3 +553,38 @@ export async function listDatabases(rawUrl: string): Promise<string[] | null> {
   console.log(`[login] ${dbs.length} database(s):`, dbs.join(', '));
   return dbs;
 }
+
+/**
+ * The country of a database's main company (our `partner_app` route), so the
+ * sign-in screen opens on the right dialling code. Like `listDatabases` it
+ * takes the address and database as typed, since nothing is saved yet. `null`
+ * for anything short of an answer - a server without the route (404, HTML),
+ * no signal, no country set - and the screen keeps what it has.
+ */
+export async function databaseCountry(
+  rawUrl: string,
+  db: string
+): Promise<{ iso: string | null; phoneCode: number | null } | null> {
+  const url = rawUrl.trim().replace(/\/+$/, '');
+  if (!url || !db.trim()) return null;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 8000);
+  try {
+    const res = await fetch(`${url}/api/partner/country`, {
+      headers: { Accept: 'application/json', 'X-Odoo-Database': db.trim() },
+      signal: controller.signal,
+    });
+    if (!res.ok || !(res.headers.get('content-type') ?? '').includes('application/json')) {
+      console.log(`[login] no country route on ${db} (${res.status}), keeping the default`);
+      return null;
+    }
+    const body = await res.json();
+    console.log(`[login] ${db} is in ${body.country_code ?? 'no country'}`);
+    return { iso: body.country_code ?? null, phoneCode: body.phone_code ?? null };
+  } catch (err) {
+    console.warn('[login] country lookup failed:', (err as Error)?.message);
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
