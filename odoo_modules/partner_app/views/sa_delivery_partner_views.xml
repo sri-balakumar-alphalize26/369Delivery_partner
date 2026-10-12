@@ -26,6 +26,7 @@
                         <field name="work_type" widget="radio"
                                options="{'horizontal': true}"/>
                         <field name="busy_display"/>
+                        <field name="is_test_rider"/>
                     </group>
                 </div>
                 <group name="partner_app_shops"/>
@@ -62,6 +63,7 @@
                 <field name="phone"/>
                 <field name="work_type"/>
                 <field name="busy_display"/>
+                <field name="is_test_rider" optional="show"/>
             </list>
         </field>
     </record>

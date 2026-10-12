@@ -39,6 +39,13 @@ class SaDeliveryPartner(models.Model):
         help="Which jobs this person is offered in the partner app. Delivery "
              "only, Service only (on-site repair and install visits), or "
              "both, switching between them in the app.")
+    is_test_rider = fields.Boolean(
+        'Test rider', copy=False,
+        help="For trying the app with a made-up number. Signs in with the "
+             "fixed code 111111, no WhatsApp message of any kind is sent to "
+             "this number, and until the service module is installed the "
+             "app shows the Service side with sample jobs. Leave off for "
+             "real people.")
     service_job_ref = fields.Char(
         'Service Visit In Hand', readonly=True, copy=False,
         help="Set when this person accepts a service visit and cleared when "
@@ -70,6 +77,23 @@ class SaDeliveryPartner(models.Model):
                 rider.busy_ref = (job.sa_ref_code or job.name) if job else False
             rider.busy_display = ('%s · %s' % (lines[rider.busy_line], rider.busy_ref)
                                   if rider.busy_ref else lines[rider.busy_line])
+
+    @api.model
+    def _partner_app_test_rider_for(self, phone):
+        """The test rider this number belongs to, or an empty recordset.
+
+        Matched on the last nine digits, as the delivery module's
+        `_sa_by_phone` does, so a number with or without its country code
+        is the same number.
+        """
+        digits = self._sa_digits(phone)
+        if len(digits) < 8:
+            return self.browse()
+        for rider in self.sudo().search([('is_test_rider', '=', True)]):
+            mine = self._sa_digits(rider.phone)
+            if mine and mine[-9:] == digits[-9:]:
+                return rider
+        return self.browse()
 
     # ============================================================ delivery
 
@@ -136,15 +160,19 @@ class SaDeliveryPartner(models.Model):
         lines = {'delivery': ['delivery'], 'service': ['service'],
                  'both': ['delivery', 'service']}[self.work_type]
         service = self._partner_app_service_available()
+        # A test rider sees the Service side before the service module is
+        # here, filled by the app's sample jobs, so the switch can be tried.
+        preview = bool(self.is_test_rider and not service)
         return {
             'work_type': self.work_type,
             'work_type_label': dict(
                 self._fields['work_type']._description_selection(self.env)
             )[self.work_type],
             # The lines the app should open: Service only once the service
-            # module is there to give it jobs.
-            'lines': [l for l in lines if l == 'delivery' or service],
+            # module is there to give it jobs, or as a test rider's preview.
+            'lines': [l for l in lines if l == 'delivery' or service or preview],
             'busy_line': self.busy_line,
             'busy_ref': self.busy_ref or None,
             'service_available': service,
+            'service_preview': preview,
         }

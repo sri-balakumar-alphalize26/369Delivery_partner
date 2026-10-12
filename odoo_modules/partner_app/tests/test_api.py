@@ -38,3 +38,20 @@ class TestPartnerApi(HttpCase):
     def test_me_refuses_a_wrong_token(self):
         res = self._me('not-a-real-token')
         self.assertEqual(res.status_code, 401)
+
+    def test_country_needs_no_token(self):
+        company = self.env['res.company'].sudo().search([], order='id', limit=1)
+        company.country_id = self.env.ref('base.in')
+        res = self.url_open('/api/partner/country')
+        self.assertEqual(res.status_code, 200)
+        body = json.loads(res.content)
+        self.assertTrue(body['success'])
+        self.assertEqual(body['country_code'], 'IN')
+        self.assertEqual(body['phone_code'], 91)
+
+    def test_country_without_one(self):
+        company = self.env['res.company'].sudo().search([], order='id', limit=1)
+        company.country_id = False
+        body = json.loads(self.url_open('/api/partner/country').content)
+        self.assertIsNone(body['country_code'])
+        self.assertIsNone(body['phone_code'])

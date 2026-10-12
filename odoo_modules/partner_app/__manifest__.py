@@ -1,6 +1,6 @@
 {
     'name': '369 Partner App',
-    'version': '19.0.1.0.0',
+    'version': '19.0.1.1.0',
     'category': 'Inventory/Delivery',
     'summary': 'Delivery and Service roles for the partner app, with one busy lock',
     'description': """
@@ -17,6 +17,10 @@ record works in Delivery, Service, or both, with one login.
 * **`GET /api/partner/me`** tells the app which lines this person works in
   and whether they are busy, signed in with the same token as
   `/api/delivery/*`.
+* **`GET /api/partner/country`**, before sign-in: the company's country, so
+  the app's number field opens on the right dialling code.
+* **Test rider** tick: a made-up number signs in with the fixed code 111111,
+  and no WhatsApp message is ever sent to it.
 
 The service side (offers, accept with a lock, `/api/service/*`) joins the
 moment the service module is on the same database; until then this module is

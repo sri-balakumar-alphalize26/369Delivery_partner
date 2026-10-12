@@ -63,3 +63,22 @@ class PartnerAppApi(http.Controller):
                'server_time': fields.Datetime.now().isoformat() + 'Z'}
         out.update(rider._partner_app_block())
         return _json(out)
+
+    @http.route('/api/partner/country', type='http', auth='public',
+                methods=['GET'], csrf=False)
+    def country(self, **kw):
+        """The country of the database's main company, for the sign-in screen.
+
+        Asked before anyone signs in, as soon as a database is chosen, so the
+        number field opens on the right dialling code. Nothing private: only
+        the country. A company with no country answers nulls and the app
+        keeps its own default.
+        """
+        company = request.env['res.company'].sudo().search([], order='id', limit=1)
+        country = company.country_id
+        return _json({
+            'success': True,
+            'country_code': country.code or None,
+            'phone_code': country.phone_code or None,
+            'name': country.name or None,
+        })
