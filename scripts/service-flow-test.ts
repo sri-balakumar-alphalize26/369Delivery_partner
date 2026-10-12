@@ -89,9 +89,14 @@ async function main() {
   check('start travel → on the way', r.job.status === 'on_the_way');
   r = await svc.arrived(id);
   check('arrived → arrived', r.job.status === 'arrived');
-  await expectError('start work without before photos is refused', () => svc.startWork(id), 'proof_needed');
-  await svc.addPhoto(id, 'before', 'file://a.jpg');
-  r = await svc.addPhoto(id, 'before', 'file://b.jpg');
+  // Photos go up in the background, so the server takes the step without them;
+  // the app holds Start work until two are taken (as on a delivery).
+  const ticks: number[] = [];
+  await svc.addPhoto(id, 'before', 'file://a.jpg', 'SJ_a.jpg', (f) => ticks.push(f));
+  check('a photo reports its progress up to 1', ticks.length > 1 && ticks[ticks.length - 1] === 1);
+  r = await svc.addPhoto(id, 'before', 'file://a.jpg', 'SJ_a.jpg');
+  check('the same file name twice is one photo', r.job.photo_counts.before === 1);
+  r = await svc.addPhoto(id, 'before', 'file://b.jpg', 'SJ_b.jpg');
   check('two before photos counted', r.job.photo_counts.before === 2);
   r = await svc.startWork(id);
   check('start work → working, timer started', r.job.status === 'working' && !!r.job.work_started_at);
@@ -99,9 +104,8 @@ async function main() {
   check('finish work → finished, parts kept', r.job.status === 'finished' && r.job.parts_used.length === 1);
   await expectError('sign-off before the code is sent is refused', () => svc.verifySignoff(id, MOCK_SIGNOFF_CODE), 'otp_required');
   await svc.sendSignoffCode(id);
-  await expectError('sign-off without after photos is refused', () => svc.verifySignoff(id, MOCK_SIGNOFF_CODE), 'proof_needed');
-  await svc.addPhoto(id, 'after', 'file://c.jpg');
-  await svc.addPhoto(id, 'after', 'file://d.jpg');
+  await svc.addPhoto(id, 'after', 'file://c.jpg', 'SJ_c.jpg');
+  await svc.addPhoto(id, 'after', 'file://d.jpg', 'SJ_d.jpg');
   await expectError('a wrong code is refused', () => svc.verifySignoff(id, '000000'), 'bad_otp');
   r = await svc.verifySignoff(id, MOCK_SIGNOFF_CODE);
   check('right code → signed off', r.job.status === 'signed_off' && !!r.job.signed_off_at);

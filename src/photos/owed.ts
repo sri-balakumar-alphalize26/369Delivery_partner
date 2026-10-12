@@ -14,7 +14,18 @@ import { dropPhotos } from './shrink';
  * (`uploader.ts`) sends its photos in the background, clearing it once all are up.
  */
 
-export type PhotoStage = 'pickup' | 'delivery';
+/**
+ * A delivery's `pickup` / `delivery`, or a service visit's `before` / `after`.
+ * The two pairs never overlap, so the stage alone says which line a photo is
+ * for, and an order and a visit with the same number cannot collide.
+ */
+export type PhotoStage = 'pickup' | 'delivery' | 'before' | 'after';
+/** A delivery's two stages - what the parcel photo screen works with. */
+export type ParcelStage = 'pickup' | 'delivery';
+
+export function isServiceStage(stage: PhotoStage): stage is 'before' | 'after' {
+  return stage === 'before' || stage === 'after';
+}
 
 export const MIN_PHOTOS = 2;
 export const MAX_PHOTOS = 4;
@@ -44,6 +55,11 @@ export interface OwedPhotos {
   shots: Shot[];
   /** Send pressed: the photos are final and upload in the background. */
   submitted?: boolean;
+  /**
+   * Service only: how many the server already held when this batch began,
+   * so "taken" is that plus this batch whether or not the batch is up yet.
+   */
+  base?: number;
 }
 
 const KEY = 'd369.owedPhotos';
@@ -86,9 +102,22 @@ export async function getOwed(orderId: number, stage: PhotoStage): Promise<OwedP
   return (await load()).find((e) => e.orderId === orderId && e.stage === stage) ?? null;
 }
 
-/** The oldest job whose photos are still to be taken: where the app sends the rider back to. */
+/**
+ * The oldest delivery whose photos are still to be taken: where the app sends
+ * the rider back to. A visit's photos are not held that way - nothing is
+ * accepted before them - so they never pull a technician onto the parcel screen.
+ */
 export async function firstUnsubmitted(): Promise<OwedPhotos | null> {
-  return (await load()).find((e) => !e.submitted) ?? null;
+  return (await load()).find((e) => !e.submitted && !isServiceStage(e.stage)) ?? null;
+}
+
+/**
+ * Photos this visit stage counts as taken: the server's count, or the batch
+ * on its way up when that is more. Sent or not - the background has them.
+ */
+export function takenFor(entry: OwedPhotos | null, serverCount: number): number {
+  if (!entry || !entry.submitted) return serverCount;
+  return Math.max(serverCount, (entry.base ?? 0) + entry.shots.length);
 }
 
 /** The oldest job whose photos are taken and still going up. */

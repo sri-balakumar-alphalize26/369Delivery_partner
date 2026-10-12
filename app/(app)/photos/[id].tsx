@@ -20,7 +20,7 @@ import {
   MAX_PHOTOS,
   MIN_PHOTOS,
   OwedPhotos,
-  PhotoStage,
+  ParcelStage,
   Shot,
   submitOwed,
   updateShots,
@@ -37,7 +37,7 @@ import { GlassIcon } from '../../../src/ui/glass/GlassIcon';
 import { GlassScreen } from '../../../src/ui/glass/GlassScreen';
 import { GlassText } from '../../../src/ui/glass/GlassText';
 
-const HEAD: Record<PhotoStage, { step: string; hint: string }> = {
+const HEAD: Record<ParcelStage, { step: string; hint: string }> = {
   pickup: {
     step: 'Pickup photos',
     hint: 'Code accepted. Photograph the parcel before you leave the shop.',
@@ -53,7 +53,7 @@ const HEAD: Record<PhotoStage, { step: string; hint: string }> = {
  * two the office looks for in a dispute - the whole parcel, and its label with
  * the seal. The last two are there when they help.
  */
-const SLOTS: Record<PhotoStage, { title: string; hint: string }[]> = {
+const SLOTS: Record<ParcelStage, { title: string; hint: string }[]> = {
   pickup: [
     { title: 'Whole parcel', hint: 'At the counter, before you leave' },
     { title: 'Label and seal', hint: 'Order label readable, tape unbroken' },
@@ -87,7 +87,7 @@ export default function Photos() {
     stage: string;
   }>();
   const orderId = Number(id);
-  const stage: PhotoStage = stageParam === 'delivery' ? 'delivery' : 'pickup';
+  const stage: ParcelStage = stageParam === 'delivery' ? 'delivery' : 'pickup';
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const bottomInset = useBottomInset();

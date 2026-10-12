@@ -187,6 +187,16 @@ export interface ServiceApi {
   verifySignoff(id: number, code: string): Promise<ServiceStepResult>;
   needsRevisit(id: number, reason: string): Promise<ServiceStepResult>;
   reportIssue(id: number, reason: string, note?: string): Promise<ServiceStepResult>;
-  /** One before/after photo has gone up. */
-  addPhoto(id: number, stage: 'before' | 'after', uri: string): Promise<ServiceStepResult>;
+  /**
+   * One before/after photo, sent by the background uploader. The same
+   * `fileName` twice is one photo (a retry after a lost answer), as on
+   * delivery's `/proof`.
+   */
+  addPhoto(
+    id: number,
+    stage: 'before' | 'after',
+    uri: string,
+    fileName?: string,
+    onProgress?: (fraction: number) => void
+  ): Promise<ServiceStepResult>;
 }

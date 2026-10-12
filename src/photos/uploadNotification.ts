@@ -4,7 +4,7 @@ import type { UploadState } from './uploader';
 
 /**
  * "Uploading photos · S00042 · 2 of 4 · 63%" in the notification shade while
- * the parcel photos go up after Send.
+ * the parcel and visit photos go up after Send.
  *
  * It is a foreground service, not only a notice: with the phone in a pocket,
  * Android would otherwise pause the app and the upload with it. Silent, on its
@@ -72,7 +72,7 @@ function textOf(s: UploadState): { title: string; body: string } {
   if (s.phase === 'waiting') {
     return {
       title: 'Waiting for signal',
-      body: `${s.left} parcel photo${s.left === 1 ? '' : 's'} will upload when you are back online`,
+      body: `${s.left} photo${s.left === 1 ? '' : 's'} will upload when you are back online`,
     };
   }
   return {

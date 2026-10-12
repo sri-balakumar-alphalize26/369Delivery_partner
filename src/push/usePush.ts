@@ -101,11 +101,10 @@ export function usePush(connected: boolean) {
    *
    * The duty watch rings from the lock screen, often with the app closed, and a
    * tap then launches it before any listener above exists — so the job it was
-   * about would be lost. Asked for once the rider is connected, since opening a
-   * job before the session is back would only meet the Connect screen.
+   * about would be lost. Asked for at once, not after sign-in: `openJob` holds
+   * the job until the session is back and shows "Opening your job…" meanwhile.
    */
   useEffect(() => {
-    if (!connected) return;
     let live = true;
     Notifications.getLastNotificationResponseAsync()
       .then((res) => {
@@ -121,7 +120,7 @@ export function usePush(connected: boolean) {
     return () => {
       live = false;
     };
-  }, [connected, qc, router]);
+  }, [qc]);
 }
 
 /** Open the job a tapped notification was about, on the side it belongs to. */
@@ -135,7 +134,9 @@ function openFor(res: Notifications.NotificationResponse, qc: QueryClient) {
   // longer this rider's: opening it would only answer `not_found`. The
   // refreshed list is where the news shows.
   if (data?.status === 'passed' || data?.status === 'cancelled') {
-    appRouter.replace(WORKSPACE_HOME[useSession.getState().workspace]);
+    // Before sign-in is back there is no Home to go to; the app opens there anyway.
+    const s = useSession.getState();
+    if (s.ready && s.connected) appRouter.replace(WORKSPACE_HOME[s.workspace]);
     return;
   }
 

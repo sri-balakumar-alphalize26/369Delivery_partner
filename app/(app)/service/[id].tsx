@@ -1,6 +1,6 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Linking, Pressable, ScrollView, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { serviceApi } from '../../../src/api/service';
@@ -18,6 +18,8 @@ import { useNow } from '../../../src/hooks/useNow';
 import { useWorkload } from '../../../src/hooks/useWorkload';
 import { serverNow } from '../../../src/lib/clock';
 import { money } from '../../../src/lib/format';
+import { getOwed, onOwedChange, OwedPhotos, takenFor } from '../../../src/photos/owed';
+import { useUploads } from '../../../src/photos/uploader';
 import { passBackOtherOffers, useAcceptLock, withAcceptLock } from '../../../src/store/acceptLock';
 import { useSession } from '../../../src/store/session';
 import { CONTENT_MAX_W, glass, gradius, gspace } from '../../../src/theme/glass';
@@ -62,6 +64,11 @@ export default function ServiceVisit() {
     queryFn: () => serviceApi.job(id),
     refetchInterval: 10_000,
   });
+
+  // Photos taken and still going up count as taken: Start work and Sign-off
+  // do not wait for the upload, as on a delivery.
+  const beforePhotos = useVisitPhotos(id, 'before');
+  const afterPhotos = useVisitPhotos(id, 'after');
 
   const [busy, setBusy] = useState<string | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
@@ -347,13 +354,13 @@ export default function ServiceVisit() {
 
         {job.status === 'arrived' ? (
           <>
-            <PhotoRow stage="before" count={job.photo_counts.before} onOpen={() => router.push({ pathname: '/service-photos/[id]', params: { id: String(id), stage: 'before' } })} />
+            <PhotoRow stage="before" entry={beforePhotos} count={job.photo_counts.before} onOpen={() => router.push({ pathname: '/service-photos/[id]', params: { id: String(id), stage: 'before' } })} />
             <SvcButton
               title="Start work"
               icon="timer"
               onPress={() => void run('work', () => serviceApi.startWork(id))}
               loading={busy === 'work'}
-              disabled={!can('start_work') || job.photo_counts.before < SERVICE_MIN_PHOTOS}
+              disabled={!can('start_work') || takenFor(beforePhotos, job.photo_counts.before) < SERVICE_MIN_PHOTOS}
             />
           </>
         ) : null}
@@ -417,7 +424,7 @@ export default function ServiceVisit() {
 
         {job.status === 'finished' ? (
           <>
-            <PhotoRow stage="after" count={job.photo_counts.after} onOpen={() => router.push({ pathname: '/service-photos/[id]', params: { id: String(id), stage: 'after' } })} />
+            <PhotoRow stage="after" entry={afterPhotos} count={job.photo_counts.after} onOpen={() => router.push({ pathname: '/service-photos/[id]', params: { id: String(id), stage: 'after' } })} />
             {job.payment_status === 'cod' && job.charge ? (
               <GlassCard>
                 <GlassText variant="label" tone="soft" upper>
@@ -431,7 +438,7 @@ export default function ServiceVisit() {
             <SvcButton
               title="Customer sign-off – enter code"
               onPress={() => void openSignoff()}
-              disabled={!can('verify_signoff') || job.photo_counts.after < SERVICE_MIN_PHOTOS}
+              disabled={!can('verify_signoff') || takenFor(afterPhotos, job.photo_counts.after) < SERVICE_MIN_PHOTOS}
             />
           </>
         ) : null}
@@ -511,8 +518,54 @@ function RoundAction({ icon, label, onPress }: { icon: GlassIconName; label: str
   );
 }
 
-function PhotoRow({ stage, count, onOpen }: { stage: 'before' | 'after'; count: number; onOpen: () => void }) {
-  const ok = count >= SERVICE_MIN_PHOTOS;
+/**
+ * This visit stage's photo batch in the background queue, kept current - and
+ * the visit refetched as each one lands, so the server's count catches up.
+ */
+function useVisitPhotos(id: number, stage: 'before' | 'after'): OwedPhotos | null {
+  const qc = useQueryClient();
+  const [entry, setEntry] = useState<OwedPhotos | null>(null);
+  useEffect(() => {
+    let live = true;
+    const read = () =>
+      void getOwed(id, stage).then((e) => {
+        if (live) setEntry(e);
+      });
+    read();
+    const off = onOwedChange(() => {
+      read();
+      void qc.invalidateQueries({ queryKey: ['service-job', id] });
+    });
+    return () => {
+      live = false;
+      off();
+    };
+  }, [id, stage, qc]);
+  return entry;
+}
+
+function PhotoRow({
+  stage,
+  entry,
+  count,
+  onOpen,
+}: {
+  stage: 'before' | 'after';
+  entry: OwedPhotos | null;
+  count: number;
+  onOpen: () => void;
+}) {
+  const upload = useUploads();
+  const taken = takenFor(entry, count);
+  const ok = taken >= SERVICE_MIN_PHOTOS;
+  const unsent = entry?.submitted ? entry.shots.filter((s) => !s.sent).length : 0;
+  const status = !ok
+    ? `${taken} of ${SERVICE_MIN_PHOTOS} taken · tap to take them`
+    : unsent === 0
+      ? `${taken} taken ✓`
+      : upload.phase === 'waiting'
+        ? `${taken} taken · waiting for signal · ${unsent} left`
+        : `${taken} taken · sending ${entry!.shots.length - unsent + 1} of ${entry!.shots.length}`;
   return (
     <Pressable onPress={onOpen} accessibilityRole="button" style={({ pressed }) => ({ opacity: pressed ? 0.8 : 1 })}>
       <GlassCard style={{ flexDirection: 'row', alignItems: 'center', gap: gspace.md }}>
@@ -520,7 +573,7 @@ function PhotoRow({ stage, count, onOpen }: { stage: 'before' | 'after'; count: 
         <View style={{ flex: 1 }}>
           <GlassText variant="bodyStrong">{stage === 'before' ? 'Before photos' : 'After photos'}</GlassText>
           <GlassText variant="caption" tone={ok ? 'green' : 'soft'}>
-            {ok ? `${count} taken ✓` : `${count} of ${SERVICE_MIN_PHOTOS} taken · tap to take them`}
+            {status}
           </GlassText>
         </View>
         <GlassIcon name="chev" color={glass.inkSoft} size={18} />

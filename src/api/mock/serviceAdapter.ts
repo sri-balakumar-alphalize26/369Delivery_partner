@@ -1,7 +1,6 @@
 import {
   SERVICE_IN_HAND,
   SERVICE_MAX_PHOTOS,
-  SERVICE_MIN_PHOTOS,
   SERVICE_TERMINAL,
   ServiceAction,
   ServiceApi,
@@ -51,6 +50,8 @@ const state = {
   history: [] as ServiceJob[],
   lastOfferAt: 0,
   signoffSent: new Set<number>(),
+  /** `id:stage:fileName` of every photo kept, so a re-sent one counts once. */
+  photoNames: new Set<string>(),
 };
 
 // One visit already booked for this evening, so Schedule is not empty.
@@ -232,11 +233,8 @@ export const serviceMockAdapter: ServiceApi = {
     guard();
     const j = find(id);
     requireAction(j, 'start_work');
-    if (j.photo_counts.before < SERVICE_MIN_PHOTOS) {
-      throw new ApiError('proof_needed', `Take ${SERVICE_MIN_PHOTOS} before photos first.`, {
-        status: 409,
-      });
-    }
+    // No photo check here: like delivery, the photos may still be going up in
+    // the background. The app holds the step until two are taken.
     j.work_started_at = utcNow();
     return move(j, 'working');
   },
@@ -271,11 +269,6 @@ export const serviceMockAdapter: ServiceApi = {
     if (!state.signoffSent.has(id)) {
       throw new ApiError('otp_required', 'Send the customer their code first.', { status: 409 });
     }
-    if (j.photo_counts.after < SERVICE_MIN_PHOTOS) {
-      throw new ApiError('proof_needed', `Take ${SERVICE_MIN_PHOTOS} after photos first.`, {
-        status: 409,
-      });
-    }
     if (code !== MOCK_SIGNOFF_CODE) {
       throw new ApiError('bad_otp', 'That code is not right. Ask the customer to read it again.', {
         status: 400,
@@ -305,15 +298,22 @@ export const serviceMockAdapter: ServiceApi = {
     return { job: { ...j }, message: 'The office has been told. They will call you if they need to.' };
   },
 
-  async addPhoto(id, stage) {
-    await wait(400);
+  async addPhoto(id, stage, _uri, fileName, onProgress) {
+    for (let i = 1; i <= 8; i++) {
+      await wait(60);
+      onProgress?.(i / 8);
+    }
     guard();
     const j = find(id);
+    // A retry of a photo that did arrive: one copy, as delivery's /proof does.
+    const key = `${id}:${stage}:${fileName ?? ''}`;
+    if (fileName && state.photoNames.has(key)) return { job: { ...j }, message: 'duplicate' };
     if (j.photo_counts[stage] >= SERVICE_MAX_PHOTOS) {
       throw new ApiError('too_many_photos', `${SERVICE_MAX_PHOTOS} photos is the most for one stage.`, {
         status: 409,
       });
     }
+    if (fileName) state.photoNames.add(key);
     j.photo_counts = { ...j.photo_counts, [stage]: j.photo_counts[stage] + 1 };
     return { job: { ...j } };
   },

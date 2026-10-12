@@ -25,6 +25,7 @@ import {
   PhoneCountry,
   splitSaved,
 } from '../src/lib/phoneCountries';
+import { useOpeningJob } from '../src/push/openJob';
 import { useSession } from '../src/store/session';
 import { glass, gradius, gspace, poppins } from '../src/theme/glass';
 import { Field } from '../src/ui/Field';
@@ -98,6 +99,7 @@ export default function Connect() {
   const router = useRouter();
   const insets = useSafeAreaInsets();
   const { server, connect, sendCode } = useSession();
+  const heldJob = useOpeningJob((s) => (s.phase === 'signin' ? s.job : null));
 
   const [url, setUrl] = useState('');
   const [db, setDb] = useState('');
@@ -398,6 +400,27 @@ export default function Connect() {
                   : 'Sign in with the WhatsApp number the office has for you.'}
               </GlassText>
             </View>
+
+            {/* A job tapped from an alert, waiting behind this sign-in. */}
+            {heldJob && !useMock ? (
+              <View
+                accessibilityRole="alert"
+                style={{
+                  marginTop: gspace.xl,
+                  backgroundColor: glass.orangeSoft,
+                  borderColor: glass.orangeLine,
+                  borderWidth: 1,
+                  borderRadius: gradius.chip,
+                  padding: gspace.md,
+                }}
+              >
+                <GlassText variant="bodyStrong">Sign in to open your job</GlassText>
+                <GlassText variant="caption" tone="soft" style={{ marginTop: 2 }}>
+                  The {heldJob.kind === 'service' ? 'service visit' : 'delivery'} you tapped opens
+                  straight after.
+                </GlassText>
+              </View>
+            ) : null}
 
             {/* ── Sign in / demo ────────────────────────────────────── */}
             <GlassCard style={{ marginTop: gspace.xxl }} padding={gspace.xl}>

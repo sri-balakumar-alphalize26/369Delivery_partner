@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { api } from '../api/endpoints';
+import { serviceApi } from '../api/service';
 import { ApiError } from '../api/types';
 import { photoFileName } from '../lib/photoName';
 import { shopTimeZone } from '../store/session';
@@ -8,6 +9,7 @@ import {
   clearFinished,
   clearOwed,
   getOwed,
+  isServiceStage,
   nextToUpload,
   pendingCount,
   updateShots,
@@ -16,7 +18,8 @@ import { shrinkPhoto } from './shrink';
 import { hideUploadNotification, showUploadNotification } from './uploadNotification';
 
 /**
- * The parcel photos going up after Send, while the rider gets on with the job.
+ * The parcel and visit photos going up after Send, while the rider or
+ * technician gets on with the job.
  *
  * One photo at a time, oldest job first. Each is made lighter (`shrinkPhoto`),
  * sent, and marked sent in storage before the next starts, so a signal lost at
@@ -116,13 +119,19 @@ async function run(): Promise<void> {
         }
 
         let lastTick = 0;
-        await api.uploadProof(orderId, small, name, stage, (fraction) => {
+        const progress = (fraction: number) => {
           // The bar and the notification need a few frames a second, not every packet.
           const t = Date.now();
           if (fraction < 1 && t - lastTick < 250) return;
           lastTick = t;
           set({ fraction });
-        });
+        };
+        // A visit's before/after photos go to the service API; a parcel's to /proof.
+        if (isServiceStage(stage)) {
+          await serviceApi.addPhoto(orderId, stage, small, name, progress);
+        } else {
+          await api.uploadProof(orderId, small, name, stage, progress);
+        }
 
         const after = await getOwed(orderId, stage);
         if (after) {
@@ -156,7 +165,9 @@ async function run(): Promise<void> {
         await clearOwed(orderId, stage);
         void notice(
           `Photos · ${ref}`,
-          e.code === 'too_many_photos' ? 'The shop already has 4 photos for this parcel.' : e.message
+          e.code === 'too_many_photos'
+            ? `The office already has 4 photos for this ${isServiceStage(stage) ? 'visit' : 'parcel'}.`
+            : e.message
         );
         continue;
       }

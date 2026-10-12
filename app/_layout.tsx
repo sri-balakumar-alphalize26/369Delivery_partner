@@ -18,6 +18,8 @@ import { CameraHost } from '../src/ui/CameraSheet';
 import { ConfirmHost } from '../src/ui/ConfirmSheet';
 import { OverlayHost } from '../src/ui/OverlayHost';
 import { WorkspaceTransitionHost } from '../src/ui/WorkspaceTransition';
+import { OpeningJobHost } from '../src/ui/OpeningJob';
+import { heldForSignIn, useOpeningJob } from '../src/push/openJob';
 import { ToastHost } from '../src/ui/Toast';
 import * as Notifications from 'expo-notifications';
 import { useOfferAlert } from '../src/hooks/useOfferAlert';
@@ -143,6 +145,8 @@ function Gate({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!ready) return;
     if (!connected && segments[0] !== 'connect') router.replace('/connect');
+    // A job tapped while the app was closed now waits for a fresh sign-in.
+    if (!connected) heldForSignIn();
   }, [ready, connected, segments, router]);
 
   return <>{children}</>;
@@ -181,7 +185,11 @@ export default function RootLayout() {
 
   // A font error must not hold the app hostage — fall through to system fonts.
   const appReady = (fontsLoaded || !!fontError) && ready;
-  const canExit = (appReady && floorDone) || ceilingHit;
+  // A tap on a job alert does not sit through the whole clip: the splash goes
+  // as soon as it can, and "Opening your job…" takes over (OpeningJobHost).
+  const openingJob = useOpeningJob((s) => s.phase === 'opening');
+  const canExit =
+    (appReady && floorDone) || ceilingHit || (openingJob && (fontsLoaded || !!fontError));
 
   // The app tree is mounted from the first frame and simply covered, so the
   // router settles and Gate's /connect redirect lands behind the splash. The
@@ -215,6 +223,8 @@ export default function RootLayout() {
           <CameraHost />
           {/* The red-and-white "are you sure?" for steps that cannot be undone. */}
           <ConfirmHost />
+          {/* "Opening your job…" while a tapped alert waits for the sign-in. */}
+          <OpeningJobHost />
           {/* The colour burst between Delivery and Service (WorkspaceTransition). */}
           <WorkspaceTransitionHost />
           {/* "Switched to Service" when an alert opened the other side. */}
